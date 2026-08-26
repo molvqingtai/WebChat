@@ -553,6 +553,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   // A reservation covers the pre-cut release barrier. It owns no recovered facts and exists
   // solely so detach/rebind can cancel the same explicit click before an attempt is captured.
   const replacementReservations = new Map<string, ReplacementReservation>()
+  const cancelledReplacementReservations = new WeakSet<ReplacementReservation>()
+  const cancelledReplacementAttempts = new WeakSet<DualReplacementAttempt>()
   const replacementSeeds = new Map<string, DualReplacementSeed>()
   let sharedWorldRecovery: SharedWorldRecoveryEpoch | undefined
   let currentWorldReplacement: DualReplacementAttempt | undefined
@@ -668,11 +670,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     for (const [domain, attempt] of replacementAttempts) {
       if (attempt.tabId !== tabId) continue
       attempt.invalidated = true
+      cancelledReplacementAttempts.add(attempt)
       replacementSeeds.delete(domain)
     }
     for (const [domain, reservation] of replacementReservations) {
       if (reservation.tabId !== tabId) continue
       reservation.invalidated = true
+      cancelledReplacementReservations.add(reservation)
       replacementSeeds.delete(domain)
     }
     for (const [domain, seed] of replacementSeeds) {
@@ -684,9 +688,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
   const invalidateReplacementForDomain = (domain: string) => {
     const attempt = replacementAttempts.get(domain)
-    if (attempt) attempt.invalidated = true
+    if (attempt) {
+      attempt.invalidated = true
+      cancelledReplacementAttempts.add(attempt)
+    }
     const reservation = replacementReservations.get(domain)
-    if (reservation) reservation.invalidated = true
+    if (reservation) {
+      reservation.invalidated = true
+      cancelledReplacementReservations.add(reservation)
+    }
     replacementSeeds.delete(domain)
     if (sharedWorldRecovery?.world.some((registration) => registration.domain === domain)) {
       sharedWorldRecovery = undefined
@@ -701,6 +711,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       currentWorldReplacement !== attempt ||
       attempt.hostId !== connectionOptions.hostId
     ) {
+      if (disposed) cancelledReplacementAttempts.add(attempt)
       throw operationCancelled()
     }
     const tabId = await requireCallerTab(payload, attempt.domain, { allowRecoveryFailure: true })
@@ -721,6 +732,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       replacementReservations.get(reservation.domain) !== reservation ||
       reservation.hostId !== connectionOptions.hostId
     ) {
+      if (disposed) cancelledReplacementReservations.add(reservation)
       throw operationCancelled()
     }
     const tabId = await requireCallerTab(payload, reservation.domain, { allowRecoveryFailure: true })
@@ -1231,7 +1243,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const runReservedDualReplacement = async (
     reservation: ReplacementReservation,
     payload: RuntimePageCall
-  ): Promise<undefined> => {
+  ): Promise<undefined | null> => {
+    let attempt: DualReplacementAttempt | undefined
     try {
       const releaseBarrier = captureActiveReleaseBarrier()
       if (releaseBarrier.releases.length > 0) {
@@ -1277,7 +1290,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
       const sequence = replacementSequence + 1
       replacementSequence = sequence
-      const attempt: DualReplacementAttempt = {
+      attempt = {
         ...cloneSeed(captured),
         epoch: `manual:${reservation.domain}:${sequence}`,
         invalidated: false
@@ -1289,6 +1302,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       replacementReservations.delete(reservation.domain)
       replacementAttempts.set(reservation.domain, attempt)
       return await runDualReplacement(attempt, payload, releaseBarrier)
+    } catch (error) {
+      // Cancellation is owned by this exact reservation/attempt, never inferred from an error message.
+      if (
+        cancelledReplacementReservations.has(reservation) ||
+        (attempt !== undefined && cancelledReplacementAttempts.has(attempt))
+      ) {
+        return null
+      }
+      throw error
     } finally {
       if (replacementReservations.get(reservation.domain) === reservation) {
         replacementReservations.delete(reservation.domain)

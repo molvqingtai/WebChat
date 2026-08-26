@@ -148,8 +148,9 @@ describe('Offscreen TransportService', () => {
 
     releaseJoin()
     await expect(first).resolves.toMatchObject({ roomId: 'room-a', handle: 'handle-a' })
-    await expect(second).rejects.toThrow('owned by a newer handle')
+    await expect(second).rejects.toThrow('conflicting current owner')
     await expect(service.join('room-a', 'handle-a', binding.admission)).resolves.toMatchObject({ handle: 'handle-a' })
+    await expect(service.join('room-a', 'handle-b', binding.admission)).rejects.toThrow('conflicting current owner')
     expect(fixture.join).toHaveBeenCalledOnce()
   })
 

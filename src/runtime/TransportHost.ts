@@ -267,13 +267,13 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
       if (joinAdmission !== admission) throw new Error('Transport room admission is no longer current')
       const existing = rooms.get(roomId)
       if (existing) {
-        if (existing.handle !== handle) throw new Error('Transport room is owned by a newer handle')
+        if (existing.handle !== handle) throw new Error('Transport room has a conflicting current owner')
         return existing
       }
       const pending = joining.get(roomId)
       if (pending) {
         const room = await pending
-        if (room.handle !== handle) throw new Error('Transport room is owned by a newer handle')
+        if (room.handle !== handle) throw new Error('Transport room has a conflicting current owner')
         return room
       }
       const task = (async () => {

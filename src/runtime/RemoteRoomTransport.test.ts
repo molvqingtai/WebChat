@@ -59,6 +59,29 @@ const createService = () => {
 }
 
 describe('RemoteRoomTransport', () => {
+  it('shares one pending physical join for concurrent callers in the same generation and admission', async () => {
+    const fixture = createService()
+    const releaseJoin = deferred<void>()
+    vi.mocked(fixture.service.join).mockImplementation(async (roomId, handle) => {
+      await releaseJoin.promise
+      const room = { roomId, handle, peerId: `peer:${roomId}` }
+      fixture.rooms.set(roomId, room)
+      return room
+    })
+    const transport = new RemoteRoomTransport(fixture.service)
+    await transport.rebind()
+    await transport.activateIngress()
+
+    const first = transport.join('room-a')
+    const second = transport.join('room-a')
+    await Promise.resolve()
+    expect(fixture.join).toHaveBeenCalledOnce()
+
+    releaseJoin.resolve()
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+    expect(transport.peerIdOf('room-a')).toBe('peer:room-a')
+  })
+
   it('waits for every local owner-routing retirement before a successor can join', async () => {
     const fixture = createService()
     fixture.rooms.set('room-a', { roomId: 'room-a', handle: 'handle-a', peerId: 'peer:room-a' })
