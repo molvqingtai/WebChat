@@ -165,6 +165,82 @@ describe('MessageList initial settlement', () => {
     })
   })
 
+  it('keeps click recovery current when N2 arrives before the first smooth travel reaches the bottom', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    await frame()
+    await frame()
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => {
+      expect(scrollParent.scrollTop).toBe(0)
+      expect(document.querySelector('[data-testid="message-0"]')).not.toBeNull()
+    })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('回到底部')).not.toBeNull())
+
+    const rowsWithN1 = [...initialRows, row('n1', 72)]
+    await view.rerender(harness(true, rowsWithN1))
+    await vi.waitFor(() => expect(followAction('1 条新消息')).not.toBeNull())
+
+    followAction('1 条新消息')!.click()
+    await view.rerender(harness(true, [...rowsWithN1, row('n2', 104)]))
+
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-n2"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+        expect(followAction('回到底部')).toBeNull()
+        expect(followAction('1 条新消息')).toBeNull()
+      },
+      { timeout: 5_000 }
+    )
+  })
+
+  it('cancels click recovery when a manual departure occurs before N2', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    await frame()
+    await frame()
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => {
+      expect(scrollParent.scrollTop).toBe(0)
+      expect(document.querySelector('[data-testid="message-0"]')).not.toBeNull()
+    })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('回到底部')).not.toBeNull())
+
+    const rowsWithN1 = [...initialRows, row('n1', 72)]
+    await view.rerender(harness(true, rowsWithN1))
+    await vi.waitFor(() => expect(followAction('1 条新消息')).not.toBeNull())
+
+    followAction('1 条新消息')!.click()
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await view.rerender(harness(true, [...rowsWithN1, row('n2', 104)]))
+
+    await vi.waitFor(() => {
+      expect(scrollParent.scrollTop).toBe(0)
+      expect(followAction('1 条新消息')).not.toBeNull()
+    })
+  })
+
   it('shows the zero-count return action while browsing older messages', async () => {
     const initialRows = history(24)
     await render(harness(true, initialRows))
@@ -230,6 +306,48 @@ describe('MessageList initial settlement', () => {
 
     await vi.waitFor(() => expect(followAction('回到底部')).not.toBeNull())
     expect(followAction('1 条新消息')).toBeNull()
+  })
+
+  it('rebases the reading anchor and counts the tail in one canonical head-plus-tail snapshot', async () => {
+    const currentRows = history(36)
+    const view = await render(harness(true, currentRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(scrollParent.scrollHeight).toBeGreaterThan(scrollParent.clientHeight))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-35"]')).not.toBeNull()
+      expect(getComputedStyle(list()!).visibility).not.toBe('hidden')
+    })
+    const manualScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight - 160
+    expect(manualScrollTop).toBeGreaterThan(0)
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: manualScrollTop, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+
+    const viewportBounds = scrollParent.getBoundingClientRect()
+    const anchor = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="message-"]')).find((row) => {
+      const bounds = row.getBoundingClientRect()
+      return bounds.top >= viewportBounds.top && bounds.bottom <= viewportBounds.bottom
+    })
+    expect(scrollParent.scrollTop).toBe(manualScrollTop)
+    expect(anchor).toBeDefined()
+    const anchorTestId = anchor!.dataset.testid!
+    const anchorOffset = anchor!.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top
+
+    await view.rerender(
+      harness(true, [row('history-head-1', 88), row('history-head-2', 120), ...currentRows, row('new-tail', 104)])
+    )
+
+    await vi.waitFor(() => {
+      const currentAnchor = document.querySelector<HTMLElement>(`[data-testid="${anchorTestId}"]`)
+      expect(currentAnchor).not.toBeNull()
+      expect(
+        Math.abs(currentAnchor!.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top - anchorOffset)
+      ).toBeLessThan(2)
+    })
+    await vi.waitFor(() => expect(followAction('1 条新消息')).not.toBeNull())
+    expect(followAction('回到底部')).toBeNull()
   })
 
   it('first presents a non-empty short history at its natural position without a settlement scroll', async () => {

@@ -19,6 +19,11 @@ type ChildUpdate =
       kind: 'head' | 'tail'
       count: number
     }
+  | {
+      headCount: number
+      kind: 'head-tail'
+      tailCount: number
+    }
 
 type ScrollCommand =
   | { kind: 'cancel-initial'; top: number }
@@ -78,6 +83,14 @@ const getChildUpdate = (previous: readonly string[] | null, current: readonly st
   if (current.length > previous.length && hasSuffix(previous, current)) {
     return { kind: 'head', count: current.length - previous.length }
   }
+  if (current.length > previous.length) {
+    for (let headCount = 1; headCount < current.length - previous.length; headCount += 1) {
+      const tailCount = current.length - previous.length - headCount
+      if (hasSameItems(previous, current.slice(headCount, headCount + previous.length))) {
+        return { kind: 'head-tail', headCount, tailCount }
+      }
+    }
+  }
   return { kind: 'replace' }
 }
 
@@ -95,6 +108,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   const previousItemKeysRef = useRef<readonly string[] | null>(null)
   const firstItemIndexRef = useRef(INITIAL_FIRST_ITEM_INDEX)
   const lastHeadItemKeysRef = useRef<readonly string[] | null>(null)
+  const lastTailItemKeysRef = useRef<readonly string[] | null>(null)
   const atBottomRef = useRef(true)
   const manualScrollIntentRef = useRef(false)
   const manualScrollActiveRef = useRef(false)
@@ -103,6 +117,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   const initialScrollCancellationPendingRef = useRef(false)
   const initialScrollCancellationPassedHeadRef = useRef(false)
   const headAnchorRef = useRef<HeadAnchor | null>(null)
+  const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
   const hasChildren = children !== null && children !== undefined
   const itemKeys = useMemo(
@@ -111,8 +126,14 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   )
   const itemKeysRef = useRef<readonly string[]>(itemKeys)
   const childUpdate = useMemo(() => getChildUpdate(previousItemKeysRef.current, itemKeys), [itemKeys])
-  const isHeadPrepend = childUpdate.kind === 'head' && lastHeadItemKeysRef.current !== itemKeys
-  const firstItemIndex = isHeadPrepend ? firstItemIndexRef.current - childUpdate.count : firstItemIndexRef.current
+  const headCount =
+    childUpdate.kind === 'head' ? childUpdate.count : childUpdate.kind === 'head-tail' ? childUpdate.headCount : 0
+  const tailCount =
+    childUpdate.kind === 'tail' ? childUpdate.count : childUpdate.kind === 'head-tail' ? childUpdate.tailCount : 0
+  const isHeadPrepend = headCount > 0 && lastHeadItemKeysRef.current !== itemKeys
+  const isTailAppend = tailCount > 0
+  const isNewTailAppend = isTailAppend && lastTailItemKeysRef.current !== itemKeys
+  const firstItemIndex = isHeadPrepend ? firstItemIndexRef.current - headCount : firstItemIndexRef.current
 
   const clearNewMessageCount = useCallback(() => {
     if (newMessageCountRef.current === 0) return
@@ -127,7 +148,8 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   }, [])
 
   const canFollowLatest = useCallback(
-    (atBottom: boolean) => atBottom && !manualScrollActiveRef.current && !manualScrollPausedRef.current,
+    (atBottom: boolean) =>
+      atBottom && !latestRecoveryRef.current && !manualScrollActiveRef.current && !manualScrollPausedRef.current,
     []
   )
 
@@ -138,6 +160,10 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
 
   const clearHeadAnchor = useCallback(() => {
     headAnchorRef.current = null
+  }, [])
+
+  const cancelLatestRecovery = useCallback(() => {
+    latestRecoveryRef.current = false
   }, [])
 
   const runScrollCommand = useCallback((command: ScrollCommand) => {
@@ -185,21 +211,27 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     promoteManualScroll()
     if (!manualScrollActiveRef.current) return
 
+    cancelLatestRecovery()
     atBottomRef.current = false
     manualScrollPausedRef.current = true
     setIsAtBottom(false)
     captureHeadAnchor()
     captureInitialScrollCancellation()
-  }, [captureHeadAnchor, captureInitialScrollCancellation, promoteManualScroll, scrollParentRef])
+  }, [cancelLatestRecovery, captureHeadAnchor, captureInitialScrollCancellation, promoteManualScroll, scrollParentRef])
 
   useLayoutEffect(() => {
     itemKeysRef.current = itemKeys
   }, [itemKeys])
 
   useLayoutEffect(() => {
-    if (childUpdate.kind === 'tail' && !canFollowLatest(atBottomRef.current)) {
-      newMessageCountRef.current += childUpdate.count
-      setNewMessageCount(newMessageCountRef.current)
+    if (isNewTailAppend) {
+      lastTailItemKeysRef.current = itemKeys
+      if (latestRecoveryRef.current) {
+        clearNewMessageCount()
+      } else if (!canFollowLatest(atBottomRef.current)) {
+        newMessageCountRef.current += tailCount
+        setNewMessageCount(newMessageCountRef.current)
+      }
     }
     if (isHeadPrepend) {
       firstItemIndexRef.current = firstItemIndex
@@ -214,7 +246,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
       const headAnchor = headAnchorRef.current
       clearHeadAnchor()
       if (headAnchor) {
-        const index = headAnchor.index + childUpdate.count
+        const index = headAnchor.index + headCount
         if (itemKeys[index] === headAnchor.key) {
           runScrollCommand({ kind: 'head-rebase', index, offset: headAnchor.offset })
         }
@@ -225,18 +257,25 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     }
     if (childUpdate.kind === 'replace') {
       clearHeadAnchor()
+      cancelLatestRecovery()
     }
     previousItemKeysRef.current = hasChildren ? itemKeys : null
   }, [
     canFollowLatest,
+    cancelLatestRecovery,
     childUpdate,
     clearHeadAnchor,
     clearInitialScrollCancellation,
+    clearNewMessageCount,
     firstItemIndex,
+    headCount,
     hasChildren,
     isHeadPrepend,
+    isNewTailAppend,
+    isTailAppend,
     itemKeys,
-    runScrollCommand
+    runScrollCommand,
+    tailCount
   ])
 
   useLayoutEffect(() => {
@@ -244,6 +283,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
 
     const scrollArea = scrollParentRef.closest<HTMLElement>('[data-slot="scroll-area"]') ?? scrollParentRef
     const markManualScrollIntent = () => {
+      cancelLatestRecovery()
       if (initialScrollCancellationEligibleRef.current) {
         initialScrollCancellationEligibleRef.current = false
         initialScrollCancellationPendingRef.current = true
@@ -274,9 +314,11 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
       scrollParentRef.removeEventListener('scroll', handleScroll)
       clearInitialScrollCancellation()
       clearHeadAnchor()
+      cancelLatestRecovery()
     }
   }, [
     acknowledgeManualDeparture,
+    cancelLatestRecovery,
     clearHeadAnchor,
     clearInitialScrollCancellation,
     promoteManualScroll,
@@ -295,10 +337,17 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
       clearHeadAnchor()
       if (manualScrollActiveRef.current) return
 
+      cancelLatestRecovery()
       manualScrollPausedRef.current = false
       clearNewMessageCount()
     },
-    [acknowledgeManualDeparture, clearHeadAnchor, clearInitialScrollCancellation, clearNewMessageCount]
+    [
+      acknowledgeManualDeparture,
+      cancelLatestRecovery,
+      clearHeadAnchor,
+      clearInitialScrollCancellation,
+      clearNewMessageCount
+    ]
   )
 
   const handleIsScrolling = useCallback(
@@ -315,6 +364,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
       const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : atBottomRef.current
       if (!atBottom) return
 
+      cancelLatestRecovery()
       atBottomRef.current = true
       setIsAtBottom(true)
       manualScrollPausedRef.current = false
@@ -324,6 +374,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     },
     [
       acknowledgeManualDeparture,
+      cancelLatestRecovery,
       clearHeadAnchor,
       clearNewMessageCount,
       promoteManualScroll,
@@ -333,14 +384,16 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   )
 
   const handleFollowOutput = useCallback(
-    (atBottom: boolean) => (childUpdate.kind === 'tail' && canFollowLatest(atBottom) ? 'smooth' : false),
-    [canFollowLatest, childUpdate.kind]
+    (atBottom: boolean) =>
+      isTailAppend && ((isNewTailAppend && latestRecoveryRef.current) || canFollowLatest(atBottom)) ? 'smooth' : false,
+    [canFollowLatest, isNewTailAppend, isTailAppend]
   )
 
   const handleFollowLatest = useCallback(() => {
     manualScrollIntentRef.current = false
     manualScrollActiveRef.current = false
     manualScrollPausedRef.current = false
+    latestRecoveryRef.current = true
     clearInitialScrollCancellation()
     clearHeadAnchor()
     clearNewMessageCount()
@@ -361,7 +414,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
             overscan={200}
             atBottomStateChange={handleAtBottomStateChange}
             isScrolling={handleIsScrolling}
-            followOutput={childUpdate.kind === 'tail' ? handleFollowOutput : false}
+            followOutput={isTailAppend ? handleFollowOutput : false}
             firstItemIndex={firstItemIndex}
             initialTopMostItemIndex={initialTopMostItemIndex}
             data={children}
