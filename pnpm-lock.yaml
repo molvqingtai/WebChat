@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  '@rtco/client@0.3.6': 7b041fb2ec751591aa0e0412e8d271d39fcc7bb181f3ba1df696439d8e79fe08
-
 importers:
 
   .:
@@ -60,8 +57,8 @@ importers:
         specifier: ^1.7.2
         version: 1.7.2
       '@rtco/client':
-        specifier: 0.3.6
-        version: 0.3.6(patch_hash=7b041fb2ec751591aa0e0412e8d271d39fcc7bb181f3ba1df696439d8e79fe08)(supports-color@7.2.0)
+        specifier: 0.3.7
+        version: 0.3.7(supports-color@7.2.0)
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.3)
@@ -1714,11 +1711,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@rtco/client@0.3.6':
-    resolution: {integrity: sha512-d5GPdysHp4mH/FYJ2uHyx5hdvX1tAtrYFyZqLFnXEsKt1W6wQADfXDp/m+vbCYH6SHmcz1RMTJqIPS+PFPz2dA==}
+  '@rtco/client@0.3.7':
+    resolution: {integrity: sha512-UPT4KyG5GodCv3Sx3em6k8EZYeWO6txKThlzNjN2ZNv6lFBlXdqmX9uuaFZJcpVkAfSGCTA1R4HuEdN+eHVJHw==}
 
-  '@rtco/peer@0.3.6':
-    resolution: {integrity: sha512-h+E27YaXyRiBk4AarGd4Kiu9EzzjJQRomwsHq8AKbXhK8eEm6mZbzqCukclLsFdGHDPqcFHYOYpaOBYQe6YpNw==}
+  '@rtco/peer@0.3.7':
+    resolution: {integrity: sha512-GQ25ChYq44HxDiG9DXRTOUl06QJbNvmpB7Ix866p1Z5kiTgJodGF5D7fCGs7xMtC7ro/f4mjMQ3pdTGRE9w6+g==}
 
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
@@ -7432,9 +7429,9 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.52.3':
     optional: true
 
-  '@rtco/client@0.3.6(patch_hash=7b041fb2ec751591aa0e0412e8d271d39fcc7bb181f3ba1df696439d8e79fe08)(supports-color@7.2.0)':
+  '@rtco/client@0.3.7(supports-color@7.2.0)':
     dependencies:
-      '@rtco/peer': 0.3.6
+      '@rtco/peer': 0.3.7
       bufferutil: 4.1.0
       eventemitter3: 5.0.4
       nanoid: 5.1.16
@@ -7443,7 +7440,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@rtco/peer@0.3.6':
+  '@rtco/peer@0.3.7':
     dependencies:
       eventemitter3: 5.0.4
 
