@@ -87,16 +87,13 @@ type HeadRebaseTransaction = {
   key: string
   offset: number
   phase: 'registered' | 'pending'
-  token: number
   viewport: HTMLElement
 }
 
 type PendingProgrammaticScroll = {
-  headRebaseTransaction: HeadRebaseTransaction | null
+  owner: HeadRebaseTransaction
   viewport: HTMLElement
 }
-
-let nextHeadRebaseToken = 1
 
 const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): HeadAnchor | null => {
   const viewportBounds = scrollParent.getBoundingClientRect()
@@ -246,7 +243,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     if (transaction !== undefined && headRebaseTransactionRef.current !== transaction) return
 
     const currentTransaction = headRebaseTransactionRef.current
-    if (currentTransaction && pendingProgrammaticScrollRef.current?.headRebaseTransaction === currentTransaction) {
+    if (currentTransaction && pendingProgrammaticScrollRef.current?.owner === currentTransaction) {
       pendingProgrammaticScrollRef.current = null
     }
     headRebaseTransactionRef.current = null
@@ -254,12 +251,43 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   useInsertionEffect(() => {
     const transaction = headRebaseTransactionRef.current
-    if (
-      !hasChildren ||
-      childUpdate.update === 'replace' ||
-      (transaction !== null && transaction.viewport !== scrollParentRef)
-    ) {
+    if (!hasChildren || !scrollParentRef || (transaction !== null && transaction.viewport !== scrollParentRef)) {
       cancelHeadRebaseTransaction()
+    } else if (transaction) {
+      const ownerUpdate = getChildUpdate(transaction.itemKeys, itemKeys)
+      if (ownerUpdate.update === 'tail') {
+        transaction.itemKeys = itemKeys
+      } else if (ownerUpdate.update === 'head') {
+        const headCount = ownerUpdate.count
+        const nextIndex = transaction.index + headCount
+        if (itemKeys[nextIndex] === transaction.key) {
+          cancelHeadRebaseTransaction(transaction)
+          headRebaseTransactionRef.current = {
+            ...transaction,
+            index: nextIndex,
+            itemKeys,
+            phase: 'registered'
+          }
+        } else {
+          cancelHeadRebaseTransaction(transaction)
+        }
+      } else if (ownerUpdate.update === 'head-tail') {
+        const headCount = ownerUpdate.headCount
+        const nextIndex = transaction.index + headCount
+        if (itemKeys[nextIndex] === transaction.key) {
+          cancelHeadRebaseTransaction(transaction)
+          headRebaseTransactionRef.current = {
+            ...transaction,
+            index: nextIndex,
+            itemKeys,
+            phase: 'registered'
+          }
+        } else {
+          cancelHeadRebaseTransaction(transaction)
+        }
+      } else if (ownerUpdate.update === 'replace') {
+        cancelHeadRebaseTransaction(transaction)
+      }
     }
 
     currentItemKeysRef.current = itemKeys
@@ -270,7 +298,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
         ...headRebaseTarget,
         itemKeys,
         phase: 'registered',
-        token: nextHeadRebaseToken++,
         viewport: scrollParentRef
       }
       cancelHeadRebaseTransaction()
@@ -373,7 +400,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
           }
           headRebaseTransaction.phase = 'pending'
           pendingProgrammaticScrollRef.current = {
-            headRebaseTransaction,
+            owner: headRebaseTransaction,
             viewport: headRebaseTransaction.viewport
           }
           handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
@@ -508,16 +535,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       const nextScrollTop = scrollParentRef.scrollTop
       const pendingProgrammaticScroll = pendingProgrammaticScrollRef.current
       if (pendingProgrammaticScroll?.viewport === scrollParentRef) {
-        const transaction = pendingProgrammaticScroll.headRebaseTransaction
-        if (!transaction) {
-          pendingProgrammaticScrollRef.current = null
-          manualScrollDownRef.current = false
-          lastScrollTopRef.current = nextScrollTop
-          const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
-          atBottomRef.current = finalActionState.isAtBottom
-          updateViewportActionState(finalActionState)
-          return
-        }
+        const transaction = pendingProgrammaticScroll.owner
 
         if (
           !isCurrentHeadRebaseTransaction(transaction) ||

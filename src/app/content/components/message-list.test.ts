@@ -804,6 +804,108 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
+  it('retargets a registered head owner across a tail append without a second command', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const headRows = [...testRows('history-1', 'history-2'), ...rows]
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="0"]')!, -80, -20)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="1"]')!, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+    vi.clearAllMocks()
+
+    view.rerender(createElement(MessageList, null, headRows))
+    view.rerender(createElement(MessageList, null, [...headRows, ...testRows('new-tail')]))
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+
+    const target = view.container.querySelector<HTMLElement>('[data-index="3"]')!
+    setBounds(target, 40, 100)
+    reportTotalListHeightChanged()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+
+    setBounds(target, 20, 80)
+    setScrollMetrics(scrollParent, 100, 1_000, 849)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+  })
+
+  it('retargets a pending head owner across a tail append until its terminal completion', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const headRows = [...testRows('history-1', 'history-2'), ...rows]
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="0"]')!, -80, -20)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="1"]')!, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+    vi.clearAllMocks()
+
+    view.rerender(createElement(MessageList, null, headRows))
+    const initialTarget = view.container.querySelector<HTMLElement>('[data-index="3"]')!
+    setBounds(initialTarget, 40, 100)
+    reportTotalListHeightChanged()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+
+    view.rerender(createElement(MessageList, null, [...headRows, ...testRows('new-tail')]))
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    const target = view.container.querySelector<HTMLElement>('[data-index="3"]')!
+    setBounds(target, 20, 80)
+    setScrollMetrics(scrollParent, 100, 1_000, 849)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+  })
+
+  it('supersedes a registered head owner when a later head prepend overlaps it', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const firstHead = [...testRows('history-1', 'history-2'), ...rows]
+    const secondHead = [...testRows('history-3'), ...firstHead]
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="0"]')!, -80, -20)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="1"]')!, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+    vi.clearAllMocks()
+
+    view.rerender(createElement(MessageList, null, firstHead))
+    const firstCall = latestVirtuosoCall()
+    view.rerender(createElement(MessageList, null, secondHead))
+    act(() => firstCall.totalListHeightChanged?.(1_000))
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="4"]')!, 40, 100)
+    reportTotalListHeightChanged()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({
+      index: 4,
+      align: 'start',
+      offset: -20,
+      behavior: 'auto'
+    })
+  })
+
   it('closes the action when the final head-rebase geometry is within half a viewport', () => {
     const rows = testRows('current-1', 'current-2', 'current-3')
     const view = render(createElement(MessageList, null, rows))
@@ -895,7 +997,7 @@ describe('MessageList Virtuoso integration', () => {
     view.rerender(createElement(MessageList, null, testRows('replacement')))
     act(() => oldCall.totalListHeightChanged?.(1_000))
     act(() => oldCall.atBottomStateChange?.(true))
-    setScrollMetrics(scrollParent, 100, 1_000, 850)
+    setScrollMetrics(scrollParent, 100, 1_000, 800)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
@@ -932,7 +1034,7 @@ describe('MessageList Virtuoso integration', () => {
     act(() => setViewport(replacementViewport))
     act(() => oldCall.totalListHeightChanged?.(1_000))
     act(() => oldCall.atBottomStateChange?.(true))
-    setScrollMetrics(replacementViewport, 100, 1_000, 850)
+    setScrollMetrics(replacementViewport, 100, 1_000, 800)
     act(() => replacementViewport.dispatchEvent(new Event('scroll')))
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
