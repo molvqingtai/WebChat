@@ -81,14 +81,17 @@ type TailBottomSnapshot = {
   callbackPending: boolean
 }
 
-type HeadRebaseSnapshot = {
-  actionState: ViewportActionState
+type HeadRebaseTransaction = {
   index: number
+  key: string
   offset: number
+  phase: 'registered' | 'pending'
+  viewport: HTMLElement
 }
 
 type PendingProgrammaticScroll = {
-  headRebaseSnapshot: HeadRebaseSnapshot | null
+  headRebaseTransaction: HeadRebaseTransaction | null
+  viewport: HTMLElement
 }
 
 const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): HeadAnchor | null => {
@@ -102,6 +105,15 @@ const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): 
   if (!item || !Number.isInteger(index) || key === undefined) return null
 
   return { index, key, offset: viewportBounds.top - item.getBoundingClientRect().top }
+}
+
+const hasHeadRebaseTarget = (transaction: HeadRebaseTransaction, itemKeys: readonly string[]) => {
+  if (itemKeys[transaction.index] !== transaction.key) return false
+
+  const item = transaction.viewport.querySelector<HTMLElement>(`[data-index="${transaction.index}"]`)
+  if (!item) return false
+
+  return transaction.viewport.getBoundingClientRect().top - item.getBoundingClientRect().top === transaction.offset
 }
 
 const isViewportAtBottom = (scrollParent: HTMLElement) =>
@@ -179,11 +191,13 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const manualScrollDownRef = useRef(false)
   const lastScrollTopRef = useRef(0)
   const pendingProgrammaticScrollRef = useRef<PendingProgrammaticScroll | null>(null)
+  const activeListRevisionRef = useRef<object | null>(null)
+  const activeViewportRef = useRef<HTMLElement | null>(null)
   const initialScrollCancellationEligibleRef = useRef(true)
   const initialScrollCancellationPendingRef = useRef(false)
   const initialScrollCancellationPassedHeadRef = useRef(false)
   const headAnchorRef = useRef<HeadAnchor | null>(null)
-  const headRebaseSnapshotRef = useRef<HeadRebaseSnapshot | null>(null)
+  const headRebaseTransactionRef = useRef<HeadRebaseTransaction | null>(null)
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
   const lastLocalSendTokenRef = useRef(localSendToken)
@@ -193,6 +207,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     [children, hasChildren]
   )
   const itemKeysRef = useRef<readonly string[]>(itemKeys)
+  const listRevision = useMemo(() => ({}), [itemKeys])
   const childUpdate = useMemo(() => getChildUpdate(previousItemKeysRef.current, itemKeys), [itemKeys])
   const headCount =
     childUpdate.update === 'head' ? childUpdate.count : childUpdate.update === 'head-tail' ? childUpdate.headCount : 0
@@ -206,7 +221,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       isTailAppend && scrollParentRef ? { atBottom: isViewportAtBottom(scrollParentRef), callbackPending: true } : null,
     [isTailAppend, itemKeys, scrollParentRef]
   )
-  const headRebaseSnapshot = useMemo<HeadRebaseSnapshot | null>(() => {
+  const headRebaseTarget = useMemo<HeadAnchor | null>(() => {
     const headAnchor = headAnchorRef.current
     if (
       !isHeadPrepend ||
@@ -218,27 +233,39 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       return null
     }
 
-    return {
-      actionState: getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current),
-      index: headAnchor.index + headCount,
-      offset: headAnchor.offset
-    }
+    return { index: headAnchor.index + headCount, key: headAnchor.key, offset: headAnchor.offset }
   }, [headCount, isHeadPrepend, isTailAppend, itemKeys, scrollParentRef])
   const firstItemIndex = isHeadPrepend ? firstItemIndexRef.current - headCount : firstItemIndexRef.current
 
-  useInsertionEffect(() => {
-    if (!headRebaseSnapshot) return
+  const cancelHeadRebaseTransaction = useCallback((transaction?: HeadRebaseTransaction | null) => {
+    if (transaction !== undefined && headRebaseTransactionRef.current !== transaction) return
 
-    headRebaseSnapshotRef.current = headRebaseSnapshot
-    return () => {
-      if (
-        headRebaseSnapshotRef.current === headRebaseSnapshot &&
-        pendingProgrammaticScrollRef.current?.headRebaseSnapshot !== headRebaseSnapshot
-      ) {
-        headRebaseSnapshotRef.current = null
-      }
+    headRebaseTransactionRef.current = null
+  }, [])
+
+  useInsertionEffect(() => {
+    const transaction = headRebaseTransactionRef.current
+    if (
+      !hasChildren ||
+      childUpdate.update === 'replace' ||
+      (transaction !== null && transaction.viewport !== scrollParentRef)
+    ) {
+      cancelHeadRebaseTransaction()
     }
-  }, [headRebaseSnapshot])
+
+    activeListRevisionRef.current = listRevision
+    activeViewportRef.current = scrollParentRef
+
+    if (headRebaseTarget && scrollParentRef) {
+      const nextTransaction: HeadRebaseTransaction = {
+        ...headRebaseTarget,
+        phase: 'registered',
+        viewport: scrollParentRef
+      }
+      cancelHeadRebaseTransaction()
+      headRebaseTransactionRef.current = nextTransaction
+    }
+  }, [cancelHeadRebaseTransaction, childUpdate.update, hasChildren, headRebaseTarget, listRevision, scrollParentRef])
 
   const clearNewMessageCount = useCallback(() => {
     if (newMessageCountRef.current === 0) return
@@ -290,18 +317,12 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     headAnchorRef.current = null
   }, [])
 
-  const clearHeadRebaseSnapshot = useCallback((snapshot?: HeadRebaseSnapshot | null) => {
-    if (snapshot === undefined || headRebaseSnapshotRef.current === snapshot) {
-      headRebaseSnapshotRef.current = null
-    }
-  }, [])
-
   const cancelLatestRecovery = useCallback(() => {
     latestRecoveryRef.current = false
   }, [])
 
   const runScrollCommand = useCallback(
-    (command: ScrollCommand, headRebaseSnapshot: HeadRebaseSnapshot | null = null) => {
+    (command: ScrollCommand, headRebaseTransaction: HeadRebaseTransaction | null = null) => {
       const handle = virtuosoRef.current
       if (!handle) return
 
@@ -316,11 +337,30 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
           handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
           return
         case 'head-rebase':
-          pendingProgrammaticScrollRef.current = { headRebaseSnapshot }
+          if (headRebaseTransaction) {
+            if (
+              headRebaseTransactionRef.current !== headRebaseTransaction ||
+              headRebaseTransaction.phase !== 'registered' ||
+              activeViewportRef.current !== headRebaseTransaction.viewport
+            ) {
+              return
+            }
+            headRebaseTransaction.phase = 'pending'
+          }
+          if (!scrollParentRef) return
+          pendingProgrammaticScrollRef.current = {
+            headRebaseTransaction,
+            viewport: headRebaseTransaction?.viewport ?? scrollParentRef
+          }
           handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
       }
     },
-    []
+    [scrollParentRef]
+  )
+
+  const isCurrentListCallback = useCallback(
+    () => activeListRevisionRef.current === listRevision && activeViewportRef.current === scrollParentRef,
+    [listRevision, scrollParentRef]
   )
 
   const captureInitialScrollCancellation = useCallback(() => {
@@ -440,7 +480,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       lastScrollTopRef.current = scrollParentRef.scrollTop
       manualScrollDownRef.current = false
       pendingProgrammaticScrollRef.current = null
-      clearHeadRebaseSnapshot()
+      cancelHeadRebaseTransaction()
       manualScrollIntentRef.current = true
     }
     const markScrollbarScrollIntent = (event: PointerEvent) => {
@@ -454,21 +494,33 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     scrollArea.addEventListener('touchmove', markManualScrollIntent, { passive: true })
     scrollArea.addEventListener('pointerdown', markScrollbarScrollIntent)
     const handleScroll = () => {
+      if (activeListRevisionRef.current !== listRevision || activeViewportRef.current !== scrollParentRef) return
+
       const nextScrollTop = scrollParentRef.scrollTop
       const pendingProgrammaticScroll = pendingProgrammaticScrollRef.current
-      if (pendingProgrammaticScroll) {
+      if (pendingProgrammaticScroll?.viewport === scrollParentRef) {
         pendingProgrammaticScrollRef.current = null
         manualScrollDownRef.current = false
         lastScrollTopRef.current = nextScrollTop
-        if (
-          !pendingProgrammaticScroll.headRebaseSnapshot ||
-          headRebaseSnapshotRef.current === pendingProgrammaticScroll.headRebaseSnapshot
-        ) {
+        const transaction = pendingProgrammaticScroll.headRebaseTransaction
+        if (!transaction) {
           const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
           atBottomRef.current = finalActionState.isAtBottom
-          clearHeadRebaseSnapshot(pendingProgrammaticScroll.headRebaseSnapshot)
           updateViewportActionState(finalActionState)
+          return
         }
+
+        if (
+          headRebaseTransactionRef.current !== transaction ||
+          transaction.phase !== 'pending' ||
+          transaction.viewport !== scrollParentRef
+        ) {
+          return
+        }
+        const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
+        atBottomRef.current = finalActionState.isAtBottom
+        cancelHeadRebaseTransaction(transaction)
+        updateViewportActionState(finalActionState)
         return
       }
 
@@ -485,17 +537,14 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       scrollArea.removeEventListener('touchmove', markManualScrollIntent)
       scrollArea.removeEventListener('pointerdown', markScrollbarScrollIntent)
       scrollParentRef.removeEventListener('scroll', handleScroll)
-      clearInitialScrollCancellation()
-      clearHeadAnchor()
-      clearHeadRebaseSnapshot()
-      cancelLatestRecovery()
     }
   }, [
     acknowledgeManualDeparture,
+    cancelHeadRebaseTransaction,
     cancelLatestRecovery,
     clearHeadAnchor,
-    clearHeadRebaseSnapshot,
     clearInitialScrollCancellation,
+    listRevision,
     promoteManualScroll,
     scrollParentRef,
     updateViewportActionState
@@ -503,7 +552,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const handleAtBottomStateChange = useCallback(
     (reportedAtBottom: boolean) => {
-      if (headRebaseSnapshotRef.current) return
+      if (!isCurrentListCallback()) return
+      if (headRebaseTransactionRef.current) return
       if (tailBottomSnapshot?.callbackPending && !tailBottomSnapshot.atBottom) {
         tailBottomSnapshot.callbackPending = false
         return
@@ -530,6 +580,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       clearHeadAnchor,
       clearInitialScrollCancellation,
       clearNewMessageCount,
+      isCurrentListCallback,
       scrollParentRef,
       tailBottomSnapshot,
       updateViewportActionState
@@ -538,6 +589,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const handleIsScrolling = useCallback(
     (isScrolling: boolean) => {
+      if (!isCurrentListCallback()) return
       if (isScrolling) {
         promoteManualScroll()
         acknowledgeManualDeparture()
@@ -573,19 +625,28 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       clearNewMessageCount,
       promoteManualScroll,
       runScrollCommand,
+      isCurrentListCallback,
       scrollParentRef,
       updateViewportActionState
     ]
   )
 
   const handleTotalListHeightChanged = useCallback(() => {
-    if (!scrollParentRef) return
-    const headRebaseSnapshot = headRebaseSnapshotRef.current
-    if (headRebaseSnapshot) {
-      if (pendingProgrammaticScrollRef.current?.headRebaseSnapshot !== headRebaseSnapshot) {
+    if (!scrollParentRef || !isCurrentListCallback()) return
+    const headRebaseTransaction = headRebaseTransactionRef.current
+    if (headRebaseTransaction) {
+      if (headRebaseTransaction.viewport !== scrollParentRef) return
+      if (headRebaseTransaction.phase === 'registered') {
+        if (hasHeadRebaseTarget(headRebaseTransaction, itemKeysRef.current)) {
+          const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
+          atBottomRef.current = finalActionState.isAtBottom
+          cancelHeadRebaseTransaction(headRebaseTransaction)
+          updateViewportActionState(finalActionState)
+          return
+        }
         runScrollCommand(
-          { command: 'head-rebase', index: headRebaseSnapshot.index, offset: headRebaseSnapshot.offset },
-          headRebaseSnapshot
+          { command: 'head-rebase', index: headRebaseTransaction.index, offset: headRebaseTransaction.offset },
+          headRebaseTransaction
         )
       }
       return
@@ -597,7 +658,14 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       return
     }
     updateViewportActionState(atBottom)
-  }, [handleAtBottomStateChange, runScrollCommand, scrollParentRef, updateViewportActionState])
+  }, [
+    cancelHeadRebaseTransaction,
+    handleAtBottomStateChange,
+    isCurrentListCallback,
+    runScrollCommand,
+    scrollParentRef,
+    updateViewportActionState
+  ])
 
   const handleFollowOutput = useCallback(
     (reportedAtBottom: boolean) => {
@@ -616,7 +684,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     manualScrollPausedRef.current = false
     manualScrollDownRef.current = false
     pendingProgrammaticScrollRef.current = null
-    clearHeadRebaseSnapshot()
+    cancelHeadRebaseTransaction()
     latestRecoveryRef.current = true
     clearInitialScrollCancellation()
     clearHeadAnchor()
@@ -624,8 +692,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     updateViewportActionState()
     runScrollCommand({ command: 'follow-latest' })
   }, [
+    cancelHeadRebaseTransaction,
     clearHeadAnchor,
-    clearHeadRebaseSnapshot,
     clearInitialScrollCancellation,
     clearNewMessageCount,
     runScrollCommand,
