@@ -7,10 +7,10 @@ import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom, type SendMessageCommand } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import type { Database } from '@/domain/externs/Database'
-import { createIndexedDBDatabase } from '@/domain/impls/database/IndexedDB'
+import { createIndexedDBDatabase, type IndexedDBDatabase } from '@/domain/impls/database/IndexedDB'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
-import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { createMemoryMessageDatabase, type MemoryDatabase } from '@/domain/impls/database/Memory'
 import {
   MessageDatabaseExtern,
   createMessageDatabaseDefinition,
@@ -34,9 +34,11 @@ const SELF: UserInfo = {
 const LOCAL_USER: ChatUser = { id: SELF.id, name: SELF.name, avatar: SELF.avatar }
 const REMOTE: ChatUser = { id: 'remote-user', name: 'Remote', avatar: '' }
 
+type DatabaseImplementation = MemoryDatabase<MessageDatabaseSchema> | IndexedDBDatabase<MessageDatabaseSchema>
+
 interface Backend {
   readonly name: string
-  create(name: string): Database<MessageDatabaseSchema>
+  create(name: string): DatabaseImplementation
 }
 
 const backends: Backend[] = [
@@ -48,7 +50,7 @@ const backends: Backend[] = [
 ]
 
 let sequence = 0
-const databases = new Set<Database<MessageDatabaseSchema>>()
+const databases = new Set<DatabaseImplementation>()
 const names = new Set<string>()
 
 const textRecord = (id: string, body: string, user = LOCAL_USER): TextMessageRecord => ({

@@ -1,15 +1,16 @@
 import 'fake-indexeddb/auto'
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Database } from '@/domain/externs/Database'
 import { createMessageDatabaseDefinition, type MessageDatabaseSchema } from '@/domain/MessageStore'
-import { createIndexedDBDatabase } from './IndexedDB'
-import { createMemoryDatabase, createMemoryMessageDatabase } from './Memory'
+import { createIndexedDBDatabase, type IndexedDBDatabase } from './IndexedDB'
+import { createMemoryDatabase, createMemoryMessageDatabase, type MemoryDatabase } from './Memory'
 import type { DatabaseDefinition } from './Definition'
+
+type DatabaseImplementation = MemoryDatabase<MessageDatabaseSchema> | IndexedDBDatabase<MessageDatabaseSchema>
 
 interface Backend {
   readonly name: string
-  create(name: string): Database<MessageDatabaseSchema>
+  create(name: string): DatabaseImplementation
 }
 
 const backends: Backend[] = [
@@ -21,7 +22,7 @@ const backends: Backend[] = [
 ]
 
 let databaseId = 0
-const opened = new Set<Database<MessageDatabaseSchema>>()
+const opened = new Set<DatabaseImplementation>()
 const names = new Set<string>()
 
 const create = (backend: Backend, logicalName?: string) => {

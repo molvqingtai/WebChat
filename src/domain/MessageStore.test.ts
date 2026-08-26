@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@/domain/externs/Database'
-import { createIndexedDBDatabase } from '@/domain/impls/database/IndexedDB'
-import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { createIndexedDBDatabase, type IndexedDBDatabase } from '@/domain/impls/database/IndexedDB'
+import { createMemoryMessageDatabase, type MemoryDatabase } from '@/domain/impls/database/Memory'
 import {
   createMessageDatabaseDefinition,
   createMessageStore,
@@ -19,9 +19,11 @@ import {
 } from '@/domain/Message'
 import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 
+type DatabaseImplementation = MemoryDatabase<MessageDatabaseSchema> | IndexedDBDatabase<MessageDatabaseSchema>
+
 interface Backend {
   readonly name: string
-  create(name: string): Database<MessageDatabaseSchema>
+  create(name: string): DatabaseImplementation
 }
 
 const backends: Backend[] = [
@@ -34,7 +36,7 @@ const backends: Backend[] = [
 
 const USER = { id: 'user-1', name: 'User', avatar: '' }
 let databaseId = 0
-const opened = new Set<Database<MessageDatabaseSchema>>()
+const opened = new Set<DatabaseImplementation>()
 const names = new Set<string>()
 
 declare const typedMessageStore: MessageStore
@@ -286,8 +288,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
         stores.includes('conflicts')
           ? Promise.reject(new Error('conflicts store unavailable'))
           : database.write(stores, operation, signal),
-      watch: (stores, listener) => database.watch(stores, listener),
-      close: () => database.close()
+      watch: (stores, listener) => database.watch(stores, listener)
     }
     const messageStore = createMessageStore(failing)
     await expect(messageStore.query()).resolves.toEqual([valid])
@@ -463,8 +464,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
           return result
         }),
       write: (stores, operation, signal) => database.write(stores, operation, signal),
-      watch: (stores, listener) => database.watch(stores, listener),
-      close: () => database.close()
+      watch: (stores, listener) => database.watch(stores, listener)
     }
 
     await expect(
