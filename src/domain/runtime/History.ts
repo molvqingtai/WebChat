@@ -17,7 +17,6 @@ import {
   MESSAGE_TYPE,
   type ChatMessage,
   type ChatUser,
-  type HLC,
   type HistoryMessagesPull,
   type HistoryMessagesPush
 } from '@/protocol'
