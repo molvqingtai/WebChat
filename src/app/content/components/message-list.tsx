@@ -83,6 +83,7 @@ type TailBottomSnapshot = {
 
 type HeadRebaseTransaction = {
   index: number
+  itemKeys: readonly string[]
   key: string
   offset: number
   phase: 'registered' | 'pending'
@@ -107,14 +108,17 @@ const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): 
   return { index, key, offset: viewportBounds.top - item.getBoundingClientRect().top }
 }
 
-const hasHeadRebaseTarget = (transaction: HeadRebaseTransaction, itemKeys: readonly string[]) => {
-  if (itemKeys[transaction.index] !== transaction.key) return false
+const hasHeadRebaseTarget = (transaction: HeadRebaseTransaction) => {
+  if (transaction.itemKeys[transaction.index] !== transaction.key) return false
 
   const item = transaction.viewport.querySelector<HTMLElement>(`[data-index="${transaction.index}"]`)
   if (!item) return false
 
   return transaction.viewport.getBoundingClientRect().top - item.getBoundingClientRect().top === transaction.offset
 }
+
+const haveSameItemKeys = (first: readonly string[], second: readonly string[]) =>
+  first.length === second.length && first.every((key, index) => key === second[index])
 
 const isViewportAtBottom = (scrollParent: HTMLElement) =>
   scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 1
@@ -191,7 +195,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const manualScrollDownRef = useRef(false)
   const lastScrollTopRef = useRef(0)
   const pendingProgrammaticScrollRef = useRef<PendingProgrammaticScroll | null>(null)
-  const activeListRevisionRef = useRef<object | null>(null)
+  const currentItemKeysRef = useRef<readonly string[]>([])
   const activeViewportRef = useRef<HTMLElement | null>(null)
   const initialScrollCancellationEligibleRef = useRef(true)
   const initialScrollCancellationPendingRef = useRef(false)
@@ -207,7 +211,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     [children, hasChildren]
   )
   const itemKeysRef = useRef<readonly string[]>(itemKeys)
-  const listRevision = useMemo(() => ({}), [itemKeys])
   const childUpdate = useMemo(() => getChildUpdate(previousItemKeysRef.current, itemKeys), [itemKeys])
   const headCount =
     childUpdate.update === 'head' ? childUpdate.count : childUpdate.update === 'head-tail' ? childUpdate.headCount : 0
@@ -240,6 +243,10 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const cancelHeadRebaseTransaction = useCallback((transaction?: HeadRebaseTransaction | null) => {
     if (transaction !== undefined && headRebaseTransactionRef.current !== transaction) return
 
+    const currentTransaction = headRebaseTransactionRef.current
+    if (currentTransaction && pendingProgrammaticScrollRef.current?.headRebaseTransaction === currentTransaction) {
+      pendingProgrammaticScrollRef.current = null
+    }
     headRebaseTransactionRef.current = null
   }, [])
 
@@ -253,19 +260,20 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       cancelHeadRebaseTransaction()
     }
 
-    activeListRevisionRef.current = listRevision
+    currentItemKeysRef.current = itemKeys
     activeViewportRef.current = scrollParentRef
 
     if (headRebaseTarget && scrollParentRef) {
       const nextTransaction: HeadRebaseTransaction = {
         ...headRebaseTarget,
+        itemKeys,
         phase: 'registered',
         viewport: scrollParentRef
       }
       cancelHeadRebaseTransaction()
       headRebaseTransactionRef.current = nextTransaction
     }
-  }, [cancelHeadRebaseTransaction, childUpdate.update, hasChildren, headRebaseTarget, listRevision, scrollParentRef])
+  }, [cancelHeadRebaseTransaction, childUpdate.update, hasChildren, headRebaseTarget, itemKeys, scrollParentRef])
 
   const clearNewMessageCount = useCallback(() => {
     if (newMessageCountRef.current === 0) return
@@ -359,8 +367,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   )
 
   const isCurrentListCallback = useCallback(
-    () => activeListRevisionRef.current === listRevision && activeViewportRef.current === scrollParentRef,
-    [listRevision, scrollParentRef]
+    () => activeViewportRef.current === scrollParentRef && haveSameItemKeys(currentItemKeysRef.current, itemKeys),
+    [itemKeys, scrollParentRef]
   )
 
   const captureInitialScrollCancellation = useCallback(() => {
@@ -494,7 +502,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     scrollArea.addEventListener('touchmove', markManualScrollIntent, { passive: true })
     scrollArea.addEventListener('pointerdown', markScrollbarScrollIntent)
     const handleScroll = () => {
-      if (activeListRevisionRef.current !== listRevision || activeViewportRef.current !== scrollParentRef) return
+      if (!isCurrentListCallback()) return
 
       const nextScrollTop = scrollParentRef.scrollTop
       const pendingProgrammaticScroll = pendingProgrammaticScrollRef.current
@@ -544,8 +552,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     cancelLatestRecovery,
     clearHeadAnchor,
     clearInitialScrollCancellation,
-    listRevision,
     promoteManualScroll,
+    isCurrentListCallback,
     scrollParentRef,
     updateViewportActionState
   ])
@@ -637,7 +645,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     if (headRebaseTransaction) {
       if (headRebaseTransaction.viewport !== scrollParentRef) return
       if (headRebaseTransaction.phase === 'registered') {
-        if (hasHeadRebaseTarget(headRebaseTransaction, itemKeysRef.current)) {
+        if (hasHeadRebaseTarget(headRebaseTransaction)) {
           const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
           atBottomRef.current = finalActionState.isAtBottom
           cancelHeadRebaseTransaction(headRebaseTransaction)
