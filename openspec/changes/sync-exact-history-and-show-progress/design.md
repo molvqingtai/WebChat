@@ -40,7 +40,7 @@ Request and response page counters each start at zero. The provider cannot query
 
 ### 3. The two 30-day snapshots freeze at their owning boundaries
 
-The requester freezes its cutoff and one settled snapshot of canonical Chat record IDs before sending page zero. The provider freezes its separate cutoff and one settled canonical Chat-record snapshot only after the complete remote inventory arrives. The provider converts inventory entries to a set, filters its snapshot, keeps canonical recent-first order, and derives response pages whose `users` array is exactly the distinct author set of that page.
+The requester freezes its cutoff and one settled snapshot of canonical Chat record IDs before sending page zero. The provider freezes its separate cutoff and one settled canonical Chat-record snapshot only after the complete remote inventory arrives. The provider converts inventory entries to a set, filters its snapshot, sorts the complete snapshot in canonical oldest-first order, and derives response pages whose `users` array is exactly the distinct author set of that page.
 
 Records arriving after either snapshot are not spliced into that snapshot. Live delivery continues normally, and a later independent room connection observes current storage through its own new synchronization. This is smaller and more deterministic than a mutable scan cursor and closes page drift without persisting a snapshot ID.
 
@@ -76,7 +76,7 @@ Delivery continues to admit each History response page as one atomic batch withi
 
 ### 9. Regression coverage replaces rather than extends old behavior
 
-Protocol tests must prove exact current shapes, declarative unknown-key/old-type/count rejection, v5 isolation, `session-end` rejection, and opaque-ID frame bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, producer-created page authors, empty phases, ordering/replay rejection, serial insertion, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
+Protocol tests must prove exact current shapes, declarative unknown-key/old-type/count rejection, v5 isolation, `session-end` rejection, and opaque-ID frame bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, provider oldest-first pagination, producer-created page authors, empty phases, replay/page rejection, serial insertion, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
 
 Old cursor/full-window fixtures and tests are deleted. No test may retain an old path as a fallback or describe an intermediate migration state as product behavior.
 

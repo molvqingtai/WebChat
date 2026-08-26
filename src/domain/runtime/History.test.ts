@@ -645,12 +645,15 @@ describe('HistoryDomain peer-scoped requester targets', () => {
       user: USER,
       receivedAt: 1_000_000
     })
-    // One more record than a single response page holds, so the push chunks into two pages.
-    const ids = Array.from({ length: 101 }, (_, index) => `m-${index}`)
+    // All records share one HLC, so the canonical ID tie-breaker determines the full snapshot
+    // order. Reversing the supplied snapshot proves sorting occurs before (rather than per) page
+    // slicing: page zero must still start with the globally oldest record.
+    const ids = Array.from({ length: 101 }, (_, index) => `m-${String(index).padStart(3, '0')}`)
+    const shuffledIds = [...ids].reverse()
     pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
         void pagePort.resolveHistorySupply(1, event.request.supplyId, {
-          records: ids.map(record),
+          records: shuffledIds.map(record),
           done: true
         })
       }
@@ -666,6 +669,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     expect(pages.map((page) => page.page)).toEqual(pages.map((_, index) => index))
     expect(pages.slice(0, -1).every((page) => !page.done)).toBe(true)
     expect(pages.at(-1)?.done).toBe(true)
+    expect(pages.flatMap((page) => page.messages.map((message) => message.id))).toEqual(ids)
   })
 })
 

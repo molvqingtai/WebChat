@@ -53,8 +53,6 @@ interface RequesterSupplyJob extends HistoryAttemptKey {
  * failure, and completion; records merge across providers through delivery insert-if-absent. */
 interface ProviderResponseState {
   expectedResponsePage: number
-  /** Canonical position of the last applied response record, for cross-page recent-first continuity. */
-  lastResponsePosition?: { hlc: HLC; id: string }
   awaitingBatchId?: string
   finalBatch: boolean
   responseDone: boolean
@@ -1631,53 +1629,6 @@ const HistoryDomain = Remesh.domain({
 
     // ── Requester response input (bounded serial queue + replay controls) ──────
 
-    const prepareResponsePage = (
-      current: RequesterAttemptState,
-      provider: ProviderResponseState,
-      payload: WireMessageEvent & { message: HistoryMessagesPush }
-    ):
-      | {
-          ok: false
-          action: ReturnType<typeof FinishRequestedEvent> | ReturnType<typeof wireDomain.command.DropProtocolCommand>
-        }
-      | { ok: true; page: HistoryMessagesPush } => {
-      if (provider.responseDone) {
-        return {
-          ok: false,
-          action: FinishRequestedEvent({
-            domain: current.domain,
-            syncId: current.syncId,
-            providerId: payload.sourcePeerId
-          })
-        }
-      }
-      const ordered = payload.message.messages.every(
-        (event, index) => index === 0 || compareEventPosition(payload.message.messages[index - 1], event) > 0
-      )
-      if (!ordered) {
-        return {
-          ok: false,
-          action: wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'history response is not strictly recent-first'
-          })
-        }
-      }
-      if (payload.message.messages.length > 0 && provider.lastResponsePosition) {
-        const newest = payload.message.messages[0]
-        if (compareEventPosition(provider.lastResponsePosition, newest) <= 0) {
-          return {
-            ok: false,
-            action: wireDomain.command.DropProtocolCommand({
-              sourcePeerId: payload.sourcePeerId,
-              reason: 'history response is not strictly recent-first across pages'
-            })
-          }
-        }
-      }
-      return { ok: true, page: payload.message }
-    }
-
     const HistoryMessagesPushCommand = domain.command({
       name: 'History.HistoryMessagesPushCommand',
       impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPush }) => {
@@ -1784,9 +1735,14 @@ const HistoryDomain = Remesh.domain({
             providerId: payload.sourcePeerId
           })
         }
-        const prepared = prepareResponsePage(current, provider, payload)
-        if (!prepared.ok) return prepared.action
-        const page = prepared.page
+        if (provider.responseDone) {
+          return FinishRequestedEvent({
+            domain: current.domain,
+            syncId: current.syncId,
+            providerId: payload.sourcePeerId
+          })
+        }
+        const page = payload.message
         const expectedHlc = get(sessionDomain.query.HlcQuery())
         let hlc = expectedHlc
         const records: ChatMessageRecord[] = []
@@ -1809,11 +1765,9 @@ const HistoryDomain = Remesh.domain({
         }
         const allocated = nextTokens(get, 1)
         const batchId = token('batch', allocated.values[0])
-        const oldest = records.length > 0 ? records[records.length - 1].message : undefined
         const next: RequesterAttemptState = withProvider({
           ...provider,
           expectedResponsePage: provider.expectedResponsePage + 1,
-          lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : provider.lastResponsePosition,
           awaitingBatchId: batchId,
           finalBatch: page.done,
           responseDone: page.done,
@@ -1879,61 +1833,50 @@ const HistoryDomain = Remesh.domain({
             output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
             return output
           }
-          const prepared = prepareResponsePage(next, nextLane, {
-            roomId: '',
-            sourcePeerId: providerId,
-            message: queued
-          })
-          if (!prepared.ok) {
-            output.push(prepared.action)
-          } else {
-            const page = prepared.page
-            const expectedHlc = get(sessionDomain.query.HlcQuery())
-            let hlc = expectedHlc
-            const records: ChatMessageRecord[] = []
-            // and continue skips events observeHlc rejects while threading ordered clock state
-            for (const event of page.messages) {
-              if (event.hlc.timestamp < next.cutoff) {
-                output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
-                break
-              }
-              const user =
-                page.users.find((candidate) => candidate.id === event.userId) ??
-                ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
-              const observed = observeHlc(hlc, event.hlc, clock.now())
-              if (!observed) continue
-              hlc = observed
-              records.push(makeRecord(event, user, clock.now()))
+          const page = queued
+          const expectedHlc = get(sessionDomain.query.HlcQuery())
+          let hlc = expectedHlc
+          const records: ChatMessageRecord[] = []
+          // and continue skips events observeHlc rejects while threading ordered clock state
+          for (const event of page.messages) {
+            if (event.hlc.timestamp < next.cutoff) {
+              output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
+              break
             }
-            if (records.length === page.messages.length) {
-              const allocated = nextTokens(get, 1)
-              const batchId = token('batch', allocated.values[0])
-              const oldest = records.length > 0 ? records[records.length - 1].message : undefined
-              const appliedLane: ProviderResponseState = {
-                ...nextLane,
-                expectedResponsePage: nextLane.expectedResponsePage + 1,
-                lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : nextLane.lastResponsePosition,
-                awaitingBatchId: batchId,
-                finalBatch: page.done,
-                responseDone: page.done,
-                lastAppliedPageFingerprint: JSON.stringify(page)
-              }
-              const applied: RequesterAttemptState = {
-                ...next,
-                providers: { ...next.providers, [providerId]: appliedLane }
-              }
-              output.push(
-                TokenState().new(allocated.next),
-                sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
-                RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), applied)),
-                deliveryDomain.command.AcceptInboundBatchCommand({
-                  domain: current.domain,
-                  records,
-                  source: 'history',
-                  batchId
-                })
-              )
+            const user =
+              page.users.find((candidate) => candidate.id === event.userId) ??
+              ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
+            const observed = observeHlc(hlc, event.hlc, clock.now())
+            if (!observed) continue
+            hlc = observed
+            records.push(makeRecord(event, user, clock.now()))
+          }
+          if (records.length === page.messages.length) {
+            const allocated = nextTokens(get, 1)
+            const batchId = token('batch', allocated.values[0])
+            const appliedLane: ProviderResponseState = {
+              ...nextLane,
+              expectedResponsePage: nextLane.expectedResponsePage + 1,
+              awaitingBatchId: batchId,
+              finalBatch: page.done,
+              responseDone: page.done,
+              lastAppliedPageFingerprint: JSON.stringify(page)
             }
+            const applied: RequesterAttemptState = {
+              ...next,
+              providers: { ...next.providers, [providerId]: appliedLane }
+            }
+            output.push(
+              TokenState().new(allocated.next),
+              sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
+              RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), applied)),
+              deliveryDomain.command.AcceptInboundBatchCommand({
+                domain: current.domain,
+                records,
+                source: 'history',
+                batchId
+              })
+            )
           }
         }
         return output
@@ -2321,12 +2264,12 @@ const HistoryDomain = Remesh.domain({
               const known = attempt.inventory
               // Only pre-cutoff records and already-known IDs are skipped; no cumulative session
               // budget applies beyond each page's public per-frame and per-page limits.
-              const eligible = supplied.records.filter(
-                (record) => !known.has(record.message.id) && record.message.hlc.timestamp >= attempt.cutoff
-              )
+              const snapshot = supplied.records
+                .filter((record) => !known.has(record.message.id) && record.message.hlc.timestamp >= attempt.cutoff)
+                .sort((left, right) => compareEventPosition(left.message, right.message))
               const nextProvider: ProviderAttemptState = {
                 ...attempt,
-                snapshot: eligible
+                snapshot
               }
               return [
                 sendStageMarker,
@@ -2336,7 +2279,7 @@ const HistoryDomain = Remesh.domain({
                 ),
                 QueueProviderResponseCommand({
                   ...request,
-                  records: eligible,
+                  records: snapshot,
                   remaining: [],
                   terminal: true
                 }) as RemeshCommandOutput
