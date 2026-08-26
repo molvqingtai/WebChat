@@ -1,10 +1,9 @@
 import { Remesh } from 'remesh'
-import { catchError, concatMap, defer, EMPTY, map } from 'rxjs'
+import { map } from 'rxjs'
 import { MAX_INBOUND_BUFFER_BYTES, MAX_INBOUND_BUFFER_EVENTS } from '@/constants/config'
 import type { ChatMessageRecord } from '@/domain/Message'
 import type { InboundEvent } from '@/runtime/Contract'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
-import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 
 interface Delivery {
@@ -18,7 +17,6 @@ const DeliveryDomain = Remesh.domain({
   name: 'DeliveryDomain',
   impl: (domain) => {
     const lifecycleDomain = domain.getDomain(LifecycleDomain())
-    const pagePort = domain.getExtern(PagePortExtern)
     const DeliveriesState = domain.state<Delivery[]>({
       name: 'Delivery.DeliveriesState',
       default: []
@@ -166,12 +164,6 @@ const DeliveryDomain = Remesh.domain({
       }
     })
 
-    const ReplayCommand = domain.command({
-      name: 'Delivery.ReplayCommand',
-      impl: ({ get }, payload: { domain: string; after: number }) =>
-        get(BufferedEventsQuery(payload)).map(InboundReplayedEvent)
-    })
-
     const ReleaseDomainCommand = domain.command({
       name: 'Delivery.ReleaseDomainCommand',
       impl: ({ get }, releasedDomain: string) => {
@@ -195,7 +187,6 @@ const DeliveryDomain = Remesh.domain({
     })
 
     const InboundAcceptedEvent = domain.event<InboundEvent>({ name: 'Delivery.InboundAcceptedEvent' })
-    const InboundReplayedEvent = domain.event<InboundEvent>({ name: 'Delivery.InboundReplayedEvent' })
     const InboundAckedEvent = domain.event<{ domain: string; sequence: number }>({
       name: 'Delivery.InboundAckedEvent'
     })
@@ -213,21 +204,6 @@ const DeliveryDomain = Remesh.domain({
     })
 
     domain.effect({
-      name: 'Delivery.PageEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(InboundAcceptedEvent).pipe(
-          concatMap((event) =>
-            defer(() =>
-              pagePort.emitInbound(get(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? [], event)
-            ).pipe(
-              map(() => null),
-              catchError(() => EMPTY)
-            )
-          )
-        )
-    })
-
-    domain.effect({
       name: 'Delivery.ReleaseWithDomainEffect',
       impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(map(ReleaseDomainCommand))
     })
@@ -238,12 +214,10 @@ const DeliveryDomain = Remesh.domain({
         AcceptInboundCommand,
         AcceptInboundBatchCommand,
         AckInboundCommand,
-        ReplayCommand,
         ReleaseDomainCommand
       },
       event: {
         InboundAcceptedEvent,
-        InboundReplayedEvent,
         InboundAckedEvent,
         InboundDiscardedEvent,
         InboundBatchDiscardedEvent,

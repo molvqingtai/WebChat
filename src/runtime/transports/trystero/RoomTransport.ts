@@ -7,6 +7,8 @@ interface PeerOwner {
   room?: Room
   /** The in-flight physical leave settlement for this room, if any. */
   pendingLeave?: Promise<void>
+  /** The exact physical leave terminal, retained for Server-private replacement. */
+  leaveTerminal?: Promise<void>
   /** The retained failure of the last physical leave; the room stays occupied and non-reentrant. */
   leaveError?: { value: unknown }
   /** Failure attribution of the in-flight leave; dispose upgrades any pending leave to diagnostic. */
@@ -78,35 +80,61 @@ export const createRoomTransport = (): RoomTransport => {
     return owner
   }
 
-  const dropOwner = (owner: PeerOwner) => {
-    if (owner.pendingLeave) return
+  const beginLeave = (owner: PeerOwner, reportFailure: boolean): Promise<void> => {
+    if (owner.leaveTerminal) return owner.leaveTerminal
     const room = owner.room
     if (!room) {
       owner.disposed = true
       owners.delete(owner.roomId)
-      return
+      return Promise.resolve()
     }
     // The physical leave settles asynchronously; the room stays occupied until it succeeds. A
     // same-room join must await this settlement before creating a fresh Room, and a failed leave
     // keeps the owner as a non-reentrant occupancy record.
-    const pending = room.leave().then(
-      () => {
-        owner.disposed = true
-        owner.room = undefined
-        if (owners.get(owner.roomId) === owner) owners.delete(owner.roomId)
-      },
-      (error: unknown) => {
-        // A failed leave keeps the room occupied: the owner is retained so no second Room is
-        // ever created for this roomId, and later joins reject with this exact failure.
-        owner.leaveError = { value: error }
+    let terminal: Promise<void>
+    try {
+      terminal = room.leave().then(
+        () => {
+          owner.disposed = true
+          owner.room = undefined
+          if (owners.get(owner.roomId) === owner) owners.delete(owner.roomId)
+        },
+        (error: unknown) => {
+          // A failed leave keeps the room occupied: the owner is retained so no second Room is
+          // ever created for this roomId, and later joins reject with this exact failure.
+          owner.leaveError = { value: error }
+          if (reportFailure) {
+            if (owner.leaveDiagnostic) console.error(error)
+            else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+          }
+          throw error
+        }
+      )
+    } catch (error) {
+      owner.leaveError = { value: error }
+      if (reportFailure) {
         if (owner.leaveDiagnostic) console.error(error)
         else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
       }
+      return Promise.reject(error)
+    }
+    const pending = terminal.then(
+      () => {},
+      () => {}
     )
+    owner.leaveTerminal = terminal
     owner.pendingLeave = pending
+    void terminal.catch(() => {})
     void pending.finally(() => {
-      owner.pendingLeave = undefined
+      if (owner.pendingLeave === pending) owner.pendingLeave = undefined
+      if (owner.leaveTerminal === terminal) owner.leaveTerminal = undefined
     })
+    return terminal
+  }
+
+  const dropOwner = (owner: PeerOwner) => {
+    if (owner.pendingLeave) return
+    void beginLeave(owner, true).catch(() => {})
   }
 
   return {
@@ -137,6 +165,28 @@ export const createRoomTransport = (): RoomTransport => {
       if (!owner) return
       if (!owner.pendingLeave) owner.leaveDiagnostic = options?.diagnosticOnly === true
       dropOwner(owner)
+    },
+    retireRoomsForPreparation: async (roomIds) => {
+      const terminals = [...new Set(roomIds)].flatMap((roomId) => {
+        const owner = owners.get(roomId)
+        if (!owner) return []
+        return [owner.leaveTerminal ?? beginLeave(owner, false)]
+      })
+      let failed = false
+      let firstFailure: unknown
+      await Promise.all(
+        terminals.map(async (terminal) => {
+          try {
+            await terminal
+          } catch (error) {
+            if (!failed) {
+              failed = true
+              firstFailure = error
+            }
+          }
+        })
+      )
+      if (failed) throw firstFailure
     },
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)

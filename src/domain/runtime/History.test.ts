@@ -46,6 +46,7 @@ const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
     peerIdOf: () => localPeerId,
     join: async () => {},
     leave: () => {},
+    retireRoomsForPreparation: async () => {},
     send: async (roomId, payload, targetPeerIds) => {
       sent.push({ roomId, targetPeerIds, message: JSON.parse(payload) as ChatRoomMessage })
     },
@@ -184,6 +185,9 @@ const connectedNetwork = () => {
           other.peerLeaveListeners.forEach((listener) => listener(roomId, peerId))
         })
       },
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach((roomId) => transport.leave(roomId))
+      },
       send: async (roomId, payload, targetPeerIds) => {
         const requested =
           targetPeerIds === undefined
@@ -273,7 +277,7 @@ const sendProviderRequest = (
 describe('HistoryDomain connection-binding lifecycle', () => {
   it('domain release clears both directional bindings (mutation-sensitive)', async () => {
     const { store, history, pagePort, receive } = await setup()
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') throw new Error('page-a broken')
     })
     // Provider direction: a synchronization binds, terminates, and its replay is inert.
@@ -320,9 +324,9 @@ describe('HistoryDomain connection-binding lifecycle', () => {
 describe('HistoryDomain inventory targets', () => {
   it('sends every inventory page once to the triggering source provider', async () => {
     const { store, history, pagePort, receive, sent } = await setup()
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
-        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+        void pagePort.resolveHistorySupply(1, event.request.supplyId, { records: [], done: true })
       }
     })
 
@@ -346,9 +350,9 @@ describe('HistoryDomain inventory targets', () => {
 
   it('settles a self-only inventory attempt without a provider send', async () => {
     const { store, history, pagePort, sent } = await setup('local-peer')
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
-        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+        void pagePort.resolveHistorySupply(1, event.request.supplyId, { records: [], done: true })
       }
     })
 
@@ -376,9 +380,9 @@ describe('HistoryDomain peer-scoped requester targets', () => {
   }
 
   const supplyEmpty = (pagePort: Fixture['pagePort']) =>
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
-        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+        void pagePort.resolveHistorySupply(1, event.request.supplyId, { records: [], done: true })
       }
     })
 
@@ -396,16 +400,14 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     const lifecycle = store.getDomain(lifecycleAction)
     store.subscribeDomain(lifecycleAction)
     store.igniteDomain(lifecycleAction)
-    store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, pageId: 'page-a' }))
+    store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, tabId: 1 }))
     const inbound: ChatMessageRecord[] = []
     const feedback: unknown[] = []
-    pagePort.onInbound('page-a', (event) => {
-      if ('record' in event) {
-        inbound.push(event.record)
-        store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: event.sequence, inserted: true }))
-      }
+    store.subscribeEvent(delivery.event.InboundAcceptedEvent, (event) => {
+      inbound.push(event.record)
+      store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: event.sequence, inserted: true }))
     })
-    pagePort.onHistoryFeedback('page-a', (event) => {
+    store.subscribeEvent(history.event.FeedbackChangedEvent, (event) => {
       feedback.push(event)
     })
     supplyEmpty(pagePort)
@@ -604,9 +606,9 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     })
     // 40-char ids make exactly two fit each 200-byte frame, so four ids chunk into two pages.
     const ids = [1, 2, 3, 4].map((n) => `m-${String(n).padStart(38, '0')}`)
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
-        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, {
+        void pagePort.resolveHistorySupply(1, event.request.supplyId, {
           records: ids.map(record),
           done: true
         })
@@ -645,9 +647,9 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     })
     // One more record than a single response page holds, so the push chunks into two pages.
     const ids = Array.from({ length: 101 }, (_, index) => `m-${index}`)
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
-        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, {
+        void pagePort.resolveHistorySupply(1, event.request.supplyId, {
           records: ids.map(record),
           done: true
         })
@@ -704,9 +706,9 @@ describe('HistoryDomain current-function peer topology', () => {
   }
 
   const provideEmptyHistory = (fixture: RuntimeFixture) => {
-    fixture.pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    fixture.pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') {
-        void fixture.pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+        void fixture.pagePort.resolveHistorySupply(1, event.request.supplyId, { records: [], done: true })
       }
     })
   }
@@ -800,11 +802,11 @@ describe('HistoryDomain dead-page projection', () => {
     // The page's provider throws synchronously when a snapshot supply is requested: the real
     // PagePort lifecycle removes the page and rejects the supply, and the domain publishes the
     // dead page exactly once.
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') throw new Error('page-a broken')
     })
     sendProviderRequest(store, history, 'dead-a', 0, true)
-    await vi.waitFor(() => expect(deadPages).toHaveBeenCalledWith(['page-a']))
+    await vi.waitFor(() => expect(deadPages).toHaveBeenCalledWith(['tab:1']))
     expect(deadPages).toHaveBeenCalledOnce()
   })
 
@@ -816,10 +818,10 @@ describe('HistoryDomain dead-page projection', () => {
     // pending, so the PagePort settles the old supply with null through the replacement
     // lifecycle. The selection exhausts without any dead-page report (the page stays healthy).
     const pendingSupplyIds: string[] = []
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') pendingSupplyIds.push(event.request.supplyId)
       if (event.type === 'cancel') {
-        void pagePort.resolveHistorySupply('page-a', event.supplyId, { records: [], done: true })
+        void pagePort.resolveHistorySupply(1, event.supplyId, { records: [], done: true })
       }
     })
     sendProviderRequest(store, history, 'null-sync', 0, true)
@@ -827,13 +829,13 @@ describe('HistoryDomain dead-page projection', () => {
     await vi.waitFor(() => expect(pendingSupplyIds.length).toBe(1))
     await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
     // Replacing the page provider settles the pending snapshot with null (replacement mode).
-    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+    pagePort.provideHistory(1, DOMAIN, (event) => {
       if (event.type === 'request') pendingSupplyIds.push(event.request.supplyId)
     })
     // The selection exhausts to its real terminal state: the attempt is discarded and the page
     // stays healthy. Only after that terminal boundary may we assert no dead-page report.
     await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0))
     expect(deadPages).not.toHaveBeenCalled()
-    expect(pagePort.historyPageIds(DOMAIN)).toEqual(['page-a'])
+    expect(pagePort.historyPageIds(DOMAIN)).toEqual(['tab:1'])
   })
 })

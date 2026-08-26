@@ -24,14 +24,15 @@ export const createProviderOnMessage = (
       if (!isComctxMessage<MessageMeta>(rawMessage)) return
       const message = rawMessage
       const tab = sender.tab ? { id: sender.tab.id, url: sender.tab.url } : undefined
-      // Transport sender metadata replaces payload tab claims at the provider trust boundary.
+      // Browser-delivery facts replace every Page payload claim at the provider trust boundary.
+      // Runtime methods receive this value as data because comctx transports only method arguments.
       callback({
         ...message,
-        ...(message.type === 'apply' && message.path.at(-1) === 'registerPage' && message.args?.length
+        ...(message.type === 'apply' && message.args?.length
           ? {
               args: [
                 typeof message.args[0] === 'object' && message.args[0] !== null
-                  ? { ...message.args[0], tab }
+                  ? { ...message.args[0], caller: sender.tab ? { tab } : undefined }
                   : message.args[0],
                 ...message.args.slice(1)
               ]

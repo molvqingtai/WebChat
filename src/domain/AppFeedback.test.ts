@@ -13,7 +13,7 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
-import { ClientLease } from '@/runtime/ClientLease'
+import { DocumentClient } from '@/runtime/DocumentClient'
 import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
@@ -291,10 +291,8 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
   })
 
-  it('lets the lease watchdog own the only visible native error while an in-flight send rejects', async () => {
-    vi.useFakeTimers()
+  it('lets one explicit Runtime event own the only visible native error while an in-flight send rejects', async () => {
     const domain = 'https://example.test'
-    const pageId = 'page-a'
     const nativeError = new Error('Extension context invalidated.')
     const snapshot: RuntimeSnapshot = {
       hostId: 'host-a',
@@ -304,22 +302,24 @@ describe('application feedback ownership', () => {
         {
           domain,
           phase: 'active',
-          pageIds: [pageId],
+          tabIds: [1],
+          inbound: [],
+          historyFeedback: [],
           chatRoomJoined: true,
           sessions: []
         }
       ],
-      world: { joined: true, peerId: 'peer-a', presences: [] }
+      world: { joined: true, peerId: 'peer-a', presences: [] },
+      failures: []
     }
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot })
+      .mockResolvedValueOnce(snapshot)
       .mockRejectedValue(nativeError)
-    const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
-      pageId,
-      domain,
-      watchdogIntervalMs: 1000
+    const lease = new DocumentClient({
+      coordinator: { registerPage },
+      server: { getSnapshot: async () => snapshot } as never,
+      domain
     })
     await lease.init()
     const fixture = createFixture({
@@ -336,11 +336,12 @@ describe('application feedback ownership', () => {
     await flushMicrotasks()
     expect(fixture.chat.sendMessage).toHaveBeenCalledOnce()
 
-    vi.advanceTimersByTime(1000)
+    // A current-state refresh failure surfaces the original Error once through the failure route.
+    lease.invalidate()
     sending.reject(nativeError)
     await flushMicrotasks()
 
-    expect(registerPage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(registerPage).toHaveBeenCalledTimes(1)
     expect(fixture.toast.error).toHaveBeenCalledOnce()
     expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.')
     lease.detach()

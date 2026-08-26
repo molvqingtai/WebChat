@@ -5,7 +5,7 @@ export interface HostHandle {
   dispose: () => void
 }
 
-/** Owns the one in-context Runtime used by Firefox's persistent background page. */
+/** Owns the one logical Runtime for the current Background execution context. */
 export class HostOwner {
   private current: HostHandle | null = null
 

@@ -5,7 +5,6 @@ import LifecycleDomain from './Lifecycle'
 import { MAX_INBOUND_BUFFER_EVENTS } from '@/constants/config'
 import { MESSAGE_TYPE } from '@/protocol'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
-import { PagePortExtern, type PagePort as PagePortContract } from '@/domain/runtime/externs/PagePort'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 
 const DOMAIN = 'https://example.com'
@@ -38,7 +37,7 @@ const setup = () => {
   store.subscribeDomain(deliveryAction)
   store.igniteDomain(lifecycleAction)
   store.igniteDomain(deliveryAction)
-  store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, pageId: 'page-a' }))
+  store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, tabId: 1 }))
   return { store, delivery }
 }
 
@@ -113,47 +112,27 @@ describe('DeliveryDomain resource and batch ACK boundaries', () => {
     expect(completed).toHaveBeenCalledWith({ domain: DOMAIN, batchId: 'shared-batch', inserted: false })
   })
 
-  it('keeps buffered delivery alive after one page emit rejection', async () => {
-    const emitAttempts: string[] = []
-    const pagePort: PagePortContract = {
-      removePage: () => {},
-      historyPageIds: () => [],
-      emitInbound: async (_pageIds, event) => {
-        emitAttempts.push(event.record.id)
-        if (emitAttempts.length === 1) throw new Error('transient inbound emit failure')
-        return []
-      },
-      emitSessionEvent: async () => [],
-      emitWorldPresence: async () => [],
-      emitError: async () => [],
-      emitHistoryFeedback: async () => [],
-      supplyHistory: async () => null,
-      cancelHistorySupply: async () => {}
-    }
-    const store = Remesh.store({ externs: [PagePortExtern.impl(pagePort)] })
+  it('retains buffered events as current state until ACKed, without any Page push', async () => {
+    const store = Remesh.store({ externs: [createPagePortImpl(new PagePort())] })
     const lifecycleAction = LifecycleDomain()
     const deliveryAction = DeliveryDomain()
     const lifecycle = store.getDomain(lifecycleAction)
     const delivery = store.getDomain(deliveryAction)
-    const discarded = vi.fn()
-    const replayed = vi.fn()
-    store.subscribeEvent(delivery.event.InboundDiscardedEvent, discarded)
-    store.subscribeEvent(delivery.event.InboundReplayedEvent, replayed)
     store.subscribeDomain(lifecycleAction)
     store.subscribeDomain(deliveryAction)
     store.igniteDomain(lifecycleAction)
     store.igniteDomain(deliveryAction)
-    store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, pageId: 'page-a' }))
+    store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, tabId: 1 }))
 
     store.send(delivery.command.AcceptInboundCommand({ domain: DOMAIN, record: record(1), source: 'live' }))
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     store.send(delivery.command.AcceptInboundCommand({ domain: DOMAIN, record: record(2), source: 'live' }))
 
-    await vi.waitFor(() => expect(emitAttempts).toEqual([record(1).id, record(2).id]))
+    // The buffer is the current-state authority a Page pull reads; nothing is pushed to a Page.
     expect(store.query(delivery.query.BufferedEventsQuery({ domain: DOMAIN, after: 0 }))).toHaveLength(2)
-    expect(discarded).not.toHaveBeenCalled()
-    store.send(delivery.command.ReplayCommand({ domain: DOMAIN, after: 0 }))
-    expect(replayed).toHaveBeenCalledTimes(2)
+    // Static negative control: the replaced delivery replay compatibility path is gone — the
+    // current-state query plus the ordinary ACK are the only surviving buffer surfaces.
+    expect('ReplayCommand' in delivery.command).toBe(false)
+    expect('InboundReplayedEvent' in delivery.event).toBe(false)
     store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: 1 }))
     expect(
       store

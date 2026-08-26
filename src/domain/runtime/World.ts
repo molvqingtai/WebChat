@@ -1,6 +1,10 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map } from 'rxjs'
-import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, {
+  type WireFailureStage,
+  type WireMessageEvent,
+  type WirePreparedMessageEvent
+} from '@/domain/runtime/Wire'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { type ChatSite, type ChatUser, type WorldRoomMessage } from '@/protocol'
@@ -13,10 +17,16 @@ interface WorldDomainRegistration {
   site: ChatSite
 }
 
+export interface WorldRecoveryHydrated {
+  registrations: WorldDomainRegistration[]
+}
+
 interface StagedWorldRegistration extends WorldDomainRegistration {
   attemptId: string
   publicationPending: boolean
   missedPeerIds: string[]
+  stagedEpoch?: string
+  stagedWorldGeneration?: number
 }
 
 interface RecoveryState {
@@ -41,6 +51,19 @@ interface FullPublication {
 
 interface PendingPresenceSend {
   requestId: string
+}
+
+/** Never feeds current queries or projection events until the matching dual commit. */
+interface StagedPresenceOwner {
+  epoch: string
+  worldGeneration: number
+  records: WorldPresenceRecord[]
+}
+
+/** Local World intent retained privately while a dual replacement has no current owner. */
+interface EpochRetainedRegistrations {
+  epoch: string
+  registrations: WorldDomainRegistration[]
 }
 
 export interface WorldOptions {
@@ -80,6 +103,14 @@ const WorldDomain = Remesh.domain({
     })
     const JoinedState = domain.state<boolean>({ name: 'World.JoinedState', default: false })
     const PresencesState = domain.state<WorldPresenceRecord[]>({ name: 'World.PresencesState', default: [] })
+    const StagedPresencesState = domain.state<StagedPresenceOwner[]>({
+      name: 'World.StagedPresencesState',
+      default: []
+    })
+    const EpochRetainedRegistrationsState = domain.state<EpochRetainedRegistrations | null>({
+      name: 'World.EpochRetainedRegistrationsState',
+      default: null
+    })
     /** Current physical Room members, tracked from the join/leave events this domain owns. */
     const RoomMembersState = domain.state<string[]>({ name: 'World.RoomMembersState', default: [] })
     const RecoveryState = domain.state<RecoveryState | null>({ name: 'World.RecoveryState', default: null })
@@ -121,6 +152,16 @@ const WorldDomain = Remesh.domain({
     })
     const JoinedQuery = domain.query({ name: 'World.JoinedQuery', impl: ({ get }) => get(JoinedState()) })
     const PresencesQuery = domain.query({ name: 'World.PresencesQuery', impl: ({ get }) => get(PresencesState()) })
+    const StagedPresencesQuery = domain.query({
+      name: 'World.StagedPresencesQuery',
+      impl: ({ get }, epoch: string) =>
+        get(StagedPresencesState())
+          .find((item) => item.epoch === epoch)
+          ?.records.map((item) => ({
+            ...item,
+            presence: { ...item.presence, user: { ...item.presence.user }, sites: [...item.presence.sites] }
+          })) ?? []
+    })
     const LocalPresenceQuery = domain.query({
       name: 'World.LocalPresenceQuery',
       impl: ({ get }) => presenceFor(get(RegistrationsState()), options.sessionId)
@@ -133,6 +174,27 @@ const WorldDomain = Remesh.domain({
         const prospective = replaceBy(get(RegistrationsState()), (item) => item.domain === staged.domain, staged)
         return presenceFor(prospective, options.sessionId)
       }
+    })
+    const EpochStagedRegistrationQuery = domain.query({
+      name: 'World.EpochStagedRegistrationQuery',
+      impl: ({ get }, payload: { attemptId: string; epoch: string; worldGeneration: number }) =>
+        get(StagedRegistrationsState()).find(
+          (item) =>
+            item.attemptId === payload.attemptId &&
+            item.stagedEpoch === payload.epoch &&
+            item.stagedWorldGeneration === payload.worldGeneration
+        ) ?? null
+    })
+    const EpochRetainedRegistrationsQuery = domain.query({
+      name: 'World.EpochRetainedRegistrationsQuery',
+      impl: ({ get }, epoch: string) =>
+        get(EpochRetainedRegistrationsState())?.epoch === epoch
+          ? get(EpochRetainedRegistrationsState())!.registrations.map((item) => ({
+              domain: item.domain,
+              user: { ...item.user },
+              site: { ...item.site }
+            }))
+          : []
     })
     // Exact World ownership/demand: any committed registration, staged attempt (other than one
     // being aborted by the caller), pending final publication, or live release continuation keeps
@@ -160,6 +222,9 @@ const WorldDomain = Remesh.domain({
     })
 
     const StagedEvent = domain.event<{ attemptId: string }>({ name: 'World.StagedEvent' })
+    const EpochStagedEvent = domain.event<{ attemptId: string; epoch: string; domain: string }>({
+      name: 'World.EpochStagedEvent'
+    })
     // Emitted when a settled final-removal publication deferred a staged registration: the
     // follow-up full snapshot containing the staged site starts from this signal.
     const StagedPublicationDeferredEvent = domain.event({ name: 'World.StagedPublicationDeferredEvent' })
@@ -174,6 +239,8 @@ const WorldDomain = Remesh.domain({
     })
     const DomainReleasedEvent = domain.event<string>({ name: 'World.DomainReleasedEvent' })
     const PresenceChangedEvent = domain.event<WorldPresenceEvent>({ name: 'World.PresenceChangedEvent' })
+    const TransportStateChangedEvent = domain.event({ name: 'World.TransportStateChangedEvent' })
+    const RecoveryHydratedEvent = domain.event<WorldRecoveryHydrated>({ name: 'World.RecoveryHydratedEvent' })
     const RecoveryPublishedEvent = domain.event<{ requestId: string; presence: WorldRoomMessage }>({
       name: 'World.RecoveryPublishedEvent'
     })
@@ -283,6 +350,41 @@ const WorldDomain = Remesh.domain({
             replaceBy(get(StagedRegistrationsState()), (item) => item.domain === payload.domain, staged)
           ),
           StagedEvent({ attemptId: payload.attemptId })
+        ]
+      }
+    })
+
+    const StageEpochDomainCommand = domain.command({
+      name: 'World.StageEpochDomainCommand',
+      impl: (
+        { get },
+        payload: {
+          attemptId: string
+          epoch: string
+          worldGeneration: number
+          domain: string
+          user: ChatUser
+          site: ChatSite
+        }
+      ) => {
+        if (!payload.epoch || payload.site.origin !== payload.domain) return null
+        const stages = get(StagedRegistrationsState())
+        const existing = stages.find((item) => item.domain === payload.domain)
+        if (existing && (existing.stagedEpoch !== payload.epoch || existing.attemptId !== payload.attemptId))
+          return null
+        const staged: StagedWorldRegistration = {
+          attemptId: payload.attemptId,
+          domain: payload.domain,
+          user: { ...payload.user },
+          site: { ...payload.site },
+          publicationPending: false,
+          missedPeerIds: [],
+          stagedEpoch: payload.epoch,
+          stagedWorldGeneration: payload.worldGeneration
+        }
+        return [
+          StagedRegistrationsState().new(replaceBy(stages, (item) => item.domain === payload.domain, staged)),
+          EpochStagedEvent({ attemptId: payload.attemptId, epoch: payload.epoch, domain: payload.domain })
         ]
       }
     })
@@ -426,6 +528,124 @@ const WorldDomain = Remesh.domain({
           ),
           ...(nextStage ? [PublishStagedCommand(nextStage.attemptId)] : []),
           DomainCommittedEvent({ attemptId, domain: staged.domain })
+        ]
+      }
+    })
+
+    const SilentInstallEpochCommand = domain.command({
+      name: 'World.SilentInstallEpochCommand',
+      impl: ({ get }, payload: { attemptId: string; epoch: string; worldGeneration: number }) => {
+        const staged = get(StagedRegistrationsState()).filter(
+          (item) =>
+            item.attemptId === payload.attemptId &&
+            item.stagedEpoch === payload.epoch &&
+            item.stagedWorldGeneration === payload.worldGeneration
+        )
+        const presences = get(StagedPresencesState()).find((item) => item.epoch === payload.epoch)
+        if (staged.length === 0 || (presences && presences.worldGeneration !== payload.worldGeneration)) {
+          return null
+        }
+        const registrations = staged.reduce(
+          (items, item) =>
+            replaceBy(items, (current) => current.domain === item.domain, {
+              domain: item.domain,
+              user: item.user,
+              site: item.site
+            }),
+          get(RegistrationsState())
+        )
+        return [
+          RegistrationsState().new(registrations),
+          StagedRegistrationsState().new(
+            get(StagedRegistrationsState()).filter(
+              (item) =>
+                !(
+                  item.attemptId === payload.attemptId &&
+                  item.stagedEpoch === payload.epoch &&
+                  item.stagedWorldGeneration === payload.worldGeneration
+                )
+            )
+          ),
+          // A replacement must never retain old remote facts merely because the new physical room
+          // has not received a presence frame yet.
+          PresencesState().new(presences?.records ?? []),
+          StagedPresencesState().new(get(StagedPresencesState()).filter((item) => item.epoch !== payload.epoch)),
+          ...(get(EpochRetainedRegistrationsState())?.epoch === payload.epoch
+            ? [EpochRetainedRegistrationsState().new(null)]
+            : []),
+          JoinedState().new(true)
+        ]
+      }
+    })
+
+    const AbortEpochCommand = domain.command({
+      name: 'World.AbortEpochCommand',
+      impl: ({ get }, payload: { attemptId: string; epoch: string; worldGeneration: number }) => {
+        const stages = get(StagedRegistrationsState())
+        const stagedPresences = get(StagedPresencesState())
+        const matchingStage = stages.some(
+          (item) =>
+            item.attemptId === payload.attemptId &&
+            item.stagedEpoch === payload.epoch &&
+            item.stagedWorldGeneration === payload.worldGeneration
+        )
+        const matchingPresences = stagedPresences.some(
+          (item) => item.epoch === payload.epoch && item.worldGeneration === payload.worldGeneration
+        )
+        return matchingStage || matchingPresences
+          ? [
+              StagedRegistrationsState().new(
+                stages.filter(
+                  (item) =>
+                    !(
+                      item.attemptId === payload.attemptId &&
+                      item.stagedEpoch === payload.epoch &&
+                      item.stagedWorldGeneration === payload.worldGeneration
+                    )
+                )
+              ),
+              StagedPresencesState().new(
+                stagedPresences.filter(
+                  (item) => !(item.epoch === payload.epoch && item.worldGeneration === payload.worldGeneration)
+                )
+              ),
+              ...(get(EpochRetainedRegistrationsState())?.epoch === payload.epoch
+                ? [EpochRetainedRegistrationsState().new(null)]
+                : [])
+            ]
+          : null
+      }
+    })
+
+    /**
+     * Cuts the old current World owner after physical retirement. Registrations remain available
+     * only as private successor intent; no query or projection can observe them until a matching
+     * dual epoch installs its staged replacement.
+     */
+    const BeginEpochReplacementCommand = domain.command({
+      name: 'World.BeginEpochReplacementCommand',
+      impl: ({ get }, payload: { epoch: string }) => {
+        const retained = get(RegistrationsState()).map((item) => ({
+          domain: item.domain,
+          user: { ...item.user },
+          site: { ...item.site }
+        }))
+        return [
+          EpochRetainedRegistrationsState().new({ epoch: payload.epoch, registrations: retained }),
+          RegistrationsState().new([]),
+          StagedRegistrationsState().new([]),
+          JoinedState().new(false),
+          PresencesState().new([]),
+          StagedPresencesState().new([]),
+          RoomMembersState().new([]),
+          RecoveryState().new(null),
+          PendingPresenceSendsState().new([]),
+          FullPublicationState().new(null),
+          PendingFinalPublicationState().new(null),
+          // A Server waits every release that was live before starting this cut. Do not erase a
+          // continuation here: only its ordinary World publication path may emit the matching
+          // DomainReleasedEvent and settle the explicit leave owner.
+          WorldSendGenerationState().new(get(WorldSendGenerationState()) + 1)
         ]
       }
     })
@@ -582,6 +802,7 @@ const WorldDomain = Remesh.domain({
         const record = { sourcePeerId: payload.sourcePeerId, presence: payload.message }
         return [
           PresencesState().new(replaceBy(presences, (item) => item.sourcePeerId === payload.sourcePeerId, record)),
+          TransportStateChangedEvent(),
           ...(get(JoinedState()) && get(RegistrationsState()).length > 0
             ? [PresenceChangedEvent({ sourcePeerId: payload.sourcePeerId, presence: record })]
             : []),
@@ -604,6 +825,64 @@ const WorldDomain = Remesh.domain({
       }
     })
 
+    const ApplyStagedPresenceCommand = domain.command({
+      name: 'World.ApplyStagedPresenceCommand',
+      impl: ({ get }, payload: WirePreparedMessageEvent & { message: WorldRoomMessage }) => {
+        if (payload.roomId !== worldRoomId) return null
+        const staged = get(StagedPresencesState())
+        const current = staged.find((item) => item.epoch === payload.epoch)
+        const worldGeneration = payload.roomGeneration
+        // A source cannot change users inside one staged incarnation. Rejection is private and
+        // leaves the committed World aggregate untouched.
+        const prior = current?.records.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        if (
+          prior?.presence.sessionId === payload.message.sessionId &&
+          prior.presence.user.id !== payload.message.user.id
+        ) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'World staged user changed inside a bound session'
+          })
+        }
+        if (current && current.worldGeneration !== worldGeneration) return null
+        const owner: StagedPresenceOwner = {
+          epoch: payload.epoch,
+          worldGeneration,
+          records: replaceBy(current?.records ?? [], (item) => item.sourcePeerId === payload.sourcePeerId, {
+            sourcePeerId: payload.sourcePeerId,
+            presence: payload.message
+          })
+        }
+        return StagedPresencesState().new(replaceBy(staged, (item) => item.epoch === payload.epoch, owner))
+      }
+    })
+
+    const CommitStagedPresencesCommand = domain.command({
+      name: 'World.CommitStagedPresencesCommand',
+      impl: ({ get }, payload: { epoch: string; worldGeneration: number }) => {
+        const staged = get(StagedPresencesState())
+        const owner = staged.find((item) => item.epoch === payload.epoch)
+        if (!owner || owner.worldGeneration !== payload.worldGeneration) return null
+        // This command is intentionally state-only. Server's dual commit owns the one public
+        // event gate and invokes it synchronously with Session and Wire installation.
+        return [
+          StagedPresencesState().new(staged.filter((item) => item.epoch !== payload.epoch)),
+          PresencesState().new(owner.records),
+          TransportStateChangedEvent()
+        ]
+      }
+    })
+
+    const AbortStagedPresencesCommand = domain.command({
+      name: 'World.AbortStagedPresencesCommand',
+      impl: ({ get }, epoch: string) => {
+        const staged = get(StagedPresencesState())
+        return staged.some((item) => item.epoch === epoch)
+          ? StagedPresencesState().new(staged.filter((item) => item.epoch !== epoch))
+          : null
+      }
+    })
+
     const PeerJoinedCommand = domain.command({
       name: 'World.PeerJoinedCommand',
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
@@ -620,7 +899,8 @@ const WorldDomain = Remesh.domain({
         const nextRecovery = recovery?.publicationPending
           ? { ...recovery, missedPeerIds: appendUnique(recovery.missedPeerIds, payload.sourcePeerId) }
           : recovery
-        const memberUpdate = nextMembers === members ? [] : [RoomMembersState().new(nextMembers)]
+        const memberUpdate =
+          nextMembers === members ? [] : [RoomMembersState().new(nextMembers), TransportStateChangedEvent()]
         if (stages.some((stage) => stage.publicationPending) || recovery) {
           return [
             ...memberUpdate,
@@ -643,7 +923,10 @@ const WorldDomain = Remesh.domain({
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
         if (payload.roomId !== worldRoomId) return null
         const memberRemoval = get(RoomMembersState()).includes(payload.sourcePeerId)
-          ? [RoomMembersState().new(get(RoomMembersState()).filter((item) => item !== payload.sourcePeerId))]
+          ? [
+              RoomMembersState().new(get(RoomMembersState()).filter((item) => item !== payload.sourcePeerId)),
+              TransportStateChangedEvent()
+            ]
           : []
         const stages = get(StagedRegistrationsState()).map((stage) => ({
           ...stage,
@@ -666,8 +949,37 @@ const WorldDomain = Remesh.domain({
           ...(hasPresence
             ? [
                 PresencesState().new(presences.filter((item) => item.sourcePeerId !== payload.sourcePeerId)),
+                TransportStateChangedEvent(),
                 ...(get(JoinedState())
                   ? [PresenceChangedEvent({ sourcePeerId: payload.sourcePeerId, presence: null })]
+                  : [])
+              ]
+            : [])
+        ]
+      }
+    })
+
+    const RecoverTransportStateCommand = domain.command({
+      name: 'World.RecoverTransportStateCommand',
+      impl: (
+        _,
+        payload: {
+          members: string[]
+          presences: WorldPresenceRecord[]
+          registrations?: WorldDomainRegistration[]
+        }
+      ) => {
+        const members = [...new Set(payload.members)]
+        const memberSet = new Set(members)
+        return [
+          RoomMembersState().new(members),
+          PresencesState().new(payload.presences.filter(({ sourcePeerId }) => memberSet.has(sourcePeerId))),
+          ...(payload.registrations
+            ? [
+                RegistrationsState().new(payload.registrations),
+                JoinedState().new(payload.registrations.length > 0),
+                ...(payload.registrations.length > 0
+                  ? [RecoveryHydratedEvent({ registrations: payload.registrations })]
                   : [])
               ]
             : [])
@@ -757,6 +1069,17 @@ const WorldDomain = Remesh.domain({
         )
     })
     domain.effect({
+      name: 'World.StagedWireMessageEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.PreparedMessageAcceptedEvent).pipe(
+          filter(
+            (event): event is WirePreparedMessageEvent & { message: WorldRoomMessage } =>
+              'sites' in event.message && event.roomId === worldRoomId
+          ),
+          map(ApplyStagedPresenceCommand)
+        )
+    })
+    domain.effect({
       name: 'World.SendSuccessEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSentEvent).pipe(
@@ -810,20 +1133,30 @@ const WorldDomain = Remesh.domain({
         RegistrationsQuery,
         JoinedQuery,
         PresencesQuery,
+        StagedPresencesQuery,
         LocalPresenceQuery,
         StagedPresenceQuery,
+        EpochStagedRegistrationQuery,
+        EpochRetainedRegistrationsQuery,
         WorldDemandQuery
       },
       command: {
         StageDomainCommand,
+        StageEpochDomainCommand,
         PublishStagedCommand,
         CommitStagedCommand,
+        SilentInstallEpochCommand,
+        AbortEpochCommand,
+        BeginEpochReplacementCommand,
         AbortStagedCommand,
         DepartRoomCommand,
         PublishCurrentCommand,
         ReleaseDomainCommand,
         PeerJoinedCommand,
         PeerLeftCommand,
+        RecoverTransportStateCommand,
+        CommitStagedPresencesCommand,
+        AbortStagedPresencesCommand,
         BeginRecoveryCommand,
         PublishRecoveryCommand,
         CommitRecoveryCommand,
@@ -831,11 +1164,14 @@ const WorldDomain = Remesh.domain({
       },
       event: {
         StagedEvent,
+        EpochStagedEvent,
         StagedPublishedEvent,
         StagedPublishFailedEvent,
         DomainCommittedEvent,
         DomainReleasedEvent,
         PresenceChangedEvent,
+        TransportStateChangedEvent,
+        RecoveryHydratedEvent,
         RecoveryPublishedEvent,
         RecoveryPublishFailedEvent,
         ErrorEvent

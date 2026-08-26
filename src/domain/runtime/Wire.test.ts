@@ -44,6 +44,7 @@ const fixture = (
     peerIdOf: () => 'local-peer',
     join: (roomId) => join(roomId),
     leave: vi.fn(),
+    retireRoomsForPreparation: async () => {},
     send: (roomId, payload, to) => send(roomId, payload, to),
     onMessage: (callback) => {
       onMessage = callback
@@ -105,6 +106,7 @@ const trustRoom = async (runtime: ReturnType<typeof fixture>) => {
   const joined = runtime.event(runtime.wire.event.RoomsJoinedEvent)
   runtime.store.send(runtime.wire.command.JoinRoomsCommand({ requestId: 'join-1', roomIds: [ROOM] }))
   await joined
+  ;['remote-peer', 'peer-a', 'peer-b', 'stale-peer'].forEach((sourcePeerId) => runtime.peerJoin(ROOM, sourcePeerId))
 }
 
 const invalidateRoom = (runtime: ReturnType<typeof fixture>, transition: 'leave' | 'reconnect' | 'close') => {
@@ -136,7 +138,37 @@ describe('WireDomain anti-corruption boundary', () => {
 
     const accepted = runtime.event(runtime.wire.event.MessageAcceptedEvent)
     runtime.receive(ROOM, 'remote-peer', JSON.stringify(message))
-    await expect(accepted).resolves.toEqual({ roomId: ROOM, sourcePeerId: 'remote-peer', message })
+    await expect(accepted).resolves.toEqual({ roomId: ROOM, sourcePeerId: 'remote-peer', sourceGeneration: 1, message })
+  })
+
+  it('routes a prepared replacement frame only to its private epoch terminal until commit', async () => {
+    const runtime = fixture()
+    const prepared = runtime.event(runtime.wire.event.RoomsPreparedEvent)
+    runtime.store.send(
+      runtime.wire.command.PrepareRoomsCommand({ epoch: 'replacement-1', requestId: 'prepare-1', roomIds: [ROOM] })
+    )
+    await expect(prepared).resolves.toEqual({ epoch: 'replacement-1', requestId: 'prepare-1', roomIds: [ROOM] })
+    runtime.peerJoin(ROOM, 'remote-peer')
+
+    const current: unknown[] = []
+    runtime.store.subscribeEvent(runtime.wire.event.MessageAcceptedEvent, (event) => current.push(event))
+    const staged = runtime.event(runtime.wire.event.PreparedMessageAcceptedEvent)
+    runtime.receive(ROOM, 'remote-peer', JSON.stringify(message))
+    await expect(staged).resolves.toEqual({
+      epoch: 'replacement-1',
+      roomId: ROOM,
+      sourcePeerId: 'remote-peer',
+      sourceGeneration: 1,
+      roomGeneration: 0,
+      message
+    })
+    expect(current).toEqual([])
+    expect(runtime.store.query(runtime.wire.query.IsRoomTrustedQuery(ROOM))).toBe(false)
+
+    const joined = runtime.event(runtime.wire.event.RoomsJoinedEvent)
+    runtime.store.send(runtime.wire.command.CommitPreparedRoomsCommand('replacement-1'))
+    await expect(joined).resolves.toEqual({ requestId: 'prepare-1', roomIds: [ROOM] })
+    expect(runtime.store.query(runtime.wire.query.IsRoomTrustedQuery(ROOM))).toBe(true)
   })
 
   it('serializes delayed encode and send per room', async () => {
@@ -373,6 +405,27 @@ describe('WireDomain anti-corruption boundary', () => {
       expect(accepted).toEqual([])
     }
   )
+
+  it('rejects a delayed decode after the same physical peer id leaves and rejoins', async () => {
+    const decoded = deferred<unknown>()
+    const runtime = fixture({ encode: async (value) => JSON.stringify(value), decode: () => decoded.promise })
+    await trustRoom(runtime)
+    const accepted: string[] = []
+    runtime.store.subscribeEvent(runtime.wire.event.MessageAcceptedEvent, ({ sourcePeerId }) =>
+      accepted.push(sourcePeerId)
+    )
+
+    runtime.receive(ROOM, 'stale-peer', 'old-incarnation-frame')
+    await vi.waitFor(() => expect(runtime.store.query(runtime.wire.query.DecodeQueuesQuery())).toHaveLength(1))
+    runtime.peerLeave(ROOM, 'stale-peer')
+    runtime.peerJoin(ROOM, 'stale-peer')
+    decoded.resolve(message)
+    await decoded.promise
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(accepted).toEqual([])
+  })
 
   it.each(['leave', 'reconnect', 'close'] as const)(
     'settles delayed encode across %s according to pending-send ownership',

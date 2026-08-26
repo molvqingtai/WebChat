@@ -126,7 +126,7 @@ const SystemNoticeRecordSchema = v.strictObject({
 
 const MessageRecordSchema = v.variant('type', [ChatMessageRecordSchema, SystemNoticeRecordSchema])
 
-class InvalidMessageRecordError extends TypeError {
+export class InvalidMessageRecordError extends TypeError {
   override readonly name = 'InvalidMessageRecordError'
 }
 

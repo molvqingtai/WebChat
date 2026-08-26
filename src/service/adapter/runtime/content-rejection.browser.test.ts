@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defineProxy, type Message } from 'comctx'
-import type { HostPhase, RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
-import { ClientLease } from '@/runtime/ClientLease'
+import type { HostPhase, RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
+import { DocumentClient } from '@/runtime/DocumentClient'
 import { InjectAdapter, ownInjectRejections } from '@/service/adapter/runtime'
 import type { MessageApi } from '@/service/adapter/runtime/Core'
 
@@ -43,12 +43,16 @@ describe('content Runtime rejection ownership', () => {
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
     const failures: Error[] = []
     const phases: HostPhase[] = []
-    const client = new ClientLease({
+    const client = new DocumentClient({
       coordinator,
-      pageId: 'page-a',
+      server: {
+        getSnapshot: async () => {
+          throw new Error('not used')
+        }
+      } as never,
       domain: 'https://example.test'
     })
-    const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
+    const releaseRejectionOwner = ownInjectRejections(() => {})
     const releasePhase = client.whenHostPhase((phase) => phases.push(phase))
     const releaseFailure = client.whenFailure((error) => failures.push(error))
 
@@ -82,12 +86,15 @@ describe('content Runtime rejection ownership', () => {
         {
           domain: 'https://example.test',
           phase: 'active',
-          pageIds: ['page-a'],
+          tabIds: [1],
+          inbound: [],
+          historyFeedback: [],
           chatRoomJoined: true,
           sessions: []
         }
       ],
-      world: { joined: true, peerId: 'peer-a', presences: [] }
+      world: { joined: true, peerId: 'peer-a', presences: [] },
+      failures: []
     }
     let invalidated = false
     const runtime: MessageApi = {
@@ -99,7 +106,7 @@ describe('content Runtime rejection ownership', () => {
           ...message,
           type: message.type === 'ping' ? 'pong' : 'apply',
           sender: { type: 'provider' },
-          data: message.type === 'apply' ? { phase: 'ready', generation: 1, snapshot } : undefined
+          data: message.type === 'apply' ? snapshot : undefined
         }
         queueMicrotask(() => listeners.forEach((listener) => listener(response)))
         return Promise.resolve()
@@ -123,15 +130,18 @@ describe('content Runtime rejection ownership', () => {
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
     const failures: string[] = []
     const phases: HostPhase[] = []
-    const client = new ClientLease({
-      coordinator,
-      pageId: 'page-a',
-      domain: 'https://example.test',
-      startupTimeoutMs: 200,
-      startupRetryIntervalMs: 20,
-      watchdogIntervalMs: 60000
+    const [, injectServer] = defineProxy(() => ({}) as RuntimeServer, {
+      namespace: 'content-heartbeat-rejection-server',
+      heartbeatInterval: 5,
+      heartbeatTimeout: 30
     })
-    const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
+    const server = injectServer(new InjectAdapter(runtime))
+    const client = new DocumentClient({
+      coordinator,
+      server,
+      domain: 'https://example.test'
+    })
+    const releaseRejectionOwner = ownInjectRejections(() => {})
     client.whenHostPhase((phase) => phases.push(phase))
     const releaseFailure = client.whenFailure((error) => failures.push(error.message))
 
@@ -140,22 +150,25 @@ describe('content Runtime rejection ownership', () => {
       phases.length = 0
       invalidated = true
 
-      await client.checkNow()
+      client.invalidate()
+      await vi.waitFor(() => expect(phases).toEqual(['unavailable']))
       await wait(0)
 
       expect(unhandled).toEqual([])
       expect(failures).toHaveLength(1)
-      expect(failures[0]).toMatch(/Extension context invalidated\.|Runtime control-plane request timed out/)
-      expect(phases).toEqual(['connecting', 'unavailable'])
+      expect(failures[0]).toMatch(
+        /Extension context invalidated\.|Runtime control-plane request timed out|Provider unavailable: heartbeat check timeout 30ms\./
+      )
+      expect(phases).toEqual(['unavailable'])
 
-      await expect(coordinator.registerPage({ domain: 'https://example.test', pageId: 'page-a' })).rejects.toThrow(
+      await expect(coordinator.registerPage({ domain: 'https://example.test' })).rejects.toThrow(
         'Provider unavailable: heartbeat check timeout 30ms.'
       )
       await wait(0)
 
       expect(unhandled).toEqual([])
       expect(failures).toHaveLength(1)
-      expect(phases).toHaveLength(2)
+      expect(phases).toEqual(['unavailable'])
       const replayed = vi.fn()
       client.whenHostPhase(replayed)
       expect(replayed).toHaveBeenCalledWith('unavailable')
