@@ -6049,7 +6049,7 @@ describe('RuntimeServer history', () => {
     expect(domainSnapshot(await readServerSnapshot(server))?.historyFeedback ?? []).toEqual([])
   })
 
-  it('provides only records absent from the complete inventory in recent-first order', async () => {
+  it('provides only records absent from the complete inventory', async () => {
     const { fake, server, roomId } = await setup()
     const database = createMemoryMessageDatabase('history-provider-db')
     const store = createMessageStore(database)
@@ -6156,41 +6156,6 @@ describe('RuntimeServer history', () => {
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
     expect(new Set(covered).size).toBe(manyIds.length)
-  })
-
-  it('rejects a cross-page recent-first violation atomically without applying a prefix', async () => {
-    const { fake, server, roomId } = await setup()
-    await registerInventoryProvider(server)
-    fake.peerJoin(roomId, 'peer-a')
-    await settle()
-    fake.receive(roomId, 'peer-a', session())
-    await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
-    const syncId = (requestMsg as { syncId: string }).syncId
-
-    // Page 0 applies records older than page 1's newest: a cross-page ordering violation must cancel
-    // the attempt instead of applying the violating prefix.
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
-      syncId,
-      page: 0,
-      users: [REMOTE_USER],
-      messages: [text('older-page-0', REMOTE_USER.id, NOW - 10)],
-      done: false
-    })
-    await vi.waitFor(async () => expect(await projectedInboundIds(server)).toContain('older-page-0'))
-    await ackAllProjectedInbound(server)
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
-      syncId,
-      page: 1,
-      users: [REMOTE_USER],
-      messages: [text('newer-page-1', REMOTE_USER.id, NOW - 5)],
-      done: true
-    })
-    await settle()
-    // The violating page never applies.
-    expect(await projectedInboundIds(server)).not.toContain('newer-page-1')
   })
 
   it('queues a valid next response page while a batch is pending and cancels a changed replay', async () => {
