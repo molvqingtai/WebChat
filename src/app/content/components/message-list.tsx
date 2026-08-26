@@ -17,21 +17,21 @@ const itemKey = (_: number, item: ReactElement) => {
 }
 
 type ChildUpdate =
-  | { kind: 'initial' | 'none' | 'replace' }
+  | { update: 'initial' | 'none' | 'replace' }
   | {
-      kind: 'head' | 'tail'
+      update: 'head' | 'tail'
       count: number
     }
   | {
       headCount: number
-      kind: 'head-tail'
+      update: 'head-tail'
       tailCount: number
     }
 
 type ScrollCommand =
-  | { kind: 'cancel-initial'; top: number }
-  | { kind: 'follow-bottom' | 'follow-latest' }
-  | { index: number; kind: 'head-rebase'; offset: number }
+  | { command: 'cancel-initial'; top: number }
+  | { command: 'follow-bottom' | 'follow-latest' }
+  | { command: 'head-rebase'; index: number; offset: number }
 
 const hasPrefix = (prefix: readonly string[], values: readonly string[]) =>
   prefix.length <= values.length && prefix.every((value, index) => values[index] === value)
@@ -97,23 +97,23 @@ const getViewportActionState = (
 }
 
 const getChildUpdate = (previous: readonly string[] | null, current: readonly string[]): ChildUpdate => {
-  if (previous === null) return { kind: 'initial' }
-  if (hasSameItems(previous, current)) return { kind: 'none' }
+  if (previous === null) return { update: 'initial' }
+  if (hasSameItems(previous, current)) return { update: 'none' }
   if (current.length > previous.length && hasPrefix(previous, current)) {
-    return { kind: 'tail', count: current.length - previous.length }
+    return { update: 'tail', count: current.length - previous.length }
   }
   if (current.length > previous.length && hasSuffix(previous, current)) {
-    return { kind: 'head', count: current.length - previous.length }
+    return { update: 'head', count: current.length - previous.length }
   }
   if (current.length > previous.length) {
     for (let headCount = 1; headCount < current.length - previous.length; headCount += 1) {
       const tailCount = current.length - previous.length - headCount
       if (hasSameItems(previous, current.slice(headCount, headCount + previous.length))) {
-        return { kind: 'head-tail', headCount, tailCount }
+        return { update: 'head-tail', headCount, tailCount }
       }
     }
   }
-  return { kind: 'replace' }
+  return { update: 'replace' }
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000
@@ -157,9 +157,9 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const itemKeysRef = useRef<readonly string[]>(itemKeys)
   const childUpdate = useMemo(() => getChildUpdate(previousItemKeysRef.current, itemKeys), [itemKeys])
   const headCount =
-    childUpdate.kind === 'head' ? childUpdate.count : childUpdate.kind === 'head-tail' ? childUpdate.headCount : 0
+    childUpdate.update === 'head' ? childUpdate.count : childUpdate.update === 'head-tail' ? childUpdate.headCount : 0
   const tailCount =
-    childUpdate.kind === 'tail' ? childUpdate.count : childUpdate.kind === 'head-tail' ? childUpdate.tailCount : 0
+    childUpdate.update === 'tail' ? childUpdate.count : childUpdate.update === 'head-tail' ? childUpdate.tailCount : 0
   const isHeadPrepend = headCount > 0 && lastHeadItemKeysRef.current !== itemKeys
   const isTailAppend = tailCount > 0
   const isNewTailAppend = isTailAppend && lastTailItemKeysRef.current !== itemKeys
@@ -216,7 +216,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     const handle = virtuosoRef.current
     if (!handle) return
 
-    switch (command.kind) {
+    switch (command.command) {
       case 'cancel-initial':
         handle.scrollTo({ top: command.top })
         return
@@ -242,7 +242,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     if (!getVisibleItemLocation(scrollParentRef)) return
 
     initialScrollCancellationPendingRef.current = false
-    runScrollCommand({ kind: 'cancel-initial', top: scrollParentRef.scrollTop })
+    runScrollCommand({ command: 'cancel-initial', top: scrollParentRef.scrollTop })
     clearInitialScrollCancellation()
   }, [clearInitialScrollCancellation, runScrollCommand, scrollParentRef])
 
@@ -301,14 +301,14 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       if (headAnchor) {
         const index = headAnchor.index + headCount
         if (itemKeys[index] === headAnchor.key) {
-          runScrollCommand({ kind: 'head-rebase', index, offset: headAnchor.offset })
+          runScrollCommand({ command: 'head-rebase', index, offset: headAnchor.offset })
         }
       }
     }
-    if (childUpdate.kind === 'tail' || childUpdate.kind === 'replace') {
+    if (childUpdate.update === 'tail' || childUpdate.update === 'replace') {
       clearInitialScrollCancellation()
     }
-    if (childUpdate.kind === 'replace') {
+    if (childUpdate.update === 'replace') {
       clearHeadAnchor()
       cancelLatestRecovery()
     }
@@ -395,7 +395,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   ])
 
   const handleAtBottomStateChange = useCallback(
-    (atBottom: boolean) => {
+    (reportedAtBottom: boolean) => {
+      const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom
       atBottomRef.current = atBottom
       if (!atBottom) {
         acknowledgeManualDeparture()
@@ -449,7 +450,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       clearHeadAnchor()
       clearNewMessageCount()
       updateViewportActionState(true)
-      runScrollCommand({ kind: 'follow-bottom' })
+      runScrollCommand({ command: 'follow-bottom' })
     },
     [
       acknowledgeManualDeparture,
@@ -490,7 +491,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     clearHeadAnchor()
     clearNewMessageCount()
     updateViewportActionState()
-    runScrollCommand({ kind: 'follow-latest' })
+    runScrollCommand({ command: 'follow-latest' })
   }, [
     clearHeadAnchor,
     clearInitialScrollCancellation,

@@ -166,6 +166,18 @@ const latestVirtuosoCall = () => {
   return call
 }
 const reportBottom = (atBottom: boolean) => {
+  const call = latestVirtuosoCall()
+  const scrollParent = call.customScrollParent
+  if (scrollParent) {
+    if (atBottom) {
+      scrollParent.scrollTop = Math.max(0, scrollParent.scrollHeight - scrollParent.clientHeight)
+    } else if (scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 1) {
+      scrollParent.scrollTop = 0
+    }
+  }
+  act(() => call.atBottomStateChange?.(atBottom))
+}
+const reportStaleBottom = (atBottom: boolean) => {
   act(() => latestVirtuosoCall().atBottomStateChange?.(atBottom))
 }
 const reportScrolling = (isScrolling: boolean) => {
@@ -417,6 +429,22 @@ describe('MessageList Virtuoso integration', () => {
     expect((action as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('keeps a physical off-bottom viewport through a stale at-bottom callback and counts the next tail', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    reportBottom(true)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    reportStaleBottom(true)
+
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+  })
+
   it('shows only beyond half a viewport and preserves unread state across threshold crossings', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
@@ -559,15 +587,16 @@ describe('MessageList Virtuoso integration', () => {
       scrollTop: { configurable: true, value: 900, writable: true }
     })
     setBounds(scrollParent, 0, 100)
-    setBounds(item, 0, 50)
+    setBounds(item, -20, 20)
 
     beginManualScroll(view)
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
+    scrollParent.scrollTop = 100
     reportBottom(false)
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
-    scrollParent.scrollTop = 100
+    setBounds(item, 0, 50)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     reportBottom(false)
 
@@ -586,13 +615,14 @@ describe('MessageList Virtuoso integration', () => {
     })
     setBounds(scrollParent, 0, 100)
     setBounds(partialItem, -20, 20)
-    setBounds(fullItem, 20, 80)
+    setBounds(fullItem, 60, 120)
 
     beginManualScroll(view)
+    scrollParent.scrollTop = 100
     reportBottom(false)
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
-    scrollParent.scrollTop = 100
+    setBounds(fullItem, 20, 80)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     reportBottom(false)
 
@@ -614,8 +644,8 @@ describe('MessageList Virtuoso integration', () => {
     setBounds(bottomItem, 60, 120)
 
     beginManualScroll(view)
-    reportBottom(false)
     scrollParent.scrollTop = 100
+    reportBottom(false)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     reportBottom(false)
 
@@ -638,8 +668,8 @@ describe('MessageList Virtuoso integration', () => {
     setBounds(anchorItem, 20, 80)
 
     beginManualScroll(view)
-    reportBottom(false)
     scrollParent.scrollTop = 100
+    reportBottom(false)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     reportBottom(false)
     expect(virtuosoHandle.scrollTo).toHaveBeenCalledWith({ top: 100 })
@@ -685,8 +715,8 @@ describe('MessageList Virtuoso integration', () => {
     setBounds(anchorItem, 20, 80)
 
     beginManualScroll(view)
-    reportBottom(false)
     scrollParent.scrollTop = 100
+    reportBottom(false)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     reportBottom(false)
     vi.clearAllMocks()
