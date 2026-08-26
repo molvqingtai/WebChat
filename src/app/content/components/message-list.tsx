@@ -87,6 +87,7 @@ type HeadRebaseTransaction = {
   key: string
   offset: number
   phase: 'registered' | 'pending'
+  token: number
   viewport: HTMLElement
 }
 
@@ -94,6 +95,8 @@ type PendingProgrammaticScroll = {
   headRebaseTransaction: HeadRebaseTransaction | null
   viewport: HTMLElement
 }
+
+let nextHeadRebaseToken = 1
 
 const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): HeadAnchor | null => {
   const viewportBounds = scrollParent.getBoundingClientRect()
@@ -114,11 +117,11 @@ const hasHeadRebaseTarget = (transaction: HeadRebaseTransaction) => {
   const item = transaction.viewport.querySelector<HTMLElement>(`[data-index="${transaction.index}"]`)
   if (!item) return false
 
-  return transaction.viewport.getBoundingClientRect().top - item.getBoundingClientRect().top === transaction.offset
+  return (
+    Math.abs(transaction.viewport.getBoundingClientRect().top - item.getBoundingClientRect().top - transaction.offset) <
+    2
+  )
 }
-
-const haveSameItemKeys = (first: readonly string[], second: readonly string[]) =>
-  first.length === second.length && first.every((key, index) => key === second[index])
 
 const isViewportAtBottom = (scrollParent: HTMLElement) =>
   scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 1
@@ -228,7 +231,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     const headAnchor = headAnchorRef.current
     if (
       !isHeadPrepend ||
-      isTailAppend ||
       !scrollParentRef ||
       !headAnchor ||
       itemKeys[headAnchor.index + headCount] !== headAnchor.key
@@ -237,7 +239,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     }
 
     return { index: headAnchor.index + headCount, key: headAnchor.key, offset: headAnchor.offset }
-  }, [headCount, isHeadPrepend, isTailAppend, itemKeys, scrollParentRef])
+  }, [headCount, isHeadPrepend, itemKeys, scrollParentRef])
   const firstItemIndex = isHeadPrepend ? firstItemIndexRef.current - headCount : firstItemIndexRef.current
 
   const cancelHeadRebaseTransaction = useCallback((transaction?: HeadRebaseTransaction | null) => {
@@ -268,12 +270,15 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
         ...headRebaseTarget,
         itemKeys,
         phase: 'registered',
+        token: nextHeadRebaseToken++,
         viewport: scrollParentRef
       }
       cancelHeadRebaseTransaction()
       headRebaseTransactionRef.current = nextTransaction
     }
   }, [cancelHeadRebaseTransaction, childUpdate.update, hasChildren, headRebaseTarget, itemKeys, scrollParentRef])
+
+  useLayoutEffect(() => () => cancelHeadRebaseTransaction(), [cancelHeadRebaseTransaction])
 
   const clearNewMessageCount = useCallback(() => {
     if (newMessageCountRef.current === 0) return
@@ -329,6 +334,19 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     latestRecoveryRef.current = false
   }, [])
 
+  const isCurrentListCallback = useCallback(
+    () => activeViewportRef.current === scrollParentRef && hasSameItems(currentItemKeysRef.current, itemKeys),
+    [itemKeys, scrollParentRef]
+  )
+
+  const isCurrentHeadRebaseTransaction = useCallback(
+    (transaction: HeadRebaseTransaction) =>
+      headRebaseTransactionRef.current === transaction &&
+      transaction.viewport === scrollParentRef &&
+      hasSameItems(currentItemKeysRef.current, transaction.itemKeys),
+    [scrollParentRef]
+  )
+
   const runScrollCommand = useCallback(
     (command: ScrollCommand, headRebaseTransaction: HeadRebaseTransaction | null = null) => {
       const handle = virtuosoRef.current
@@ -345,30 +363,23 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
           handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
           return
         case 'head-rebase':
-          if (headRebaseTransaction) {
-            if (
-              headRebaseTransactionRef.current !== headRebaseTransaction ||
-              headRebaseTransaction.phase !== 'registered' ||
-              activeViewportRef.current !== headRebaseTransaction.viewport
-            ) {
-              return
-            }
-            headRebaseTransaction.phase = 'pending'
+          if (
+            !headRebaseTransaction ||
+            !scrollParentRef ||
+            !isCurrentHeadRebaseTransaction(headRebaseTransaction) ||
+            headRebaseTransaction.phase !== 'registered'
+          ) {
+            return
           }
-          if (!scrollParentRef) return
+          headRebaseTransaction.phase = 'pending'
           pendingProgrammaticScrollRef.current = {
             headRebaseTransaction,
-            viewport: headRebaseTransaction?.viewport ?? scrollParentRef
+            viewport: headRebaseTransaction.viewport
           }
           handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
       }
     },
-    [scrollParentRef]
-  )
-
-  const isCurrentListCallback = useCallback(
-    () => activeViewportRef.current === scrollParentRef && haveSameItemKeys(currentItemKeysRef.current, itemKeys),
-    [itemKeys, scrollParentRef]
+    [isCurrentHeadRebaseTransaction, scrollParentRef]
   )
 
   const captureInitialScrollCancellation = useCallback(() => {
@@ -437,14 +448,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
           initialScrollCancellationPassedHeadRef.current = true
         }
       }
-      const headAnchor = headAnchorRef.current
       clearHeadAnchor()
-      if (isTailAppend && headAnchor) {
-        const index = headAnchor.index + headCount
-        if (itemKeys[index] === headAnchor.key) {
-          runScrollCommand({ command: 'head-rebase', index, offset: headAnchor.offset })
-        }
-      }
     }
     if (childUpdate.update === 'tail' || childUpdate.update === 'replace') {
       clearInitialScrollCancellation()
@@ -466,9 +470,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     hasChildren,
     isHeadPrepend,
     isNewTailAppend,
-    isTailAppend,
     itemKeys,
-    runScrollCommand,
     tailBottomSnapshot,
     tailCount,
     updateViewportActionState
@@ -487,7 +489,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       }
       lastScrollTopRef.current = scrollParentRef.scrollTop
       manualScrollDownRef.current = false
-      pendingProgrammaticScrollRef.current = null
       cancelHeadRebaseTransaction()
       manualScrollIntentRef.current = true
     }
@@ -507,11 +508,11 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       const nextScrollTop = scrollParentRef.scrollTop
       const pendingProgrammaticScroll = pendingProgrammaticScrollRef.current
       if (pendingProgrammaticScroll?.viewport === scrollParentRef) {
-        pendingProgrammaticScrollRef.current = null
-        manualScrollDownRef.current = false
-        lastScrollTopRef.current = nextScrollTop
         const transaction = pendingProgrammaticScroll.headRebaseTransaction
         if (!transaction) {
+          pendingProgrammaticScrollRef.current = null
+          manualScrollDownRef.current = false
+          lastScrollTopRef.current = nextScrollTop
           const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
           atBottomRef.current = finalActionState.isAtBottom
           updateViewportActionState(finalActionState)
@@ -519,18 +520,23 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
         }
 
         if (
-          headRebaseTransactionRef.current !== transaction ||
+          !isCurrentHeadRebaseTransaction(transaction) ||
           transaction.phase !== 'pending' ||
-          transaction.viewport !== scrollParentRef
+          !hasHeadRebaseTarget(transaction)
         ) {
           return
         }
+        pendingProgrammaticScrollRef.current = null
+        manualScrollDownRef.current = false
+        lastScrollTopRef.current = nextScrollTop
         const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
         atBottomRef.current = finalActionState.isAtBottom
         cancelHeadRebaseTransaction(transaction)
         updateViewportActionState(finalActionState)
         return
       }
+
+      if (headRebaseTransactionRef.current) return
 
       promoteManualScroll()
       manualScrollDownRef.current = manualScrollActiveRef.current && nextScrollTop > lastScrollTopRef.current
@@ -553,6 +559,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     clearHeadAnchor,
     clearInitialScrollCancellation,
     promoteManualScroll,
+    isCurrentHeadRebaseTransaction,
     isCurrentListCallback,
     scrollParentRef,
     updateViewportActionState
@@ -598,6 +605,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const handleIsScrolling = useCallback(
     (isScrolling: boolean) => {
       if (!isCurrentListCallback()) return
+      if (headRebaseTransactionRef.current) return
       if (isScrolling) {
         promoteManualScroll()
         acknowledgeManualDeparture()
@@ -643,7 +651,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     if (!scrollParentRef || !isCurrentListCallback()) return
     const headRebaseTransaction = headRebaseTransactionRef.current
     if (headRebaseTransaction) {
-      if (headRebaseTransaction.viewport !== scrollParentRef) return
+      if (!isCurrentHeadRebaseTransaction(headRebaseTransaction)) return
       if (headRebaseTransaction.phase === 'registered') {
         if (hasHeadRebaseTarget(headRebaseTransaction)) {
           const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
@@ -669,6 +677,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   }, [
     cancelHeadRebaseTransaction,
     handleAtBottomStateChange,
+    isCurrentHeadRebaseTransaction,
     isCurrentListCallback,
     runScrollCommand,
     scrollParentRef,
