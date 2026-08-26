@@ -1,11 +1,14 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type FC, type ReactElement } from 'react'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
+import NumberFlow from '@number-flow/react'
 import { ArrowDownIcon } from 'lucide-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { cn } from '@/utils'
 
 export interface MessageListProps {
   children?: ReactElement[] | null
+  localSendToken?: number
 }
 
 const itemKey = (_: number, item: ReactElement) => {
@@ -58,6 +61,12 @@ type HeadAnchor = {
   offset: number
 }
 
+type ViewportActionState = {
+  isAtBottom: boolean
+  isBeyondHalfScreen: boolean
+  isManualScrollDown: boolean
+}
+
 const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): HeadAnchor | null => {
   const viewportBounds = scrollParent.getBoundingClientRect()
   const item = Array.from(scrollParent.querySelectorAll<HTMLElement>('[data-index]')).find((item) => {
@@ -73,6 +82,19 @@ const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): 
 
 const isViewportAtBottom = (scrollParent: HTMLElement) =>
   scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 1
+
+const getViewportActionState = (
+  scrollParent: HTMLElement,
+  isAtBottom: boolean,
+  isManualScrollDown: boolean
+): ViewportActionState => {
+  const distanceFromBottom = Math.max(0, scrollParent.scrollHeight - scrollParent.clientHeight - scrollParent.scrollTop)
+  return {
+    isAtBottom,
+    isBeyondHalfScreen: scrollParent.clientHeight > 0 && distanceFromBottom > scrollParent.clientHeight * 0.5,
+    isManualScrollDown
+  }
+}
 
 const getChildUpdate = (previous: readonly string[] | null, current: readonly string[]): ChildUpdate => {
   if (previous === null) return { kind: 'initial' }
@@ -97,12 +119,16 @@ const getChildUpdate = (previous: readonly string[] | null, current: readonly st
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000
 const INITIAL_TOP_MOST_ITEM_INDEX = { index: 'LAST' as const, align: 'end' as const }
 
-const MessageList: FC<MessageListProps> = ({ children }) => {
+const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => {
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [initialTopMostItemIndex, setInitialTopMostItemIndex] = useState<
     typeof INITIAL_TOP_MOST_ITEM_INDEX | undefined
   >(INITIAL_TOP_MOST_ITEM_INDEX)
-  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [viewportActionState, setViewportActionState] = useState<ViewportActionState>({
+    isAtBottom: true,
+    isBeyondHalfScreen: false,
+    isManualScrollDown: false
+  })
   const [newMessageCount, setNewMessageCount] = useState(0)
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const previousItemKeysRef = useRef<readonly string[] | null>(null)
@@ -113,12 +139,16 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   const manualScrollIntentRef = useRef(false)
   const manualScrollActiveRef = useRef(false)
   const manualScrollPausedRef = useRef(false)
+  const manualScrollDownRef = useRef(false)
+  const lastScrollTopRef = useRef(0)
+  const pendingProgrammaticScrollRef = useRef(false)
   const initialScrollCancellationEligibleRef = useRef(true)
   const initialScrollCancellationPendingRef = useRef(false)
   const initialScrollCancellationPassedHeadRef = useRef(false)
   const headAnchorRef = useRef<HeadAnchor | null>(null)
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
+  const lastLocalSendTokenRef = useRef(localSendToken)
   const hasChildren = children !== null && children !== undefined
   const itemKeys = useMemo(
     () => (hasChildren ? children.map((item, index) => itemKey(index, item)) : []),
@@ -140,6 +170,22 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     newMessageCountRef.current = 0
     setNewMessageCount(0)
   }, [])
+
+  const updateViewportActionState = useCallback(
+    (isAtBottom: boolean = scrollParentRef ? isViewportAtBottom(scrollParentRef) : atBottomRef.current) => {
+      if (!scrollParentRef) return
+
+      const nextState = getViewportActionState(scrollParentRef, isAtBottom, manualScrollDownRef.current)
+      setViewportActionState((currentState) =>
+        currentState.isAtBottom === nextState.isAtBottom &&
+        currentState.isBeyondHalfScreen === nextState.isBeyondHalfScreen &&
+        currentState.isManualScrollDown === nextState.isManualScrollDown
+          ? currentState
+          : nextState
+      )
+    },
+    [scrollParentRef]
+  )
 
   const promoteManualScroll = useCallback(() => {
     if (!manualScrollIntentRef.current) return
@@ -181,6 +227,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
         handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
         return
       case 'head-rebase':
+        pendingProgrammaticScrollRef.current = true
         handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
     }
   }, [])
@@ -214,7 +261,6 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     cancelLatestRecovery()
     atBottomRef.current = false
     manualScrollPausedRef.current = true
-    setIsAtBottom(false)
     captureHeadAnchor()
     captureInitialScrollCancellation()
   }, [cancelLatestRecovery, captureHeadAnchor, captureInitialScrollCancellation, promoteManualScroll, scrollParentRef])
@@ -222,6 +268,13 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   useLayoutEffect(() => {
     itemKeysRef.current = itemKeys
   }, [itemKeys])
+
+  useLayoutEffect(() => {
+    if (!scrollParentRef) return
+
+    lastScrollTopRef.current = scrollParentRef.scrollTop
+    updateViewportActionState(atBottomRef.current)
+  }, [scrollParentRef, updateViewportActionState])
 
   useLayoutEffect(() => {
     if (isNewTailAppend) {
@@ -289,6 +342,9 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
         initialScrollCancellationPendingRef.current = true
         setInitialTopMostItemIndex(undefined)
       }
+      lastScrollTopRef.current = scrollParentRef.scrollTop
+      manualScrollDownRef.current = false
+      pendingProgrammaticScrollRef.current = false
       manualScrollIntentRef.current = true
     }
     const markScrollbarScrollIntent = (event: PointerEvent) => {
@@ -302,8 +358,20 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     scrollArea.addEventListener('touchmove', markManualScrollIntent, { passive: true })
     scrollArea.addEventListener('pointerdown', markScrollbarScrollIntent)
     const handleScroll = () => {
+      const nextScrollTop = scrollParentRef.scrollTop
+      if (pendingProgrammaticScrollRef.current) {
+        pendingProgrammaticScrollRef.current = false
+        manualScrollDownRef.current = false
+        lastScrollTopRef.current = nextScrollTop
+        updateViewportActionState(isViewportAtBottom(scrollParentRef))
+        return
+      }
+
       promoteManualScroll()
+      manualScrollDownRef.current = manualScrollActiveRef.current && nextScrollTop > lastScrollTopRef.current
+      lastScrollTopRef.current = nextScrollTop
       acknowledgeManualDeparture()
+      updateViewportActionState(isViewportAtBottom(scrollParentRef))
     }
 
     scrollParentRef.addEventListener('scroll', handleScroll, { passive: true })
@@ -322,31 +390,34 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     clearHeadAnchor,
     clearInitialScrollCancellation,
     promoteManualScroll,
-    scrollParentRef
+    scrollParentRef,
+    updateViewportActionState
   ])
 
   const handleAtBottomStateChange = useCallback(
     (atBottom: boolean) => {
       atBottomRef.current = atBottom
-      setIsAtBottom(atBottom)
       if (!atBottom) {
         acknowledgeManualDeparture()
+        updateViewportActionState(false)
         return
       }
       clearInitialScrollCancellation()
       clearHeadAnchor()
-      if (manualScrollActiveRef.current) return
-
       cancelLatestRecovery()
       manualScrollPausedRef.current = false
       clearNewMessageCount()
+      manualScrollDownRef.current = false
+      updateViewportActionState(true)
+      if (manualScrollActiveRef.current) return
     },
     [
       acknowledgeManualDeparture,
       cancelLatestRecovery,
       clearHeadAnchor,
       clearInitialScrollCancellation,
-      clearNewMessageCount
+      clearNewMessageCount,
+      updateViewportActionState
     ]
   )
 
@@ -358,18 +429,26 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
         return
       }
       manualScrollIntentRef.current = false
-      if (!manualScrollActiveRef.current) return
+      if (!manualScrollActiveRef.current) {
+        manualScrollDownRef.current = false
+        updateViewportActionState()
+        return
+      }
 
       manualScrollActiveRef.current = false
+      manualScrollDownRef.current = false
       const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : atBottomRef.current
-      if (!atBottom) return
+      if (!atBottom) {
+        updateViewportActionState(false)
+        return
+      }
 
       cancelLatestRecovery()
       atBottomRef.current = true
-      setIsAtBottom(true)
       manualScrollPausedRef.current = false
       clearHeadAnchor()
       clearNewMessageCount()
+      updateViewportActionState(true)
       runScrollCommand({ kind: 'follow-bottom' })
     },
     [
@@ -379,9 +458,21 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
       clearNewMessageCount,
       promoteManualScroll,
       runScrollCommand,
-      scrollParentRef
+      scrollParentRef,
+      updateViewportActionState
     ]
   )
+
+  const handleTotalListHeightChanged = useCallback(() => {
+    if (!scrollParentRef) return
+
+    const atBottom = isViewportAtBottom(scrollParentRef)
+    if (atBottom !== atBottomRef.current) {
+      handleAtBottomStateChange(atBottom)
+      return
+    }
+    updateViewportActionState(atBottom)
+  }, [handleAtBottomStateChange, scrollParentRef, updateViewportActionState])
 
   const handleFollowOutput = useCallback(
     (atBottom: boolean) =>
@@ -393,15 +484,39 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
     manualScrollIntentRef.current = false
     manualScrollActiveRef.current = false
     manualScrollPausedRef.current = false
+    manualScrollDownRef.current = false
     latestRecoveryRef.current = true
     clearInitialScrollCancellation()
     clearHeadAnchor()
     clearNewMessageCount()
+    updateViewportActionState()
     runScrollCommand({ kind: 'follow-latest' })
-  }, [clearHeadAnchor, clearInitialScrollCancellation, clearNewMessageCount, runScrollCommand])
+  }, [
+    clearHeadAnchor,
+    clearInitialScrollCancellation,
+    clearNewMessageCount,
+    runScrollCommand,
+    updateViewportActionState
+  ])
 
-  const followActionLabel =
-    newMessageCount === 0 ? '回到底部' : `${newMessageCount > 99 ? '99+' : newMessageCount} 条新消息`
+  useLayoutEffect(() => {
+    if (localSendToken <= lastLocalSendTokenRef.current) return
+
+    lastLocalSendTokenRef.current = localSendToken
+    handleFollowLatest()
+  }, [handleFollowLatest, localSendToken])
+
+  const displayedNewMessageCount = Math.min(newMessageCount, 99)
+  const hasNewMessages = newMessageCount > 0
+  const followActionLabel = hasNewMessages
+    ? `${newMessageCount > 99 ? '99+' : newMessageCount} new message${newMessageCount === 1 ? '' : 's'}`
+    : 'Scroll to latest messages'
+  const isFollowActionVisible =
+    hasChildren &&
+    scrollParentRef !== null &&
+    !viewportActionState.isAtBottom &&
+    viewportActionState.isBeyondHalfScreen &&
+    !viewportActionState.isManualScrollDown
 
   return (
     <div className="relative min-h-0">
@@ -414,6 +529,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
             overscan={200}
             atBottomStateChange={handleAtBottomStateChange}
             isScrolling={handleIsScrolling}
+            totalListHeightChanged={handleTotalListHeightChanged}
             followOutput={isTailAppend ? handleFollowOutput : false}
             firstItemIndex={firstItemIndex}
             initialTopMostItemIndex={initialTopMostItemIndex}
@@ -425,16 +541,40 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
           />
         ) : null}
       </ScrollArea>
-      {hasChildren && scrollParentRef && !isAtBottom ? (
+      {hasChildren && scrollParentRef ? (
         <button
           type="button"
           aria-label={followActionLabel}
           title={followActionLabel}
-          className="bg-secondary absolute right-3 bottom-3 z-10 inline-flex h-7 items-center gap-x-1.5 rounded-full px-2 text-xs font-medium text-slate-500 shadow-sm hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:outline-none dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+          aria-hidden={!isFollowActionVisible}
+          data-state={isFollowActionVisible ? 'open' : 'closed'}
+          data-testid="follow-latest-action"
+          disabled={!isFollowActionVisible}
+          tabIndex={isFollowActionVisible ? 0 : -1}
+          className={cn(
+            'bg-secondary absolute bottom-3 left-1/2 z-10 grid h-7 -translate-x-1/2 items-center overflow-hidden rounded-full text-xs font-medium text-slate-500 shadow-sm transition-[opacity,grid-template-columns,gap,padding] duration-200 ease-out hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:outline-none disabled:cursor-default dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
+            hasNewMessages ? 'grid-cols-[auto_1fr] gap-x-1.5 px-2' : 'grid-cols-[auto_0fr] gap-x-0 px-1.5',
+            isFollowActionVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+          )}
           onClick={handleFollowLatest}
         >
           <ArrowDownIcon size={14} aria-hidden="true" />
-          <span>{followActionLabel}</span>
+          {hasNewMessages ? (
+            <span className="min-w-0 overflow-hidden text-xs whitespace-nowrap">
+              {import.meta.env.FIREFOX ? (
+                <span className="tabular-nums">
+                  {displayedNewMessageCount}
+                  {newMessageCount > 99 ? '+' : ''}
+                </span>
+              ) : (
+                <span className="inline-flex tabular-nums">
+                  <NumberFlow value={displayedNewMessageCount} />
+                  {newMessageCount > 99 ? '+' : null}
+                </span>
+              )}{' '}
+              {newMessageCount === 1 ? 'new message' : 'new messages'}
+            </span>
+          ) : null}
         </button>
       ) : null}
     </div>

@@ -1,5 +1,5 @@
 import '@webcomponents/custom-elements'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Toaster } from 'sonner'
 import Header from '@/app/content/views/header'
@@ -44,7 +44,9 @@ const App = () => {
   const danmakuIsEnabled = userInfo?.danmakuEnabled ?? false
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
   const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
+  const [localSendToken, setLocalSendToken] = useState(0)
   const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
+  const handleLocalTextSent = useCallback(() => setLocalSendToken((token) => token + 1), [])
 
   useEffect(() => {
     if (initializationReady && messageListLoadFinished && userInfoSetFinished) {
@@ -85,8 +87,8 @@ const App = () => {
       <MediaPreviewContext.Provider value={openMediaPreview}>
         <AppLayout>
           <Header />
-          <Main />
-          <Footer />
+          <Main localSendToken={localSendToken} />
+          <Footer onLocalTextSent={handleLocalTextSent} />
           {notUserInfo && <Setup />}
           <Toaster
             richColors

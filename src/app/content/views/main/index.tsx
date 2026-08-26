@@ -11,7 +11,11 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 import { compareEventPosition } from '@/domain/Message'
 
-const Main: FC = () => {
+export interface MainProps {
+  localSendToken: number
+}
+
+const Main: FC<MainProps> = ({ localSendToken }) => {
   const send = useRemeshSend()
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
@@ -40,7 +44,7 @@ const Main: FC = () => {
   )
 
   return (
-    <MessageList>
+    <MessageList localSendToken={localSendToken}>
       {messageListLoadFinished
         ? messageList.map((message, index) => {
             const key = messageRowKey(message)

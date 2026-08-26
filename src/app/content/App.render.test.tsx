@@ -1,10 +1,11 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   ready: false,
   danmakuEnabled: false,
   danmakuMountKeys: [] as string[],
+  localSendTokens: [] as number[],
   onDanmakuClick: null as null | (() => void),
   send: vi.fn()
 }))
@@ -73,8 +74,19 @@ vi.mock('@/domain/Danmaku', () => ({
   })
 }))
 vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testid="header" /> }))
-vi.mock('@/app/content/views/main', () => ({ default: () => <main data-testid="main" /> }))
-vi.mock('@/app/content/views/footer', () => ({ default: () => <footer data-testid="footer" /> }))
+vi.mock('@/app/content/views/main', () => ({
+  default: ({ localSendToken }: { localSendToken: number }) => {
+    fixture.localSendTokens.push(localSendToken)
+    return <main data-testid="main" data-local-send-token={localSendToken} />
+  }
+}))
+vi.mock('@/app/content/views/footer', () => ({
+  default: ({ onLocalTextSent }: { onLocalTextSent: () => void }) => (
+    <footer data-testid="footer">
+      <button type="button" data-testid="local-text-send" onClick={onLocalTextSent} />
+    </footer>
+  )
+}))
 vi.mock('@/app/content/views/setup', () => ({ default: () => <aside data-testid="setup" /> }))
 vi.mock('@/app/content/views/app-layout', () => ({
   default: ({ children }: { children?: React.ReactNode }) => (
@@ -103,6 +115,7 @@ afterEach(() => {
   fixture.ready = false
   fixture.danmakuEnabled = false
   fixture.danmakuMountKeys = []
+  fixture.localSendTokens = []
   fixture.onDanmakuClick = null
   fixture.send.mockClear()
   vi.restoreAllMocks()
@@ -144,6 +157,17 @@ describe('normal App composition', () => {
     fixture.onDanmakuClick!()
 
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
+  })
+
+  it('forwards each Footer local-text dispatch through one Document-local token to Main', () => {
+    render(<App />)
+
+    expect(screen.getByTestId('main').dataset.localSendToken).toBe('0')
+    fireEvent.click(screen.getByTestId('local-text-send'))
+    expect(screen.getByTestId('main').dataset.localSendToken).toBe('1')
+    fireEvent.click(screen.getByTestId('local-text-send'))
+    expect(screen.getByTestId('main').dataset.localSendToken).toBe('2')
+    expect(fixture.localSendTokens).toEqual([0, 1, 2])
   })
 
   it('keeps the Danmaku mount interface visibility-free', () => {

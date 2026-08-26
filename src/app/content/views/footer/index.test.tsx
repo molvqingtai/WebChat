@@ -41,6 +41,7 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   canSubmitText = false
+  queryFixtures['MessageInput.ValueQuery'] = 'hello'
 })
 
 const renderFooter = () => render(<Footer />)
@@ -110,5 +111,51 @@ describe('Footer step-4 submit gate', () => {
     pressEnter()
     await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1))
     expect(sendSpy).toHaveBeenCalledWith(submitShape())
+  })
+
+  it('notifies the Document-local owner only after dispatching a valid text command', async () => {
+    const onLocalTextSent = vi.fn()
+    canSubmitText = true
+    render(<Footer onLocalTextSent={onLocalTextSent} />)
+
+    pressEnter()
+
+    await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledWith(submitShape()))
+    expect(onLocalTextSent).toHaveBeenCalledOnce()
+    expect(sendSpy.mock.invocationCallOrder[0]).toBeLessThan(onLocalTextSent.mock.invocationCallOrder[0]!)
+  })
+
+  it('does not notify the Document-local owner for a gated submit', () => {
+    const onLocalTextSent = vi.fn()
+    render(<Footer onLocalTextSent={onLocalTextSent} />)
+
+    pressEnter()
+
+    expect(onLocalTextSent).not.toHaveBeenCalled()
+  })
+
+  it('does not notify the Document-local owner for blank text', async () => {
+    const onLocalTextSent = vi.fn()
+    canSubmitText = true
+    queryFixtures['MessageInput.ValueQuery'] = '   '
+    render(<Footer onLocalTextSent={onLocalTextSent} />)
+
+    pressEnter()
+    await Promise.resolve()
+
+    expect(onLocalTextSent).not.toHaveBeenCalled()
+    expect(sendSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not notify the Document-local owner when byte validation rejects text', async () => {
+    const onLocalTextSent = vi.fn()
+    canSubmitText = true
+    queryFixtures['MessageInput.ValueQuery'] = 'x'.repeat(200_000)
+    render(<Footer onLocalTextSent={onLocalTextSent} />)
+
+    pressEnter()
+
+    await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledWith('Toast.WarningCommand'))
+    expect(onLocalTextSent).not.toHaveBeenCalled()
   })
 })
