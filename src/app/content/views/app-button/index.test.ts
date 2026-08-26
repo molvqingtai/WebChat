@@ -6,6 +6,15 @@ import { getReconnectLabel } from '.'
 const source = () => readFileSync(path.resolve(process.cwd(), 'src/app/content/views/app-button/index.tsx'), 'utf8')
 
 describe('reconnect action availability', () => {
+  it('keeps every daily logo intrinsically bounded before CSS loads', () => {
+    for (let day = 0; day < 7; day += 1) {
+      const logo = readFileSync(path.resolve(process.cwd(), `src/assets/images/logo-${day}.svg`), 'utf8')
+
+      expect(logo).toContain('<svg width="50px" height="50px"')
+      expect(logo).toContain('viewBox="0 0 1200 1200"')
+    }
+  })
+
   it.each([
     {
       state: { userConfigured: false, joined: false, reconnecting: false, available: false },
