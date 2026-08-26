@@ -1,4 +1,13 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type FC, type ReactElement } from 'react'
+import {
+  useCallback,
+  useInsertionEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FC,
+  type ReactElement
+} from 'react'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
 import NumberFlow from '@number-flow/react'
@@ -67,6 +76,21 @@ type ViewportActionState = {
   isManualScrollDown: boolean
 }
 
+type TailBottomSnapshot = {
+  atBottom: boolean
+  callbackPending: boolean
+}
+
+type HeadRebaseSnapshot = {
+  actionState: ViewportActionState
+  index: number
+  offset: number
+}
+
+type PendingProgrammaticScroll = {
+  headRebaseSnapshot: HeadRebaseSnapshot | null
+}
+
 const getHeadAnchor = (scrollParent: HTMLElement, itemKeys: readonly string[]): HeadAnchor | null => {
   const viewportBounds = scrollParent.getBoundingClientRect()
   const item = Array.from(scrollParent.querySelectorAll<HTMLElement>('[data-index]')).find((item) => {
@@ -92,6 +116,19 @@ const getViewportActionState = (
   return {
     isAtBottom,
     isBeyondHalfScreen: scrollParent.clientHeight > 0 && distanceFromBottom > scrollParent.clientHeight * 0.5,
+    isManualScrollDown
+  }
+}
+
+const getPhysicalViewportActionState = (
+  scrollParent: HTMLElement,
+  isManualScrollDown: boolean
+): ViewportActionState => {
+  const { clientHeight, scrollHeight, scrollTop } = scrollParent
+  const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop)
+  return {
+    isAtBottom: scrollTop + clientHeight >= scrollHeight - 1,
+    isBeyondHalfScreen: clientHeight > 0 && distanceFromBottom > clientHeight * 0.5,
     isManualScrollDown
   }
 }
@@ -141,11 +178,12 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const manualScrollPausedRef = useRef(false)
   const manualScrollDownRef = useRef(false)
   const lastScrollTopRef = useRef(0)
-  const pendingProgrammaticScrollRef = useRef(false)
+  const pendingProgrammaticScrollRef = useRef<PendingProgrammaticScroll | null>(null)
   const initialScrollCancellationEligibleRef = useRef(true)
   const initialScrollCancellationPendingRef = useRef(false)
   const initialScrollCancellationPassedHeadRef = useRef(false)
   const headAnchorRef = useRef<HeadAnchor | null>(null)
+  const headRebaseSnapshotRef = useRef<HeadRebaseSnapshot | null>(null)
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
   const lastLocalSendTokenRef = useRef(localSendToken)
@@ -163,7 +201,44 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const isHeadPrepend = headCount > 0 && lastHeadItemKeysRef.current !== itemKeys
   const isTailAppend = tailCount > 0
   const isNewTailAppend = isTailAppend && lastTailItemKeysRef.current !== itemKeys
+  const tailBottomSnapshot = useMemo<TailBottomSnapshot | null>(
+    () =>
+      isTailAppend && scrollParentRef ? { atBottom: isViewportAtBottom(scrollParentRef), callbackPending: true } : null,
+    [isTailAppend, itemKeys, scrollParentRef]
+  )
+  const headRebaseSnapshot = useMemo<HeadRebaseSnapshot | null>(() => {
+    const headAnchor = headAnchorRef.current
+    if (
+      !isHeadPrepend ||
+      isTailAppend ||
+      !scrollParentRef ||
+      !headAnchor ||
+      itemKeys[headAnchor.index + headCount] !== headAnchor.key
+    ) {
+      return null
+    }
+
+    return {
+      actionState: getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current),
+      index: headAnchor.index + headCount,
+      offset: headAnchor.offset
+    }
+  }, [headCount, isHeadPrepend, isTailAppend, itemKeys, scrollParentRef])
   const firstItemIndex = isHeadPrepend ? firstItemIndexRef.current - headCount : firstItemIndexRef.current
+
+  useInsertionEffect(() => {
+    if (!headRebaseSnapshot) return
+
+    headRebaseSnapshotRef.current = headRebaseSnapshot
+    return () => {
+      if (
+        headRebaseSnapshotRef.current === headRebaseSnapshot &&
+        pendingProgrammaticScrollRef.current?.headRebaseSnapshot !== headRebaseSnapshot
+      ) {
+        headRebaseSnapshotRef.current = null
+      }
+    }
+  }, [headRebaseSnapshot])
 
   const clearNewMessageCount = useCallback(() => {
     if (newMessageCountRef.current === 0) return
@@ -172,10 +247,17 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   }, [])
 
   const updateViewportActionState = useCallback(
-    (isAtBottom: boolean = scrollParentRef ? isViewportAtBottom(scrollParentRef) : atBottomRef.current) => {
+    (
+      actionStateOrAtBottom: ViewportActionState | boolean = scrollParentRef
+        ? isViewportAtBottom(scrollParentRef)
+        : atBottomRef.current
+    ) => {
       if (!scrollParentRef) return
 
-      const nextState = getViewportActionState(scrollParentRef, isAtBottom, manualScrollDownRef.current)
+      const nextState =
+        typeof actionStateOrAtBottom === 'boolean'
+          ? getViewportActionState(scrollParentRef, actionStateOrAtBottom, manualScrollDownRef.current)
+          : actionStateOrAtBottom
       setViewportActionState((currentState) =>
         currentState.isAtBottom === nextState.isAtBottom &&
         currentState.isBeyondHalfScreen === nextState.isBeyondHalfScreen &&
@@ -199,15 +281,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     []
   )
 
-  const getAtBottomSnapshot = useCallback(
-    (reportedAtBottom: boolean) => {
-      const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom
-      atBottomRef.current = atBottom
-      return atBottom
-    },
-    [scrollParentRef]
-  )
-
   const clearInitialScrollCancellation = useCallback(() => {
     initialScrollCancellationPendingRef.current = false
     initialScrollCancellationPassedHeadRef.current = false
@@ -217,29 +290,38 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     headAnchorRef.current = null
   }, [])
 
+  const clearHeadRebaseSnapshot = useCallback((snapshot?: HeadRebaseSnapshot | null) => {
+    if (snapshot === undefined || headRebaseSnapshotRef.current === snapshot) {
+      headRebaseSnapshotRef.current = null
+    }
+  }, [])
+
   const cancelLatestRecovery = useCallback(() => {
     latestRecoveryRef.current = false
   }, [])
 
-  const runScrollCommand = useCallback((command: ScrollCommand) => {
-    const handle = virtuosoRef.current
-    if (!handle) return
+  const runScrollCommand = useCallback(
+    (command: ScrollCommand, headRebaseSnapshot: HeadRebaseSnapshot | null = null) => {
+      const handle = virtuosoRef.current
+      if (!handle) return
 
-    switch (command.command) {
-      case 'cancel-initial':
-        handle.scrollTo({ top: command.top })
-        return
-      case 'follow-bottom':
-        handle.autoscrollToBottom()
-        return
-      case 'follow-latest':
-        handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
-        return
-      case 'head-rebase':
-        pendingProgrammaticScrollRef.current = true
-        handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
-    }
-  }, [])
+      switch (command.command) {
+        case 'cancel-initial':
+          handle.scrollTo({ top: command.top })
+          return
+        case 'follow-bottom':
+          handle.autoscrollToBottom()
+          return
+        case 'follow-latest':
+          handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
+          return
+        case 'head-rebase':
+          pendingProgrammaticScrollRef.current = { headRebaseSnapshot }
+          handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
+      }
+    },
+    []
+  )
 
   const captureInitialScrollCancellation = useCallback(() => {
     if (!scrollParentRef || !initialScrollCancellationPendingRef.current) return
@@ -288,7 +370,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   useLayoutEffect(() => {
     if (isNewTailAppend) {
       lastTailItemKeysRef.current = itemKeys
-      const atBottom = getAtBottomSnapshot(atBottomRef.current)
+      const atBottom = tailBottomSnapshot?.atBottom ?? atBottomRef.current
+      atBottomRef.current = atBottom
       if (latestRecoveryRef.current) {
         clearNewMessageCount()
       } else if (!canFollowLatest(atBottom)) {
@@ -308,7 +391,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       }
       const headAnchor = headAnchorRef.current
       clearHeadAnchor()
-      if (headAnchor) {
+      if (isTailAppend && headAnchor) {
         const index = headAnchor.index + headCount
         if (itemKeys[index] === headAnchor.key) {
           runScrollCommand({ command: 'head-rebase', index, offset: headAnchor.offset })
@@ -331,7 +414,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     clearInitialScrollCancellation,
     clearNewMessageCount,
     firstItemIndex,
-    getAtBottomSnapshot,
     headCount,
     hasChildren,
     isHeadPrepend,
@@ -339,7 +421,9 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     isTailAppend,
     itemKeys,
     runScrollCommand,
-    tailCount
+    tailBottomSnapshot,
+    tailCount,
+    updateViewportActionState
   ])
 
   useLayoutEffect(() => {
@@ -355,7 +439,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       }
       lastScrollTopRef.current = scrollParentRef.scrollTop
       manualScrollDownRef.current = false
-      pendingProgrammaticScrollRef.current = false
+      pendingProgrammaticScrollRef.current = null
+      clearHeadRebaseSnapshot()
       manualScrollIntentRef.current = true
     }
     const markScrollbarScrollIntent = (event: PointerEvent) => {
@@ -370,11 +455,20 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     scrollArea.addEventListener('pointerdown', markScrollbarScrollIntent)
     const handleScroll = () => {
       const nextScrollTop = scrollParentRef.scrollTop
-      if (pendingProgrammaticScrollRef.current) {
-        pendingProgrammaticScrollRef.current = false
+      const pendingProgrammaticScroll = pendingProgrammaticScrollRef.current
+      if (pendingProgrammaticScroll) {
+        pendingProgrammaticScrollRef.current = null
         manualScrollDownRef.current = false
         lastScrollTopRef.current = nextScrollTop
-        updateViewportActionState(isViewportAtBottom(scrollParentRef))
+        if (
+          !pendingProgrammaticScroll.headRebaseSnapshot ||
+          headRebaseSnapshotRef.current === pendingProgrammaticScroll.headRebaseSnapshot
+        ) {
+          const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
+          atBottomRef.current = finalActionState.isAtBottom
+          clearHeadRebaseSnapshot(pendingProgrammaticScroll.headRebaseSnapshot)
+          updateViewportActionState(finalActionState)
+        }
         return
       }
 
@@ -393,12 +487,14 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       scrollParentRef.removeEventListener('scroll', handleScroll)
       clearInitialScrollCancellation()
       clearHeadAnchor()
+      clearHeadRebaseSnapshot()
       cancelLatestRecovery()
     }
   }, [
     acknowledgeManualDeparture,
     cancelLatestRecovery,
     clearHeadAnchor,
+    clearHeadRebaseSnapshot,
     clearInitialScrollCancellation,
     promoteManualScroll,
     scrollParentRef,
@@ -407,7 +503,13 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const handleAtBottomStateChange = useCallback(
     (reportedAtBottom: boolean) => {
-      const atBottom = getAtBottomSnapshot(reportedAtBottom)
+      if (headRebaseSnapshotRef.current) return
+      if (tailBottomSnapshot?.callbackPending && !tailBottomSnapshot.atBottom) {
+        tailBottomSnapshot.callbackPending = false
+        return
+      }
+      const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom
+      atBottomRef.current = atBottom
       if (!atBottom) {
         acknowledgeManualDeparture()
         updateViewportActionState(false)
@@ -428,7 +530,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       clearHeadAnchor,
       clearInitialScrollCancellation,
       clearNewMessageCount,
-      getAtBottomSnapshot,
+      scrollParentRef,
+      tailBottomSnapshot,
       updateViewportActionState
     ]
   )
@@ -477,6 +580,16 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const handleTotalListHeightChanged = useCallback(() => {
     if (!scrollParentRef) return
+    const headRebaseSnapshot = headRebaseSnapshotRef.current
+    if (headRebaseSnapshot) {
+      if (pendingProgrammaticScrollRef.current?.headRebaseSnapshot !== headRebaseSnapshot) {
+        runScrollCommand(
+          { command: 'head-rebase', index: headRebaseSnapshot.index, offset: headRebaseSnapshot.offset },
+          headRebaseSnapshot
+        )
+      }
+      return
+    }
 
     const atBottom = isViewportAtBottom(scrollParentRef)
     if (atBottom !== atBottomRef.current) {
@@ -484,16 +597,17 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       return
     }
     updateViewportActionState(atBottom)
-  }, [handleAtBottomStateChange, scrollParentRef, updateViewportActionState])
+  }, [handleAtBottomStateChange, runScrollCommand, scrollParentRef, updateViewportActionState])
 
   const handleFollowOutput = useCallback(
     (reportedAtBottom: boolean) => {
-      const atBottom = getAtBottomSnapshot(reportedAtBottom)
+      const atBottom = tailBottomSnapshot?.atBottom ?? reportedAtBottom
+      if (tailBottomSnapshot === null) atBottomRef.current = atBottom
       return isTailAppend && ((isNewTailAppend && latestRecoveryRef.current) || canFollowLatest(atBottom))
         ? 'smooth'
         : false
     },
-    [canFollowLatest, getAtBottomSnapshot, isNewTailAppend, isTailAppend]
+    [canFollowLatest, isNewTailAppend, isTailAppend, tailBottomSnapshot]
   )
 
   const handleFollowLatest = useCallback(() => {
@@ -501,6 +615,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     manualScrollActiveRef.current = false
     manualScrollPausedRef.current = false
     manualScrollDownRef.current = false
+    pendingProgrammaticScrollRef.current = null
+    clearHeadRebaseSnapshot()
     latestRecoveryRef.current = true
     clearInitialScrollCancellation()
     clearHeadAnchor()
@@ -509,6 +625,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     runScrollCommand({ command: 'follow-latest' })
   }, [
     clearHeadAnchor,
+    clearHeadRebaseSnapshot,
     clearInitialScrollCancellation,
     clearNewMessageCount,
     runScrollCommand,

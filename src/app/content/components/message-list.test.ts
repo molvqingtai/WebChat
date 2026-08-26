@@ -23,6 +23,7 @@ interface VirtuosoCall {
 
 const virtuosoCalls = vi.hoisted(() => [] as VirtuosoCall[])
 const virtuosoLifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }))
+const virtuosoRenderControl = vi.hoisted(() => ({ beforeParentLayout: null as (() => void) | null }))
 const virtuosoHandle = vi.hoisted(() => ({
   autoscrollToBottom: vi.fn(),
   getState: vi.fn(),
@@ -92,6 +93,9 @@ vi.mock('react-virtuoso', async () => {
         keys
       })
       React.useImperativeHandle(ref, () => virtuosoHandle)
+      React.useLayoutEffect(() => {
+        virtuosoRenderControl.beforeParentLayout?.()
+      })
       useEffect(() => {
         virtuosoLifecycle.mounts += 1
         return () => {
@@ -214,6 +218,7 @@ const setScrollMetrics = (element: HTMLElement, clientHeight: number, scrollHeig
 beforeEach(() => {
   virtuosoCalls.length = 0
   virtuosoLifecycle.mounts = 0
+  virtuosoRenderControl.beforeParentLayout = null
   virtuosoLifecycle.unmounts = 0
   vi.clearAllMocks()
   scrollAreaRefControl.manual = false
@@ -300,7 +305,7 @@ describe('MessageList Virtuoso integration', () => {
       expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe('smooth')
 
       scrollParent.scrollTop = 0
-      expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
+      expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe('smooth')
     }
   })
 
@@ -460,6 +465,27 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+
+    const followOutput = latestVirtuosoCall().followOutput
+    expect(typeof followOutput).toBe('function')
+    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+  })
+
+  it('keeps one pre-tail physical snapshot when commit geometry changes before followOutput', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    reportBottom(true)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+
+    virtuosoRenderControl.beforeParentLayout = () => setScrollMetrics(scrollParent, 100, 1_000, 900)
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+    virtuosoRenderControl.beforeParentLayout = null
+    reportStaleBottom(true)
 
     const followOutput = latestVirtuosoCall().followOutput
     expect(typeof followOutput).toBe('function')
@@ -674,6 +700,81 @@ describe('MessageList Virtuoso integration', () => {
     expect(virtuosoHandle.scrollTo).not.toHaveBeenCalled()
   })
 
+  it('keeps the action through intermediate head-rebase geometry until programmatic completion', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    const firstItem = view.container.querySelector<HTMLElement>('[data-index="0"]')!
+    const anchorItem = view.container.querySelector<HTMLElement>('[data-index="1"]')!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(firstItem, -80, -20)
+    setBounds(anchorItem, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+    vi.clearAllMocks()
+
+    virtuosoRenderControl.beforeParentLayout = () => {
+      setScrollMetrics(scrollParent, 100, 1_000, 850)
+      latestVirtuosoCall().atBottomStateChange?.(false)
+    }
+    view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...rows]))
+    virtuosoRenderControl.beforeParentLayout = null
+
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({
+      index: 3,
+      align: 'start',
+      offset: -20,
+      behavior: 'auto'
+    })
+
+    setScrollMetrics(scrollParent, 100, 1_000, 849)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+  })
+
+  it('closes the action when the final head-rebase geometry is within half a viewport', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    const firstItem = view.container.querySelector<HTMLElement>('[data-index="0"]')!
+    const anchorItem = view.container.querySelector<HTMLElement>('[data-index="1"]')!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(firstItem, -80, -20)
+    setBounds(anchorItem, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+
+    virtuosoRenderControl.beforeParentLayout = () => {
+      setScrollMetrics(scrollParent, 100, 1_000, 850)
+      latestVirtuosoCall().atBottomStateChange?.(false)
+    }
+    view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...rows]))
+    virtuosoRenderControl.beforeParentLayout = null
+
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
+    setScrollMetrics(scrollParent, 100, 1_000, 850)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+
+    expect(view.queryByRole('button', { name: 'Scroll to latest messages' })).toBeNull()
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
+  })
+
   it('rebases one manually browsed head prepend without issuing a tail command', () => {
     const rows = testRows('current-1', 'current-2', 'current-3')
     const view = render(createElement(MessageList, null, rows))
@@ -706,6 +807,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
     view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...pausedTailRows]))
+    act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
 
     expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
