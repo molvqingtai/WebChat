@@ -288,14 +288,18 @@ describe('MessageList Virtuoso integration', () => {
   it('makes the same tail-follow decision for received, sent, and synchronized child appends', () => {
     let rows = testRows('initial')
     const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
 
     for (const source of ['received', 'sent', 'sync']) {
+      reportBottom(true)
       rows = [...rows, ...testRows(source)]
       view.rerender(createElement(MessageList, null, rows))
 
       const followOutput = latestVirtuosoCall().followOutput
       expect(typeof followOutput).toBe('function')
       expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe('smooth')
+
+      scrollParent.scrollTop = 0
       expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
     }
   })
@@ -442,6 +446,24 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
 
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+  })
+
+  it('uses the physical bottom snapshot for a tail append without an at-bottom callback', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    reportBottom(true)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+
+    const followOutput = latestVirtuosoCall().followOutput
+    expect(typeof followOutput).toBe('function')
+    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
   })
 

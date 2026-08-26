@@ -199,6 +199,15 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     []
   )
 
+  const getAtBottomSnapshot = useCallback(
+    (reportedAtBottom: boolean) => {
+      const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom
+      atBottomRef.current = atBottom
+      return atBottom
+    },
+    [scrollParentRef]
+  )
+
   const clearInitialScrollCancellation = useCallback(() => {
     initialScrollCancellationPendingRef.current = false
     initialScrollCancellationPassedHeadRef.current = false
@@ -279,9 +288,10 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   useLayoutEffect(() => {
     if (isNewTailAppend) {
       lastTailItemKeysRef.current = itemKeys
+      const atBottom = getAtBottomSnapshot(atBottomRef.current)
       if (latestRecoveryRef.current) {
         clearNewMessageCount()
-      } else if (!canFollowLatest(atBottomRef.current)) {
+      } else if (!canFollowLatest(atBottom)) {
         newMessageCountRef.current += tailCount
         setNewMessageCount(newMessageCountRef.current)
       }
@@ -321,6 +331,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     clearInitialScrollCancellation,
     clearNewMessageCount,
     firstItemIndex,
+    getAtBottomSnapshot,
     headCount,
     hasChildren,
     isHeadPrepend,
@@ -396,8 +407,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const handleAtBottomStateChange = useCallback(
     (reportedAtBottom: boolean) => {
-      const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom
-      atBottomRef.current = atBottom
+      const atBottom = getAtBottomSnapshot(reportedAtBottom)
       if (!atBottom) {
         acknowledgeManualDeparture()
         updateViewportActionState(false)
@@ -418,6 +428,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       clearHeadAnchor,
       clearInitialScrollCancellation,
       clearNewMessageCount,
+      getAtBottomSnapshot,
       updateViewportActionState
     ]
   )
@@ -476,9 +487,13 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   }, [handleAtBottomStateChange, scrollParentRef, updateViewportActionState])
 
   const handleFollowOutput = useCallback(
-    (atBottom: boolean) =>
-      isTailAppend && ((isNewTailAppend && latestRecoveryRef.current) || canFollowLatest(atBottom)) ? 'smooth' : false,
-    [canFollowLatest, isNewTailAppend, isTailAppend]
+    (reportedAtBottom: boolean) => {
+      const atBottom = getAtBottomSnapshot(reportedAtBottom)
+      return isTailAppend && ((isNewTailAppend && latestRecoveryRef.current) || canFollowLatest(atBottom))
+        ? 'smooth'
+        : false
+    },
+    [canFollowLatest, getAtBottomSnapshot, isNewTailAppend, isTailAppend]
   )
 
   const handleFollowLatest = useCallback(() => {
