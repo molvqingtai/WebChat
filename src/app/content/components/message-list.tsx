@@ -44,6 +44,7 @@ type ScrollCommand =
   | { command: 'cancel-initial'; top: number }
   | { command: 'follow-bottom' | 'follow-latest' }
   | { command: 'head-rebase'; index: number; offset: number }
+  | { command: 'tail-restore'; index: number; offset: number }
 
 const hasPrefix = (prefix: readonly string[], values: readonly string[]) =>
   prefix.length <= values.length && prefix.every((value, index) => values[index] === value)
@@ -79,9 +80,13 @@ type ViewportActionState = {
 }
 
 type TailBottomSnapshot = {
+  anchor: HeadAnchor | null
   atBottom: boolean
   callbackPending: boolean
+  follow: boolean
   itemKeys: readonly string[]
+  restore: 'pending' | 'commanded' | null
+  scrollPending: boolean
   viewport: HTMLElement
 }
 
@@ -256,6 +261,16 @@ const MessageList: FC<MessageListProps> = ({
     [scrollParentRef]
   )
 
+  const canFollowLatest = useCallback(
+    (atBottom: boolean) =>
+      atBottom &&
+      !latestRecoveryRef.current &&
+      !manualScrollIntentRef.current &&
+      !manualScrollActiveRef.current &&
+      !manualScrollPausedRef.current,
+    []
+  )
+
   useInsertionEffect(() => {
     const transaction = headRebaseTransactionRef.current
     if (!hasChildren || !scrollParentRef || (transaction !== null && transaction.viewport !== scrollParentRef)) {
@@ -313,12 +328,19 @@ const MessageList: FC<MessageListProps> = ({
     activeViewportRef.current = scrollParentRef
 
     if (isTailAppend && scrollParentRef) {
-      tailBottomSnapshotRef.current = {
-        atBottom: isViewportAtBottom(scrollParentRef),
+      const atBottom = isViewportAtBottom(scrollParentRef)
+      const follow = canFollowLatest(atBottom)
+      const snapshot = {
+        anchor: follow ? null : getHeadAnchor(scrollParentRef, previousItemKeysRef.current ?? itemKeys),
+        atBottom,
         callbackPending: true,
+        follow,
         itemKeys,
+        restore: null,
+        scrollPending: true,
         viewport: scrollParentRef
       }
+      tailBottomSnapshotRef.current = snapshot
     }
 
     if (headRebaseTarget && scrollParentRef) {
@@ -334,6 +356,7 @@ const MessageList: FC<MessageListProps> = ({
   }, [
     cancelHeadRebaseTransaction,
     cancelTailBottomSnapshot,
+    canFollowLatest,
     childUpdate.update,
     hasChildren,
     headRebaseTarget,
@@ -379,16 +402,6 @@ const MessageList: FC<MessageListProps> = ({
     manualScrollActiveRef.current = true
   }, [])
 
-  const canFollowLatest = useCallback(
-    (atBottom: boolean) =>
-      atBottom &&
-      !latestRecoveryRef.current &&
-      !manualScrollIntentRef.current &&
-      !manualScrollActiveRef.current &&
-      !manualScrollPausedRef.current,
-    []
-  )
-
   const clearInitialScrollCancellation = useCallback(() => {
     initialScrollCancellationPendingRef.current = false
     initialScrollCancellationPassedHeadRef.current = false
@@ -425,7 +438,7 @@ const MessageList: FC<MessageListProps> = ({
           handle.scrollTo({ top: command.top })
           return
         case 'follow-bottom':
-          handle.autoscrollToBottom()
+          handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
           return
         case 'follow-latest':
           handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
@@ -444,6 +457,9 @@ const MessageList: FC<MessageListProps> = ({
             owner: headRebaseTransaction,
             viewport: headRebaseTransaction.viewport
           }
+          handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
+          return
+        case 'tail-restore':
           handle.scrollToIndex({ index: command.index, align: 'start', offset: command.offset, behavior: 'auto' })
       }
     },
@@ -500,7 +516,7 @@ const MessageList: FC<MessageListProps> = ({
       atBottomRef.current = atBottom
       if (latestRecoveryRef.current) {
         clearNewMessageCount()
-      } else if (!canFollowLatest(atBottom)) {
+      } else {
         newMessageCountRef.current += tailCount
         setNewMessageCount(newMessageCountRef.current)
       }
@@ -619,18 +635,43 @@ const MessageList: FC<MessageListProps> = ({
 
   const handleAtBottomStateChange = useCallback(
     (reportedAtBottom: boolean, settledAtBottom?: boolean) => {
+      const tailBottomSnapshot = tailBottomSnapshotRef.current
       if (!isCurrentListCallback()) return
       if (headRebaseTransactionRef.current) return
-      const tailBottomSnapshot = tailBottomSnapshotRef.current
       if (
         tailBottomSnapshot &&
-        tailBottomSnapshot.callbackPending &&
+        !tailBottomSnapshot.follow &&
+        (tailBottomSnapshot.callbackPending || tailBottomSnapshot.scrollPending) &&
         !tailBottomSnapshot.atBottom &&
         isCurrentTailBottomSnapshot(tailBottomSnapshot)
       ) {
         return
       }
       const atBottom = settledAtBottom ?? (scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom)
+      if (
+        tailBottomSnapshot &&
+        !tailBottomSnapshot.follow &&
+        isCurrentTailBottomSnapshot(tailBottomSnapshot) &&
+        tailBottomSnapshot.restore
+      ) {
+        if (tailBottomSnapshot.restore === 'pending' && atBottom) {
+          const anchor = tailBottomSnapshot.anchor
+          if (!anchor || itemKeys[anchor.index] !== anchor.key) {
+            cancelTailBottomSnapshot(tailBottomSnapshot)
+          } else {
+            tailBottomSnapshot.restore = 'commanded'
+            runScrollCommand({ command: 'tail-restore', index: anchor.index, offset: anchor.offset })
+            return
+          }
+        } else if (tailBottomSnapshot.restore === 'commanded') {
+          if (atBottom) return
+
+          cancelTailBottomSnapshot(tailBottomSnapshot)
+          atBottomRef.current = false
+          updateViewportActionState(false)
+          return
+        }
+      }
       atBottomRef.current = atBottom
       if (!atBottom) {
         acknowledgeManualDeparture()
@@ -651,8 +692,11 @@ const MessageList: FC<MessageListProps> = ({
       clearHeadAnchor,
       clearInitialScrollCancellation,
       clearNewMessageCount,
+      cancelTailBottomSnapshot,
       isCurrentListCallback,
       isCurrentTailBottomSnapshot,
+      itemKeys,
+      runScrollCommand,
       scrollParentRef,
       updateViewportActionState
     ]
@@ -706,13 +750,16 @@ const MessageList: FC<MessageListProps> = ({
     const tailBottomSnapshot = tailBottomSnapshotRef.current
     const hasCurrentTailBottomSnapshot =
       tailBottomSnapshot !== null &&
-      tailBottomSnapshot.callbackPending &&
+      (tailBottomSnapshot.callbackPending || tailBottomSnapshot.scrollPending) &&
       isCurrentTailBottomSnapshot(tailBottomSnapshot)
     const headRebaseTransaction = headRebaseTransactionRef.current
     const settleTailBottomSnapshot = (actionState: ViewportActionState) => {
-      if (!tailBottomSnapshot || !hasCurrentTailBottomSnapshot) return
+      if (!tailBottomSnapshot || !hasCurrentTailBottomSnapshot || !tailBottomSnapshot.callbackPending) return
 
       tailBottomSnapshot.callbackPending = false
+      if (latestRecoveryRef.current) {
+        return
+      }
       if (headRebaseTransactionRef.current) {
         atBottomRef.current = actionState.isAtBottom
         return
@@ -765,16 +812,28 @@ const MessageList: FC<MessageListProps> = ({
     updateViewportActionState
   ])
 
-  const handleFollowOutput = useCallback(
-    (reportedAtBottom: boolean) => {
+  const handleScrollIntoViewOnChange = useCallback(
+    ({ totalCount }: { totalCount: number }) => {
       const tailBottomSnapshot = tailBottomSnapshotRef.current
-      const atBottom = tailBottomSnapshot?.atBottom ?? reportedAtBottom
-      if (tailBottomSnapshot === null) atBottomRef.current = atBottom
-      return isTailAppend && ((isNewTailAppend && latestRecoveryRef.current) || canFollowLatest(atBottom))
-        ? 'smooth'
-        : false
+      if (
+        !tailBottomSnapshot ||
+        !tailBottomSnapshot.scrollPending ||
+        totalCount !== itemKeys.length ||
+        !isCurrentTailBottomSnapshot(tailBottomSnapshot)
+      ) {
+        return false
+      }
+
+      tailBottomSnapshot.scrollPending = false
+      if (latestRecoveryRef.current || tailBottomSnapshot.follow) {
+        return { index: totalCount - 1, align: 'end' as const, behavior: 'auto' as const }
+      }
+
+      const anchor = tailBottomSnapshot.anchor
+      if (anchor && itemKeys[anchor.index] === anchor.key) tailBottomSnapshot.restore = 'pending'
+      return false
     },
-    [canFollowLatest, isNewTailAppend, isTailAppend]
+    [isCurrentTailBottomSnapshot, itemKeys.length]
   )
 
   const handleFollowLatest = useCallback(() => {
@@ -847,7 +906,7 @@ const MessageList: FC<MessageListProps> = ({
             atBottomStateChange={handleAtBottomStateChange}
             isScrolling={handleIsScrolling}
             totalListHeightChanged={handleTotalListHeightChanged}
-            followOutput={isTailAppend ? handleFollowOutput : false}
+            scrollIntoViewOnChange={handleScrollIntoViewOnChange}
             firstItemIndex={firstItemIndex}
             initialTopMostItemIndex={initialTopMostItemIndex}
             data={children}

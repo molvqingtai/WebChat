@@ -18,6 +18,7 @@ interface VirtuosoCall {
   initialTopMostItemIndex?: VirtuosoProps<ReactElement, unknown>['initialTopMostItemIndex']
   isScrolling?: VirtuosoProps<ReactElement, unknown>['isScrolling']
   keys: (string | number | bigint)[]
+  scrollIntoViewOnChange?: VirtuosoProps<ReactElement, unknown>['scrollIntoViewOnChange']
   totalListHeightChanged?: VirtuosoProps<ReactElement, unknown>['totalListHeightChanged']
 }
 
@@ -72,9 +73,9 @@ vi.mock('react-virtuoso', async () => {
         atBottomStateChange,
         customScrollParent,
         data = [],
-        followOutput,
         initialTopMostItemIndex,
         isScrolling,
+        scrollIntoViewOnChange,
         totalListHeightChanged,
         computeItemKey,
         itemContent
@@ -86,9 +87,10 @@ vi.mock('react-virtuoso', async () => {
         atBottomStateChange,
         customScrollParent,
         data,
-        followOutput,
+        followOutput: props.followOutput,
         initialTopMostItemIndex,
         isScrolling,
+        scrollIntoViewOnChange,
         totalListHeightChanged,
         keys
       })
@@ -190,6 +192,8 @@ const reportScrolling = (isScrolling: boolean) => {
 const reportTotalListHeightChanged = () => {
   act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
 }
+const reportScrollIntoViewOnChange = (totalCount = latestVirtuosoCall().data.length) =>
+  latestVirtuosoCall().scrollIntoViewOnChange?.({ context: undefined, scrollingInProgress: false, totalCount })
 const beginManualScroll = (view: ReturnType<typeof render>) => {
   act(() => view.getByTestId('scroll-area').dispatchEvent(new Event('wheel', { bubbles: true })))
   reportScrolling(true)
@@ -293,19 +297,21 @@ describe('MessageList Virtuoso integration', () => {
   it('makes the same tail-follow decision for received, sent, and synchronized child appends', () => {
     let rows = testRows('initial')
     const view = render(createElement(MessageList, null, rows))
-    const scrollParent = latestVirtuosoCall().customScrollParent!
 
     for (const source of ['received', 'sent', 'sync']) {
       reportBottom(true)
+      vi.clearAllMocks()
       rows = [...rows, ...testRows(source)]
       view.rerender(createElement(MessageList, null, rows))
 
-      const followOutput = latestVirtuosoCall().followOutput
-      expect(typeof followOutput).toBe('function')
-      expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe('smooth')
-
-      scrollParent.scrollTop = 0
-      expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe('smooth')
+      expect(latestVirtuosoCall().followOutput).toBeUndefined()
+      expect(reportScrollIntoViewOnChange()).toEqual({
+        index: latestVirtuosoCall().data.length - 1,
+        align: 'end',
+        behavior: 'auto'
+      })
+      expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
+      expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
     }
   })
 
@@ -315,9 +321,8 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...rows]))
 
-    const followOutput = latestVirtuosoCall().followOutput
-    expect(followOutput).toBe(false)
-    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
   it('shows the ArrowDown-only zero-count action and follows when activated', () => {
@@ -347,9 +352,7 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
 
-    const followOutput = latestVirtuosoCall().followOutput
-    expect(typeof followOutput).toBe('function')
-    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
 
     const button = view.getByRole('button', { name: '1 new message' })
     expect(button.textContent).toContain('1 new message')
@@ -359,7 +362,7 @@ describe('MessageList Virtuoso integration', () => {
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 'LAST', align: 'end', behavior: 'smooth' })
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
 
   it('keeps click recovery current when N2 appends before it reaches the bottom', () => {
@@ -376,8 +379,14 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...rowsWithN1, ...testRows('n2')]))
 
+    expect(reportScrollIntoViewOnChange()).toEqual({
+      index: latestVirtuosoCall().data.length - 1,
+      align: 'end',
+      behavior: 'auto'
+    })
+    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe('smooth')
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
   })
@@ -399,7 +408,7 @@ describe('MessageList Virtuoso integration', () => {
     view.rerender(createElement(MessageList, null, [...rowsWithN1, ...testRows('n2')]))
 
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
   })
 
@@ -429,7 +438,7 @@ describe('MessageList Virtuoso integration', () => {
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('n1')]))
 
     expect(view.getByTestId('follow-latest-action').getAttribute('aria-label')).toBe('1 new message')
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
 
   it('caps the pending tail count at 99+ in the follow action label', () => {
@@ -483,7 +492,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
   })
 
-  it('uses the physical bottom snapshot for a tail append without an at-bottom callback', () => {
+  it('keeps an off-bottom reader stationary without followOutput while explicit tail follow remains available', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
     const scrollParent = latestVirtuosoCall().customScrollParent!
@@ -492,17 +501,44 @@ describe('MessageList Virtuoso integration', () => {
     setScrollMetrics(scrollParent, 100, 1_000, 0)
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+    setBounds(scrollParent, 0, 100)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="0"]')!, 20, 80)
+    vi.clearAllMocks()
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
 
-    const followOutput = latestVirtuosoCall().followOutput
-    expect(typeof followOutput).toBe('function')
-    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
     reportTotalListHeightChanged()
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(reportScrollIntoViewOnChange()).toBe(false)
+    expect(reportScrollIntoViewOnChange()).toBe(false)
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportBottom(true)
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+      index: 0,
+      align: 'start',
+      offset: -20,
+      behavior: 'auto'
+    })
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    reportBottom(true)
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+      index: 0,
+      align: 'start',
+      offset: -20,
+      behavior: 'auto'
+    })
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    reportBottom(false)
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
 
     setScrollMetrics(scrollParent, 100, 1_000, 900)
     reportBottom(true)
@@ -529,13 +565,14 @@ describe('MessageList Virtuoso integration', () => {
     setScrollMetrics(scrollParent, 100, 1_000, 0)
     reportTotalListHeightChanged()
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(reportScrollIntoViewOnChange()).toBe(false)
 
     setScrollMetrics(scrollParent, 100, 1_000, 900)
     reportBottom(true)
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
   })
 
-  it('keeps one pre-tail physical snapshot when commit geometry changes before followOutput', () => {
+  it('keeps one pre-tail physical snapshot when commit geometry changes before transient callbacks', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
     const scrollParent = latestVirtuosoCall().customScrollParent!
@@ -554,10 +591,10 @@ describe('MessageList Virtuoso integration', () => {
     virtuosoRenderControl.beforeParentLayout = null
     setScrollMetrics(scrollParent, 100, 1_000, 0)
 
-    const followOutput = latestVirtuosoCall().followOutput
-    expect(typeof followOutput).toBe('function')
-    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(reportScrollIntoViewOnChange()).toBe(false)
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
   it('settles combined head and tail owners from one height callback', () => {
@@ -582,7 +619,12 @@ describe('MessageList Virtuoso integration', () => {
     setBounds(view.container.querySelector<HTMLElement>('[data-index="3"]')!, 20, 80)
     reportTotalListHeightChanged()
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(reportScrollIntoViewOnChange()).toBe(false)
 
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportBottom(true)
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    reportBottom(false)
     setScrollMetrics(scrollParent, 100, 1_000, 900)
     reportBottom(true)
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
@@ -596,6 +638,7 @@ describe('MessageList Virtuoso integration', () => {
     beginManualScroll(view)
     reportBottom(false)
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+    expect(reportScrollIntoViewOnChange()).toBe(false)
 
     setScrollMetrics(scrollParent, 100, 1_000, 851)
     reportTotalListHeightChanged()
@@ -644,12 +687,11 @@ describe('MessageList Virtuoso integration', () => {
     scrollParent.scrollTop = 100
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
 
     reportScrolling(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
-    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
 
   it('forces one current layout follow when a local send token and its projection commit together', () => {
@@ -736,7 +778,7 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, { localSendToken: 1 }, [...initialRows, ...testRows('local-projection')]))
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe('smooth')
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
 
   it('does not force a projection-first received tail and consumes each newer local send token once', () => {
@@ -750,7 +792,7 @@ describe('MessageList Virtuoso integration', () => {
     const receivedRows = [...initialRows, ...testRows('same-user-tail-sync')]
     view.rerender(createElement(MessageList, { localSendToken: 0 }, receivedRows))
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
 
     view.rerender(createElement(MessageList, { localSendToken: 1 }, receivedRows))
     view.rerender(createElement(MessageList, { localSendToken: 2 }, receivedRows))
@@ -766,10 +808,14 @@ describe('MessageList Virtuoso integration', () => {
 
     scrollParent.scrollTop = scrollParent.scrollHeight - scrollParent.clientHeight
     reportBottom(true)
-    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
     reportScrolling(false)
-    expect(virtuosoHandle.autoscrollToBottom).toHaveBeenCalledTimes(1)
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+      index: 'LAST',
+      align: 'end',
+      behavior: 'auto'
+    })
   })
 
   it('waits for a non-bottom Virtuoso callback before replacing initial settlement', () => {
@@ -880,7 +926,6 @@ describe('MessageList Virtuoso integration', () => {
     reportScrolling(false)
     reportBottom(true)
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
-    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
     setBounds(view.container.querySelector<HTMLElement>('[data-index="3"]')!, 40, 100)
     act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({
@@ -971,6 +1016,7 @@ describe('MessageList Virtuoso integration', () => {
     view.rerender(createElement(MessageList, null, headRows))
     view.rerender(createElement(MessageList, null, [...headRows, ...testRows('new-tail')]))
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect(reportScrollIntoViewOnChange()).toBe(false)
 
     const target = view.container.querySelector<HTMLElement>('[data-index="3"]')!
     setBounds(target, 40, 100)
@@ -1020,6 +1066,11 @@ describe('MessageList Virtuoso integration', () => {
     reportBottom(false)
     setScrollMetrics(scrollParent, 100, 1_000, 900)
     reportTotalListHeightChanged()
+    expect(reportScrollIntoViewOnChange()).toBe(false)
+    reportBottom(true)
+    setScrollMetrics(scrollParent, 100, 1_000, 100)
+    reportBottom(false)
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
     reportBottom(true)
 
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
@@ -1303,17 +1354,14 @@ describe('MessageList Virtuoso integration', () => {
     const pausedTailRows = [...rows, ...testRows('new-tail')]
     view.rerender(createElement(MessageList, null, pausedTailRows))
 
-    const pausedTailFollowOutput = latestVirtuosoCall().followOutput
-    expect(typeof pausedTailFollowOutput).toBe('function')
-    expect((pausedTailFollowOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
     view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...pausedTailRows]))
     setBounds(view.container.querySelector<HTMLElement>('[data-index="3"]')!, 40, 100)
     act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
 
-    expect(latestVirtuosoCall().followOutput).toBe(false)
-    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(virtuosoHandle.scrollBy).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollIntoView).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollTo).not.toHaveBeenCalled()
@@ -1352,11 +1400,8 @@ describe('MessageList Virtuoso integration', () => {
       createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...rows, ...testRows('new-tail')])
     )
 
-    const followOutput = latestVirtuosoCall().followOutput
-    expect(typeof followOutput).toBe('function')
-    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+    expect(latestVirtuosoCall().followOutput).toBeUndefined()
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
-    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollBy).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollIntoView).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollTo).not.toHaveBeenCalled()
