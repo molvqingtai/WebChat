@@ -45,12 +45,10 @@ const App = () => {
   const danmakuIsEnabled = userInfo?.danmakuEnabled ?? false
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
   const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
-  const [localSendToken, setLocalSendToken] = useState(0)
   const [historySyncIntents, setHistorySyncIntents] = useState<readonly HistorySyncCompletedEvent[]>([])
   const historySyncIntentKeysRef = useRef(new Set<string>())
   const historySyncIntent = historySyncIntents[0] ?? null
   const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
-  const handleLocalTextSent = useCallback(() => setLocalSendToken((token) => token + 1), [])
   const consumeHistorySyncIntent = useCallback(
     (syncId: string) =>
       setHistorySyncIntents((intents) => (intents[0]?.syncId === syncId ? intents.slice(1) : intents)),
@@ -104,12 +102,8 @@ const App = () => {
       <MediaPreviewContext.Provider value={openMediaPreview}>
         <AppLayout>
           <Header />
-          <Main
-            historySyncIntent={historySyncIntent}
-            localSendToken={localSendToken}
-            onHistorySyncIntentConsumed={consumeHistorySyncIntent}
-          />
-          <Footer onLocalTextSent={handleLocalTextSent} />
+          <Main historySyncIntent={historySyncIntent} onHistorySyncIntentConsumed={consumeHistorySyncIntent} />
+          <Footer />
           {notUserInfo && <Setup />}
           <Toaster
             richColors

@@ -14,11 +14,10 @@ import { compareEventPosition } from '@/domain/Message'
 
 export interface MainProps {
   historySyncIntent: HistorySyncCompletedEvent | null
-  localSendToken: number
   onHistorySyncIntentConsumed: (syncId: string) => void
 }
 
-const Main: FC<MainProps> = ({ historySyncIntent, localSendToken, onHistorySyncIntentConsumed }) => {
+const Main: FC<MainProps> = ({ historySyncIntent, onHistorySyncIntentConsumed }) => {
   const send = useRemeshSend()
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
@@ -47,11 +46,7 @@ const Main: FC<MainProps> = ({ historySyncIntent, localSendToken, onHistorySyncI
   )
 
   return (
-    <MessageList
-      historySyncIntent={historySyncIntent}
-      localSendToken={localSendToken}
-      onHistorySyncIntentConsumed={onHistorySyncIntentConsumed}
-    >
+    <MessageList historySyncIntent={historySyncIntent} onHistorySyncIntentConsumed={onHistorySyncIntentConsumed}>
       {messageListLoadFinished
         ? messageList.map((message, index) => {
             const key = messageRowKey(message)

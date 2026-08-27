@@ -6,6 +6,15 @@ import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeMessage } from '@/do
 import MessageList from './message-list'
 import NoticeGroup from './notice-group'
 
+const localSendEventControl = vi.hoisted(() => ({ listener: null as null | (() => void) }))
+
+vi.mock('remesh-react', () => ({
+  useRemeshDomain: () => ({ event: { SendTextMessageEvent: 'send-text-message' } }),
+  useRemeshEvent: (_event: unknown, listener: () => void) => {
+    localSendEventControl.listener = listener
+  }
+}))
+
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 const row = (id: string, height: number): ReactElement => (
   <div data-testid={`message-${id}`} key={id} style={{ boxSizing: 'border-box', height, padding: '8px' }}>
@@ -31,9 +40,9 @@ const groupedRow = (
     last
   />
 )
-const harness = (historyReady: boolean, children: ReactElement[], width = 360, height = 240, localSendToken = 0) => (
+const harness = (historyReady: boolean, children: ReactElement[], width = 360, height = 240) => (
   <div style={{ display: 'grid', gridTemplateRows: '1fr', height: `${height}px`, width: `${width}px` }}>
-    <MessageList localSendToken={localSendToken}>{historyReady ? children : null}</MessageList>
+    <MessageList>{historyReady ? children : null}</MessageList>
   </div>
 )
 const viewport = () => document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!
@@ -54,6 +63,7 @@ beforeEach(() => {
 afterEach(async () => {
   window.removeEventListener('error', suppressResizeObserverLoop)
   await cleanup()
+  localSendEventControl.listener = null
 })
 
 describe('MessageList initial settlement', () => {
@@ -226,9 +236,9 @@ describe('MessageList initial settlement', () => {
     expect(followActionElement()?.dataset.state).toBe('closed')
   })
 
-  it('forces the latest local projection to the bottom after a successful local send token', async () => {
+  it('forces the latest local projection to the bottom after a successful local send', async () => {
     const initialRows = history(24)
-    const view = await render(harness(true, initialRows, 360, 240, 0))
+    const view = await render(harness(true, initialRows))
     const scrollParent = viewport()
 
     await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
@@ -237,7 +247,8 @@ describe('MessageList initial settlement', () => {
     scrollParent.dispatchEvent(new Event('scroll'))
     await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
 
-    await view.rerender(harness(true, [...initialRows, row('local-send', 88)], 360, 240, 1))
+    await view.rerender(harness(true, [...initialRows, row('local-send', 88)]))
+    localSendEventControl.listener?.()
     await vi.waitFor(() => {
       expect(document.querySelector('[data-testid="message-local-send"]')).not.toBeNull()
       expect(atBottom(scrollParent)).toBe(true)

@@ -25,6 +25,11 @@ interface VirtuosoCall {
 const virtuosoCalls = vi.hoisted(() => [] as VirtuosoCall[])
 const virtuosoLifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }))
 const virtuosoRenderControl = vi.hoisted(() => ({ beforeParentLayout: null as (() => void) | null }))
+const localSendEventControl = vi.hoisted(() => ({ listener: null as null | (() => void) }))
+const animationFrameControl = vi.hoisted(() => ({
+  callbacks: new Map<number, FrameRequestCallback>(),
+  nextId: 0
+}))
 const virtuosoHandle = vi.hoisted(() => ({
   autoscrollToBottom: vi.fn(),
   getState: vi.fn(),
@@ -34,6 +39,13 @@ const virtuosoHandle = vi.hoisted(() => ({
   scrollToIndex: vi.fn()
 }))
 const scrollAreaRefControl = vi.hoisted(() => ({ manual: false, ref: null as Ref<HTMLDivElement> | null }))
+
+vi.mock('remesh-react', () => ({
+  useRemeshDomain: () => ({ event: { SendTextMessageEvent: 'send-text-message' } }),
+  useRemeshEvent: (_event: unknown, listener: () => void) => {
+    localSendEventControl.listener = listener
+  }
+}))
 
 vi.mock('@/components/ui/scroll-area', async () => {
   const React = await import('react')
@@ -194,6 +206,13 @@ const reportTotalListHeightChanged = () => {
 }
 const reportScrollIntoViewOnChange = (totalCount = latestVirtuosoCall().data.length) =>
   latestVirtuosoCall().scrollIntoViewOnChange?.({ context: undefined, scrollingInProgress: false, totalCount })
+const runNextAnimationFrame = () => {
+  const next = animationFrameControl.callbacks.entries().next().value as [number, FrameRequestCallback] | undefined
+  if (!next) throw new TypeError('Expected an animation frame')
+  animationFrameControl.callbacks.delete(next[0])
+  act(() => next[1](0))
+}
+const emitLocalSend = () => act(() => localSendEventControl.listener?.())
 const beginManualScroll = (view: ReturnType<typeof render>) => {
   act(() => view.getByTestId('scroll-area').dispatchEvent(new Event('wheel', { bubbles: true })))
   reportScrolling(true)
@@ -225,8 +244,23 @@ beforeEach(() => {
   virtuosoRenderControl.beforeParentLayout = null
   virtuosoLifecycle.unmounts = 0
   vi.clearAllMocks()
+  animationFrameControl.callbacks.clear()
+  animationFrameControl.nextId = 0
+  vi.stubGlobal(
+    'requestAnimationFrame',
+    vi.fn((callback: FrameRequestCallback) => {
+      const id = animationFrameControl.nextId++
+      animationFrameControl.callbacks.set(id, callback)
+      return id
+    })
+  )
+  vi.stubGlobal(
+    'cancelAnimationFrame',
+    vi.fn((id: number) => animationFrameControl.callbacks.delete(id))
+  )
   scrollAreaRefControl.manual = false
   scrollAreaRefControl.ref = null
+  localSendEventControl.listener = null
 })
 
 afterEach(cleanup)
@@ -338,7 +372,7 @@ describe('MessageList Virtuoso integration', () => {
 
     act(() => button.click())
 
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 'LAST', align: 'end', behavior: 'smooth' })
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 0, align: 'end', behavior: 'smooth' })
     reportBottom(true)
     expect(view.queryByRole('button', { name: 'Scroll to latest messages' })).toBeNull()
   })
@@ -360,7 +394,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(button.className).toContain('transition-[opacity,grid-template-columns,gap,padding]')
     act(() => button.click())
 
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 'LAST', align: 'end', behavior: 'smooth' })
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 1, align: 'end', behavior: 'smooth' })
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
     expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
@@ -694,22 +728,46 @@ describe('MessageList Virtuoso integration', () => {
     expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
 
-  it('forces one current layout follow when a local send token and its projection commit together', () => {
+  it('follows the current latest item in the next frame after a successful local send', () => {
     const initialRows = testRows('current')
-    const view = render(createElement(MessageList, { localSendToken: 0 }, initialRows))
+    const view = render(createElement(MessageList, null, initialRows))
     reportBottom(true)
-    beginManualScroll(view)
+    vi.clearAllMocks()
+
+    emitLocalSend()
+
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(animationFrameControl.callbacks).toHaveLength(1)
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
+    runNextAnimationFrame()
+
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+      index: 1,
+      align: 'end',
+      behavior: 'smooth'
+    })
+  })
+
+  it('does not issue a local-send command immediately and uses the latest count after an off-bottom projection', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
     reportBottom(false)
     vi.clearAllMocks()
 
-    const rowsWithProjection = [...initialRows, ...testRows('local-projection')]
-    view.rerender(createElement(MessageList, { localSendToken: 1 }, rowsWithProjection))
+    emitLocalSend()
 
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 'LAST', align: 'end', behavior: 'smooth' })
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(animationFrameControl.callbacks).toHaveLength(1)
 
-    view.rerender(createElement(MessageList, { localSendToken: 1 }, rowsWithProjection))
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
+
+    runNextAnimationFrame()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+      index: 1,
+      align: 'end',
+      behavior: 'smooth'
+    })
   })
 
   it('consumes one committed History intent off-bottom with one existing follow command', () => {
@@ -735,7 +793,7 @@ describe('MessageList Virtuoso integration', () => {
     )
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
-      index: 'LAST',
+      index: 1,
       align: 'end',
       behavior: 'smooth'
     })
@@ -765,39 +823,39 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
-  it('keeps token-first local recovery current for the next layout without issuing a second command', () => {
+  it('coalesces successful local sends before the next frame and cancels a pending frame on unmount', () => {
     const initialRows = testRows('current')
-    const view = render(createElement(MessageList, { localSendToken: 0 }, initialRows))
+    const view = render(createElement(MessageList, null, initialRows))
     reportBottom(true)
-    beginManualScroll(view)
-    reportBottom(false)
     vi.clearAllMocks()
 
-    view.rerender(createElement(MessageList, { localSendToken: 1 }, initialRows))
+    emitLocalSend()
+    emitLocalSend()
+    expect(animationFrameControl.callbacks).toHaveLength(1)
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
+    runNextAnimationFrame()
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
 
-    view.rerender(createElement(MessageList, { localSendToken: 1 }, [...initialRows, ...testRows('local-projection')]))
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    emitLocalSend()
+    expect(animationFrameControl.callbacks).toHaveLength(1)
+    view.unmount()
+    expect(animationFrameControl.callbacks).toHaveLength(0)
   })
 
-  it('does not force a projection-first received tail and consumes each newer local send token once', () => {
+  it('does not let a received tail schedule local-send recovery', () => {
     const initialRows = testRows('current')
-    const view = render(createElement(MessageList, { localSendToken: 0 }, initialRows))
+    const view = render(createElement(MessageList, null, initialRows))
     reportBottom(true)
     beginManualScroll(view)
     reportBottom(false)
     vi.clearAllMocks()
 
     const receivedRows = [...initialRows, ...testRows('same-user-tail-sync')]
-    view.rerender(createElement(MessageList, { localSendToken: 0 }, receivedRows))
+    view.rerender(createElement(MessageList, null, receivedRows))
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(animationFrameControl.callbacks).toHaveLength(0)
     expect(latestVirtuosoCall().followOutput).toBeUndefined()
-
-    view.rerender(createElement(MessageList, { localSendToken: 1 }, receivedRows))
-    view.rerender(createElement(MessageList, { localSendToken: 2 }, receivedRows))
-    view.rerender(createElement(MessageList, { localSendToken: 1 }, receivedRows))
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(2)
   })
 
   it('waits for manual scrolling to end before following once at the bottom', () => {

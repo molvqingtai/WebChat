@@ -12,14 +12,15 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import NumberFlow from '@number-flow/react'
 import { ArrowDownIcon } from 'lucide-react'
+import { useRemeshDomain, useRemeshEvent } from 'remesh-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { HistorySyncCompletedEvent } from '@/domain/externs/ChatRoom'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import { cn } from '@/utils'
 
 export interface MessageListProps {
   children?: ReactElement[] | null
   historySyncIntent?: HistorySyncCompletedEvent | null
-  localSendToken?: number
   onHistorySyncIntentConsumed?: (syncId: string) => void
 }
 
@@ -42,7 +43,8 @@ type ChildUpdate =
 
 type ScrollCommand =
   | { command: 'cancel-initial'; top: number }
-  | { command: 'follow-bottom' | 'follow-latest' }
+  | { command: 'follow-bottom' }
+  | { command: 'follow-latest'; index: number }
   | { command: 'head-rebase'; index: number; offset: number }
   | { command: 'tail-restore'; index: number; offset: number }
 
@@ -172,12 +174,8 @@ const getChildUpdate = (previous: readonly string[] | null, current: readonly st
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000
 const INITIAL_TOP_MOST_ITEM_INDEX = { index: 'LAST' as const, align: 'end' as const }
 
-const MessageList: FC<MessageListProps> = ({
-  children,
-  historySyncIntent = null,
-  localSendToken = 0,
-  onHistorySyncIntentConsumed
-}) => {
+const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null, onHistorySyncIntentConsumed }) => {
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [initialTopMostItemIndex, setInitialTopMostItemIndex] = useState<
     typeof INITIAL_TOP_MOST_ITEM_INDEX | undefined
@@ -208,7 +206,7 @@ const MessageList: FC<MessageListProps> = ({
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
   const lastHistorySyncIntentRef = useRef<string | null>(null)
-  const lastLocalSendTokenRef = useRef(localSendToken)
+  const localSendFrameRef = useRef<number | null>(null)
   const hasChildren = children !== null && children !== undefined
   const itemKeys = useMemo(
     () => (hasChildren ? children.map((item, index) => itemKey(index, item)) : []),
@@ -441,7 +439,7 @@ const MessageList: FC<MessageListProps> = ({
           handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
           return
         case 'follow-latest':
-          handle.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' })
+          handle.scrollToIndex({ index: command.index, align: 'end', behavior: 'smooth' })
           return
         case 'head-rebase':
           if (
@@ -847,7 +845,8 @@ const MessageList: FC<MessageListProps> = ({
     clearHeadAnchor()
     clearNewMessageCount()
     updateViewportActionState()
-    runScrollCommand({ command: 'follow-latest' })
+    const index = currentItemKeysRef.current.length - 1
+    if (index >= 0) runScrollCommand({ command: 'follow-latest', index })
   }, [
     cancelHeadRebaseTransaction,
     clearHeadAnchor,
@@ -857,12 +856,22 @@ const MessageList: FC<MessageListProps> = ({
     updateViewportActionState
   ])
 
-  useLayoutEffect(() => {
-    if (localSendToken <= lastLocalSendTokenRef.current) return
+  useRemeshEvent(chatRoomDomain.event.SendTextMessageEvent, () => {
+    if (localSendFrameRef.current !== null) cancelAnimationFrame(localSendFrameRef.current)
+    localSendFrameRef.current = requestAnimationFrame(() => {
+      localSendFrameRef.current = null
+      handleFollowLatest()
+    })
+  })
 
-    lastLocalSendTokenRef.current = localSendToken
-    handleFollowLatest()
-  }, [handleFollowLatest, localSendToken])
+  useLayoutEffect(
+    () => () => {
+      if (localSendFrameRef.current === null) return
+      cancelAnimationFrame(localSendFrameRef.current)
+      localSendFrameRef.current = null
+    },
+    []
+  )
 
   useLayoutEffect(() => {
     if (!historySyncIntent || !hasChildren || !scrollParentRef) return

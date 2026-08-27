@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
@@ -9,7 +9,6 @@ const fixture = vi.hoisted(() => ({
   historySyncIntents: [] as string[],
   consumeHistorySyncIntent: null as null | ((syncId: string) => void),
   danmakuMountKeys: [] as string[],
-  localSendTokens: [] as number[],
   onDanmakuClick: null as null | (() => void),
   send: vi.fn()
 }))
@@ -85,34 +84,19 @@ vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testi
 vi.mock('@/app/content/views/main', () => ({
   default: ({
     historySyncIntent,
-    localSendToken,
     onHistorySyncIntentConsumed
   }: {
     historySyncIntent: { syncId: string } | null
-    localSendToken: number
     onHistorySyncIntentConsumed: (syncId: string) => void
   }) => {
-    fixture.localSendTokens.push(localSendToken)
     fixture.consumeHistorySyncIntent = onHistorySyncIntentConsumed
     useEffect(() => {
       if (historySyncIntent) fixture.historySyncIntents.push(historySyncIntent.syncId)
     }, [historySyncIntent])
-    return (
-      <main
-        data-testid="main"
-        data-history-sync-intent={historySyncIntent?.syncId ?? ''}
-        data-local-send-token={localSendToken}
-      />
-    )
+    return <main data-testid="main" data-history-sync-intent={historySyncIntent?.syncId ?? ''} />
   }
 }))
-vi.mock('@/app/content/views/footer', () => ({
-  default: ({ onLocalTextSent }: { onLocalTextSent: () => void }) => (
-    <footer data-testid="footer">
-      <button type="button" data-testid="local-text-send" onClick={onLocalTextSent} />
-    </footer>
-  )
-}))
+vi.mock('@/app/content/views/footer', () => ({ default: () => <footer data-testid="footer" /> }))
 vi.mock('@/app/content/views/setup', () => ({ default: () => <aside data-testid="setup" /> }))
 vi.mock('@/app/content/views/app-layout', () => ({
   default: ({ children }: { children?: React.ReactNode }) => (
@@ -144,7 +128,6 @@ afterEach(() => {
   fixture.historySyncIntents = []
   fixture.consumeHistorySyncIntent = null
   fixture.danmakuMountKeys = []
-  fixture.localSendTokens = []
   fixture.onDanmakuClick = null
   fixture.send.mockClear()
   vi.restoreAllMocks()
@@ -186,17 +169,6 @@ describe('normal App composition', () => {
     fixture.onDanmakuClick!()
 
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
-  })
-
-  it('forwards each Footer local-text dispatch through one Document-local token to Main', () => {
-    render(<App />)
-
-    expect(screen.getByTestId('main').dataset.localSendToken).toBe('0')
-    fireEvent.click(screen.getByTestId('local-text-send'))
-    expect(screen.getByTestId('main').dataset.localSendToken).toBe('1')
-    fireEvent.click(screen.getByTestId('local-text-send'))
-    expect(screen.getByTestId('main').dataset.localSendToken).toBe('2')
-    expect(fixture.localSendTokens).toEqual([0, 1, 2])
   })
 
   it('queues each current History completion as one UI-local intent', () => {

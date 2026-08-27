@@ -28,11 +28,7 @@ import { nanoid } from 'nanoid'
 import imgcap from 'imgcap'
 import useRoot from '@/hooks/useRoot'
 
-export interface FooterProps {
-  onLocalTextSent?: () => void
-}
-
-const Footer: FC<FooterProps> = ({ onLocalTextSent }) => {
+const Footer: FC = () => {
   const send = useRemeshSend()
   const toastDomain = useRemeshDomain(ToastDomain())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
@@ -165,7 +161,6 @@ const Footer: FC<FooterProps> = ({ onLocalTextSent }) => {
     }
 
     send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))
-    onLocalTextSent?.()
   }
 
   const handleSend = useThrottle(handleSendMessage, 1000)
