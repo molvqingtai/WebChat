@@ -601,27 +601,26 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
-  it('hides while the user scrolls downward, then restores after stopping away from the bottom', () => {
+  it('keeps the eligible action visible through manual downward scrolling without resuming follow or clearing count', () => {
     const view = render(createElement(MessageList, null, testRows('current')))
     const scrollParent = latestVirtuosoCall().customScrollParent!
-    reportBottom(false)
-    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+    const initialRows = testRows('current')
+    reportBottom(true)
 
     beginManualScroll(view)
+    reportBottom(false)
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+    vi.clearAllMocks()
+
     scrollParent.scrollTop = 100
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
-    expect(view.queryByRole('button', { name: 'Scroll to latest messages' })).toBeNull()
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
 
     reportScrolling(false)
-    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
-
-    beginManualScroll(view)
-    scrollParent.scrollTop = 50
-    act(() => scrollParent.dispatchEvent(new Event('scroll')))
-    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
-
-    reportBottom(true)
-    expect(view.queryByRole('button', { name: 'Scroll to latest messages' })).toBeNull()
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
+    expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
   })
 
   it('forces one current layout follow when a local send token and its projection commit together', () => {
@@ -1125,7 +1124,7 @@ describe('MessageList Virtuoso integration', () => {
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
-    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('open')
   })
 
   it('cancels a pending combined head transaction when its viewport is replaced', () => {
@@ -1162,7 +1161,7 @@ describe('MessageList Virtuoso integration', () => {
     act(() => replacementViewport.dispatchEvent(new Event('scroll')))
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
-    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('open')
   })
 
   it('completes an already-aligned pure-head transaction without a scroll command', () => {
