@@ -584,14 +584,13 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   ])
 
   const handleAtBottomStateChange = useCallback(
-    (reportedAtBottom: boolean) => {
+    (reportedAtBottom: boolean, settledAtBottom?: boolean) => {
       if (!isCurrentListCallback()) return
       if (headRebaseTransactionRef.current) return
       if (tailBottomSnapshot?.callbackPending && !tailBottomSnapshot.atBottom) {
-        tailBottomSnapshot.callbackPending = false
         return
       }
-      const atBottom = scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom
+      const atBottom = settledAtBottom ?? (scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom)
       atBottomRef.current = atBottom
       if (!atBottom) {
         acknowledgeManualDeparture()
@@ -686,6 +685,13 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       return
     }
 
+    if (tailBottomSnapshot?.callbackPending && !tailBottomSnapshot.atBottom) {
+      const atBottom = isViewportAtBottom(scrollParentRef)
+      tailBottomSnapshot.callbackPending = false
+      handleAtBottomStateChange(atBottom, atBottom)
+      return
+    }
+
     const atBottom = isViewportAtBottom(scrollParentRef)
     if (atBottom !== atBottomRef.current) {
       handleAtBottomStateChange(atBottom)
@@ -699,6 +705,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     isCurrentListCallback,
     runScrollCommand,
     scrollParentRef,
+    tailBottomSnapshot,
     updateViewportActionState
   ])
 

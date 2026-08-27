@@ -470,6 +470,15 @@ describe('MessageList Virtuoso integration', () => {
     expect(typeof followOutput).toBe('function')
     expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+
+    reportTotalListHeightChanged()
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportBottom(true)
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
   it('keeps one pre-tail physical snapshot when commit geometry changes before followOutput', () => {
@@ -482,10 +491,14 @@ describe('MessageList Virtuoso integration', () => {
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
 
-    virtuosoRenderControl.beforeParentLayout = () => setScrollMetrics(scrollParent, 100, 1_000, 900)
+    virtuosoRenderControl.beforeParentLayout = () => {
+      setScrollMetrics(scrollParent, 100, 1_000, 900)
+      latestVirtuosoCall().atBottomStateChange?.(true)
+      latestVirtuosoCall().atBottomStateChange?.(true)
+    }
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
     virtuosoRenderControl.beforeParentLayout = null
-    reportStaleBottom(true)
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
 
     const followOutput = latestVirtuosoCall().followOutput
     expect(typeof followOutput).toBe('function')
@@ -872,6 +885,7 @@ describe('MessageList Virtuoso integration', () => {
 
     reportBottom(false)
     setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportTotalListHeightChanged()
     reportBottom(true)
 
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
