@@ -60,6 +60,7 @@ vi.mock('remesh-react', async () => {
     RemeshRoot: ({ children }: { children?: ReactNode }) => <>{children}</>,
     RemeshScope: ({ children }: { children?: ReactNode }) => <>{children}</>,
     useRemeshDomain: (domain: unknown) => domain,
+    useRemeshEvent: () => undefined,
     useRemeshSend: () => fixture.send,
     useRemeshQuery: (query: string) => {
       switch (query) {
@@ -110,6 +111,7 @@ vi.mock('@/domain/ChatRoom', () => ({
       ConnectionIsLoadingQuery: () => 'chat-loading',
       ReconnectAvailableQuery: () => 'reconnect-available'
     },
+    event: { HistorySyncCompletedEvent: 'history-sync-completed' },
     command: { JoinRoomCommand: () => 'join-chat', ReconnectCommand: () => 'reconnect-chat' }
   })
 }))

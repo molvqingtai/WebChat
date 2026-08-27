@@ -1,6 +1,11 @@
 import type { PagePort as PagePortContract } from '@/domain/runtime/externs/PagePort'
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
-import type { HistorySupplyEvent, HistorySupplyRequest, HistorySupplyResult } from '@/runtime/Contract'
+import type {
+  HistorySupplyEvent,
+  HistorySupplyRequest,
+  HistorySupplyResult,
+  HistorySyncCompletedEvent
+} from '@/runtime/Contract'
 
 const providerId = (tabId: number) => `tab:${tabId}`
 
@@ -46,6 +51,13 @@ export class PagePort implements PagePortContract {
 
   isHistoryProvider(tabId: number, domain: string) {
     return this.historyProviders.get(providerId(tabId))?.domain === domain
+  }
+
+  historySyncCompleted(completion: HistorySyncCompletedEvent) {
+    for (const provider of this.historyProviders.values()) {
+      if (provider.domain !== completion.domain) continue
+      provider.callback({ type: 'sync-completed', completion })
+    }
   }
 
   removePage(tabId: number) {

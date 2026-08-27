@@ -22,7 +22,7 @@ import {
 } from '@/protocol'
 import { WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { compareEventPosition, type ChatMessageRecord } from '@/domain/Message'
-import type { HistorySupplyRequest, HistoryFeedbackEvent } from '@/runtime/Contract'
+import type { HistorySupplyRequest, HistoryFeedbackEvent, HistorySyncCompletedEvent } from '@/runtime/Contract'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 
 /** Complete identity of one directional attempt; late work must match every field. */
@@ -285,7 +285,7 @@ const HistoryDomain = Remesh.domain({
       name: 'History.RequesterSupplyStartedEvent'
     })
     const CancelRequesterSuppliesEvent = domain.event<string[]>({ name: 'History.CancelRequesterSuppliesEvent' })
-    const SyncCompletedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
+    const SyncCompletedEvent = domain.event<HistorySyncCompletedEvent>({
       name: 'History.SyncCompletedEvent'
     })
     const ProviderSupplyRequestedEvent = domain.event<ProviderSupplyPayload>({
@@ -405,8 +405,7 @@ const HistoryDomain = Remesh.domain({
         const settled: RequesterAttemptState = { ...current, loadingSettled: true }
         return [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), settled)),
-          ...(dismissFeedback(get, current) ?? []),
-          SyncCompletedEvent({ domain: key.domain, sourcePeerId: key.sourcePeerId })
+          ...(dismissFeedback(get, current) ?? [])
         ]
       }
     })
@@ -1818,9 +1817,19 @@ const HistoryDomain = Remesh.domain({
           ...withLane(nextLane),
           feedbackActive: current.feedbackActive || payload.inserted
         }
+        const completion =
+          lane.finalBatch && next.feedbackActive && !current.retired
+            ? {
+                domain: current.domain,
+                sourcePeerId: current.sourcePeerId,
+                syncId: current.syncId,
+                inserted: true
+              }
+            : null
         const output: RemeshCommandOutput[] = [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
           ...(activation ? (activateFeedback(get, current) ?? []) : []),
+          ...(completion ? [SyncCompletedEvent(completion)] : []),
           ...(lane.finalBatch
             ? [FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId })]
             : [])

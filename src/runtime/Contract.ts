@@ -144,9 +144,18 @@ export interface HistorySupplyResult {
   done: boolean
 }
 
+/** Final durable settlement for one received-History attempt that inserted at least one record. */
+export interface HistorySyncCompletedEvent {
+  domain: string
+  sourcePeerId: string
+  syncId: string
+  inserted: boolean
+}
+
 export type HistorySupplyEvent =
   | { type: 'request'; request: HistorySupplyRequest }
   | { type: 'cancel'; supplyId: string }
+  | { type: 'sync-completed'; completion: HistorySyncCompletedEvent }
 
 /** One attempt-owned History loading owner projected to same-domain pages. */
 export interface HistoryFeedbackEvent {

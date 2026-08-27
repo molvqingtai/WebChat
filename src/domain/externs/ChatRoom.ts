@@ -30,6 +30,11 @@ export interface SendReactionCommand {
 
 export type SendMessageCommand = SendTextCommand | SendReactionCommand
 
+export interface HistorySyncCompletedEvent {
+  syncId: string
+  inserted: boolean
+}
+
 export interface ChatRoom {
   joinRoom(command: JoinRoomCommand): Promise<void>
   leaveRoom(): Promise<void>
@@ -41,6 +46,7 @@ export interface ChatRoom {
   onLeaveRoom(listener: (session: ChatSession) => void): Unsubscribe
   onSessions(listener: (sessions: readonly ChatSession[]) => void): Unsubscribe
   onError(listener: (error: Error) => void): Unsubscribe
+  onHistorySyncCompleted?(listener: (completion: HistorySyncCompletedEvent) => void): Unsubscribe
 }
 
 const notImplemented = (name: string) => () => {

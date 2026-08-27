@@ -403,12 +403,16 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, tabId: 1 }))
     const inbound: ChatMessageRecord[] = []
     const feedback: unknown[] = []
+    const completions: unknown[] = []
     store.subscribeEvent(delivery.event.InboundAcceptedEvent, (event) => {
       inbound.push(event.record)
       store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: event.sequence, inserted: true }))
     })
     store.subscribeEvent(history.event.FeedbackChangedEvent, (event) => {
       feedback.push(event)
+    })
+    store.subscribeEvent(history.event.SyncCompletedEvent, (event) => {
+      completions.push(event)
     })
     supplyEmpty(pagePort)
 
@@ -460,6 +464,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
       { domain: DOMAIN, ownerId: expect.stringContaining('peer-a'), type: 'loading' },
       { domain: DOMAIN, ownerId: expect.stringContaining('peer-a'), type: 'dismiss' }
     ])
+    expect(completions).toEqual([{ domain: DOMAIN, sourcePeerId: 'peer-a', syncId: requester.syncId, inserted: true }])
   })
 
   it('targets only the triggering source peer for each direction', async () => {

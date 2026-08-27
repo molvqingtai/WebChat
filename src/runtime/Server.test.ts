@@ -736,6 +736,7 @@ const registerHistoryProvider = (
       active.get(event.supplyId)?.abort(new DOMException('History supply cancelled', 'AbortError'))
       return
     }
+    if (event.type !== 'request') return
     const controller = new AbortController()
     active.set(event.request.supplyId, controller)
     void Promise.resolve()

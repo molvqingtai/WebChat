@@ -1,7 +1,8 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, timer } from 'rxjs'
+import { EMPTY, concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, timer } from 'rxjs'
 import {
   ChatRoomExtern,
+  type HistorySyncCompletedEvent,
   type JoinRoomCommand as JoinRoomInput,
   type SendReactionCommand as SendReactionInput
 } from '@/domain/externs/ChatRoom'
@@ -181,6 +182,9 @@ const ChatRoomDomain = Remesh.domain({
 
     const SendTextRequestedEvent = domain.event<{ body: string; mentions: MentionedUser[] }>({
       name: 'Room.SendTextRequestedEvent'
+    })
+    const HistorySyncCompletedEvent = domain.event<HistorySyncCompletedEvent>({
+      name: 'Room.HistorySyncCompletedEvent'
     })
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
@@ -575,6 +579,17 @@ const ChatRoomDomain = Remesh.domain({
         )
     })
 
+    domain.effect({
+      name: 'Room.OnHistorySyncCompletedEffect',
+      impl: () =>
+        chatRoom.onHistorySyncCompleted
+          ? fromEventPattern<HistorySyncCompletedEvent>(
+              chatRoom.onHistorySyncCompleted.bind(chatRoom),
+              (_handler, dispose) => dispose()
+            ).pipe(map(HistorySyncCompletedEvent))
+          : EMPTY
+    })
+
     return {
       query: {
         UserListQuery,
@@ -595,6 +610,7 @@ const ChatRoomDomain = Remesh.domain({
       },
       event: {
         SendTextMessageEvent,
+        HistorySyncCompletedEvent,
         OnTextMessageEvent,
         SelfJoinRoomEvent,
         ReconnectStartedEvent,

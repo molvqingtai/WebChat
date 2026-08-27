@@ -42,6 +42,23 @@ History feedback SHALL describe only the receiver's current local synchronizatio
 - **WHEN** another page of that domain is already attached or attaches before the owner terminates
 - **THEN** that page SHALL project the same loading copy and terminal dismissal, while pages of every other domain remain unchanged
 
+### Requirement: Completed received History follows the latest message
+
+After the final durable Page ACK for a current received-History attempt confirms that its cumulative inserted predicate is true, `HistoryDomain` SHALL emit one immutable `{ domain, sourcePeerId, syncId, inserted: true }` completion event. Zero-insert, duplicate, stale, replaced, canceled, failed, or other-domain attempts SHALL emit none. The Runtime SHALL forward that event only through the existing transient same-domain History callback after the Page message write has settled; it SHALL add no snapshot, query, receipt field, persistence, wire, or replay surface.
+
+The mounted Page adapter SHALL relay the transient event to `ChatRoomDomain`; App/Main SHALL turn it into one UI-local intent keyed by domain and `syncId`, dropped on unmount. The first committed MessageList render carrying that intent is its list boundary. An off-bottom list SHALL issue one existing follow-latest command and settle with following resumed and its action/count cleared. An already-bottom list SHALL consume a no-op. Initial hydration and ordinary older-history pagination SHALL never receive this intent, and head pagination SHALL retain its reading anchor without forced bottom follow.
+
+#### Scenario: Final durable insertion follows once
+
+- **GIVEN** a mounted off-bottom current conversation
+- **WHEN** its current received-History attempt's final ACK settles after at least one durable insertion
+- **THEN** one transient completion reaches the committed MessageList, issues one follow-latest command, and clears on settlement
+
+#### Scenario: Completion is local and does not affect pagination
+
+- **WHEN** the page unmounts before consuming a completion, or a user requests older history
+- **THEN** the local intent is dropped on unmount and the ordinary head anchor remains unchanged without forced follow
+
 ## MODIFIED Requirements
 
 ### Requirement: Runtime Chat session lifecycle

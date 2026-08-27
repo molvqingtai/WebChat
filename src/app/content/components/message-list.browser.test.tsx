@@ -48,10 +48,12 @@ const suppressResizeObserverLoop = (event: ErrorEvent) => {
   if (event.message === 'ResizeObserver loop completed with undelivered notifications.') event.preventDefault()
 }
 
-beforeEach(() => window.addEventListener('error', suppressResizeObserverLoop))
-afterEach(() => {
+beforeEach(() => {
+  window.addEventListener('error', suppressResizeObserverLoop)
+})
+afterEach(async () => {
   window.removeEventListener('error', suppressResizeObserverLoop)
-  cleanup()
+  await cleanup()
 })
 
 describe('MessageList initial settlement', () => {

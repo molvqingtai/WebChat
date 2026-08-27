@@ -109,7 +109,8 @@ const createFixture = (
     join: new Set<(session: ChatSession) => void>(),
     leave: new Set<(session: ChatSession) => void>(),
     sessions: new Set<(sessions: readonly ChatSession[]) => void>(),
-    error: new Set<(error: Error) => void>()
+    error: new Set<(error: Error) => void>(),
+    historySyncCompleted: new Set<(completion: { syncId: string; inserted: boolean }) => void>()
   }
   const subscribe = <T>(listeners: Set<(value: T) => void>, listener: (value: T) => void) => {
     listeners.add(listener)
@@ -159,7 +160,8 @@ const createFixture = (
     onJoinRoom: (listener) => subscribe(listeners.join, listener),
     onLeaveRoom: (listener) => subscribe(listeners.leave, listener),
     onSessions: (listener) => subscribe(listeners.sessions, listener),
-    onError: (listener) => subscribe(listeners.error, listener)
+    onError: (listener) => subscribe(listeners.error, listener),
+    onHistorySyncCompleted: (listener) => subscribe(listeners.historySyncCompleted, listener)
   }
 
   const sendLifecycleLocal = createSendLifecycle()
@@ -213,6 +215,8 @@ const createFixture = (
     emitLeave: (session: ChatSession) => listeners.leave.forEach((listener) => listener(session)),
     emitSessions: (sessions: readonly ChatSession[]) => listeners.sessions.forEach((listener) => listener(sessions)),
     emitError: (error: Error) => listeners.error.forEach((listener) => listener(error)),
+    emitHistorySyncCompleted: (completion: { syncId: string; inserted: boolean }) =>
+      listeners.historySyncCompleted.forEach((listener) => listener(completion)),
     emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') =>
       readinessListeners.forEach((listener) => listener(state)),
     setLifecycleResult: (result: ConnectionLifecycleResult) => {
@@ -364,6 +368,19 @@ const createPendingConnectionFixture = () => {
 }
 
 describe('ChatRoomDomain exact application port', () => {
+  it('relays each transient History completion to the mounted page domain', () => {
+    const fixture = createFixture()
+    const received: Array<{ syncId: string; inserted: boolean }> = []
+    fixture.store.subscribeEvent(fixture.room.event.HistorySyncCompletedEvent, (completion) =>
+      received.push(completion)
+    )
+
+    fixture.emitHistorySyncCompleted({ syncId: 'sync-1', inserted: true })
+
+    expect(received).toEqual([{ syncId: 'sync-1', inserted: true }])
+    fixture.store.discard()
+  })
+
   it('joins with the current protocol user/site and derives users from sessions', async () => {
     const fixture = createFixture()
     await join(fixture)

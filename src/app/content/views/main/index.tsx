@@ -8,14 +8,17 @@ import { groupAdjacentNotices, messageRowKey } from '../../components/notice-gro
 import NoticeItem from '../../components/notice-item'
 import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import type { HistorySyncCompletedEvent } from '@/domain/externs/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 import { compareEventPosition } from '@/domain/Message'
 
 export interface MainProps {
+  historySyncIntent: HistorySyncCompletedEvent | null
   localSendToken: number
+  onHistorySyncIntentConsumed: () => void
 }
 
-const Main: FC<MainProps> = ({ localSendToken }) => {
+const Main: FC<MainProps> = ({ historySyncIntent, localSendToken, onHistorySyncIntentConsumed }) => {
   const send = useRemeshSend()
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
@@ -44,7 +47,11 @@ const Main: FC<MainProps> = ({ localSendToken }) => {
   )
 
   return (
-    <MessageList localSendToken={localSendToken}>
+    <MessageList
+      historySyncIntent={historySyncIntent}
+      localSendToken={localSendToken}
+      onHistorySyncIntentConsumed={onHistorySyncIntentConsumed}
+    >
       {messageListLoadFinished
         ? messageList.map((message, index) => {
             const key = messageRowKey(message)

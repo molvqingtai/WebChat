@@ -567,6 +567,29 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(fixture.messageStore.query()).resolves.toEqual([])
   })
 
+  it('bridges a final History completion only after the page History callback is registered', async () => {
+    const fixture = await setup()
+    const completions: Array<{ syncId: string; inserted: boolean }> = []
+    fixture.room.onHistorySyncCompleted((completion) => completions.push(completion))
+
+    fixture.emitHistory({
+      type: 'sync-completed',
+      completion: { domain: DOMAIN, sourcePeerId: 'peer', syncId: 'sync-1', inserted: true }
+    })
+    expect(completions).toEqual([])
+
+    await fixture.apply()
+    fixture.emitHistory({
+      type: 'sync-completed',
+      completion: { domain: 'https://other.test', sourcePeerId: 'peer', syncId: 'foreign', inserted: true }
+    })
+    fixture.emitHistory({
+      type: 'sync-completed',
+      completion: { domain: DOMAIN, sourcePeerId: 'peer', syncId: 'sync-1', inserted: true }
+    })
+    expect(completions).toEqual([{ syncId: 'sync-1', inserted: true }])
+  })
+
   it('a host replacement dismisses every old History feedback owner and retires old supply work', async () => {
     const fixture = await setup()
     const events: { ownerId: string; type: string }[] = []

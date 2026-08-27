@@ -54,6 +54,24 @@ const expectProviderAlive = async (port: PagePort, events: HistorySupplyEvent[],
 }
 
 describe('PagePort history request/response', () => {
+  it('forwards one completion only to current same-domain History providers', () => {
+    const port = new PagePort()
+    const current: HistorySupplyEvent[] = []
+    const other: HistorySupplyEvent[] = []
+    port.provideHistory(1, request.domain, (event) => current.push(event))
+    port.provideHistory(2, 'https://other.example', (event) => other.push(event))
+
+    port.historySyncCompleted({ domain: request.domain, sourcePeerId: 'peer', syncId: 'sync-1', inserted: true })
+
+    expect(current).toEqual([
+      {
+        type: 'sync-completed',
+        completion: { domain: request.domain, sourcePeerId: 'peer', syncId: 'sync-1', inserted: true }
+      }
+    ])
+    expect(other).toEqual([])
+  })
+
   it('settles one supply id exactly once through the explicit response RPC', async () => {
     const port = new PagePort()
     const events: HistorySupplyEvent[] = []

@@ -1,6 +1,6 @@
 import '@webcomponents/custom-elements'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
+import { useRemeshDomain, useRemeshEvent, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Toaster } from 'sonner'
 import Header from '@/app/content/views/header'
 import Footer from '@/app/content/views/footer'
@@ -19,6 +19,7 @@ import MessageListDomain from '@/domain/MessageList'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
+import type { HistorySyncCompletedEvent } from '@/domain/externs/ChatRoom'
 import { checkDarkMode, cn } from '@/utils'
 
 if (import.meta.env.FIREFOX) {
@@ -45,8 +46,19 @@ const App = () => {
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
   const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
   const [localSendToken, setLocalSendToken] = useState(0)
+  const [historySyncIntent, setHistorySyncIntent] = useState<HistorySyncCompletedEvent | null>(null)
+  const latestHistorySyncIntentRef = useRef<string | null>(null)
   const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
   const handleLocalTextSent = useCallback(() => setLocalSendToken((token) => token + 1), [])
+  const consumeHistorySyncIntent = useCallback(() => setHistorySyncIntent(null), [])
+
+  useRemeshEvent(chatRoomDomain.event.HistorySyncCompletedEvent, (completion) => {
+    if (!completion.inserted) return
+    const key = `${window.location.origin}:${completion.syncId}`
+    if (latestHistorySyncIntentRef.current === key) return
+    latestHistorySyncIntentRef.current = key
+    setHistorySyncIntent(completion)
+  })
 
   useEffect(() => {
     if (initializationReady && messageListLoadFinished && userInfoSetFinished) {
@@ -87,7 +99,11 @@ const App = () => {
       <MediaPreviewContext.Provider value={openMediaPreview}>
         <AppLayout>
           <Header />
-          <Main localSendToken={localSendToken} />
+          <Main
+            historySyncIntent={historySyncIntent}
+            localSendToken={localSendToken}
+            onHistorySyncIntentConsumed={consumeHistorySyncIntent}
+          />
           <Footer onLocalTextSent={handleLocalTextSent} />
           {notUserInfo && <Setup />}
           <Toaster

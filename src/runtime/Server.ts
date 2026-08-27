@@ -321,6 +321,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     store.subscribeEvent(deliveryDomain.event.InboundAcceptedEvent, notifyTabs),
     store.subscribeEvent(deliveryDomain.event.InboundAckedEvent, notifyTabs),
     store.subscribeEvent(historyDomain.event.FeedbackChangedEvent, notifyTabs),
+    store.subscribeEvent(historyDomain.event.SyncCompletedEvent, (completion) =>
+      pagePort.historySyncCompleted(completion)
+    ),
     store.subscribeEvent(connectionDomain.event.DualEpochCommittedEvent, notifyTabs),
     store.subscribeEvent(connectionDomain.event.ErrorEvent, ({ error, domain }) => {
       retainedFailures.push({

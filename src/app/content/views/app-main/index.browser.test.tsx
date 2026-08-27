@@ -56,6 +56,7 @@ vi.mock('remesh-react', async () => {
   const { useSyncExternalStore } = await import('react')
   return {
     useRemeshDomain: (domain: unknown) => domain,
+    useRemeshEvent: () => undefined,
     useRemeshSend: () => fixture.send,
     useRemeshQuery: (query: string) => {
       const state = useSyncExternalStore(fixture.subscribe, fixture.snapshot)
@@ -99,6 +100,7 @@ vi.mock('@/domain/AppStatus', () => ({
 }))
 vi.mock('@/domain/ChatRoom', () => ({
   default: () => ({
+    event: { HistorySyncCompletedEvent: 'history-sync-completed' },
     query: {
       JoinIsFinishedQuery: () => 'chat-joined',
       ConnectionIsLoadingQuery: () => 'chat-connecting',

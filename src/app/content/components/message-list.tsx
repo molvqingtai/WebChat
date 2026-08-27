@@ -13,11 +13,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import NumberFlow from '@number-flow/react'
 import { ArrowDownIcon } from 'lucide-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import type { HistorySyncCompletedEvent } from '@/domain/externs/ChatRoom'
 import { cn } from '@/utils'
 
 export interface MessageListProps {
   children?: ReactElement[] | null
+  historySyncIntent?: HistorySyncCompletedEvent | null
   localSendToken?: number
+  onHistorySyncIntentConsumed?: () => void
 }
 
 const itemKey = (_: number, item: ReactElement) => {
@@ -164,7 +167,12 @@ const getChildUpdate = (previous: readonly string[] | null, current: readonly st
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000
 const INITIAL_TOP_MOST_ITEM_INDEX = { index: 'LAST' as const, align: 'end' as const }
 
-const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => {
+const MessageList: FC<MessageListProps> = ({
+  children,
+  historySyncIntent = null,
+  localSendToken = 0,
+  onHistorySyncIntentConsumed
+}) => {
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [initialTopMostItemIndex, setInitialTopMostItemIndex] = useState<
     typeof INITIAL_TOP_MOST_ITEM_INDEX | undefined
@@ -194,6 +202,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const tailBottomSnapshotRef = useRef<TailBottomSnapshot | null>(null)
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
+  const lastHistorySyncIntentRef = useRef<string | null>(null)
   const lastLocalSendTokenRef = useRef(localSendToken)
   const hasChildren = children !== null && children !== undefined
   const itemKeys = useMemo(
@@ -372,7 +381,11 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const canFollowLatest = useCallback(
     (atBottom: boolean) =>
-      atBottom && !latestRecoveryRef.current && !manualScrollActiveRef.current && !manualScrollPausedRef.current,
+      atBottom &&
+      !latestRecoveryRef.current &&
+      !manualScrollIntentRef.current &&
+      !manualScrollActiveRef.current &&
+      !manualScrollPausedRef.current,
     []
   )
 
@@ -791,6 +804,28 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     lastLocalSendTokenRef.current = localSendToken
     handleFollowLatest()
   }, [handleFollowLatest, localSendToken])
+
+  useLayoutEffect(() => {
+    if (!historySyncIntent || !hasChildren || !scrollParentRef) return
+
+    const key = historySyncIntent.syncId
+    if (lastHistorySyncIntentRef.current === key) return
+
+    lastHistorySyncIntentRef.current = key
+    onHistorySyncIntentConsumed?.()
+    if (isViewportAtBottom(scrollParentRef)) {
+      handleAtBottomStateChange(true, true)
+      return
+    }
+    handleFollowLatest()
+  }, [
+    handleAtBottomStateChange,
+    handleFollowLatest,
+    hasChildren,
+    historySyncIntent,
+    onHistorySyncIntentConsumed,
+    scrollParentRef
+  ])
 
   const displayedNewMessageCount = Math.min(newMessageCount, 99)
   const hasNewMessages = newMessageCount > 0

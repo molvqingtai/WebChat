@@ -403,6 +403,35 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
   })
 
+  it('counts N1 after a native manual departure before any Virtuoso scrolling callback', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    reportBottom(true)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    act(() => {
+      view.getByTestId('scroll-area').dispatchEvent(new Event('wheel', { bubbles: true }))
+      scrollParent.dispatchEvent(new Event('scroll'))
+    })
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('n1')]))
+
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+  })
+
+  it('keeps N1 pending when a native departure intent arrives before Virtuoso reports it', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    reportBottom(true)
+
+    act(() => view.getByTestId('scroll-area').dispatchEvent(new Event('wheel', { bubbles: true })))
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('n1')]))
+
+    expect(view.getByTestId('follow-latest-action').getAttribute('aria-label')).toBe('1 new message')
+    expect((latestVirtuosoCall().followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
+  })
+
   it('caps the pending tail count at 99+ in the follow action label', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
@@ -639,6 +668,59 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, { localSendToken: 1 }, rowsWithProjection))
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+  })
+
+  it('consumes one committed History intent off-bottom with one existing follow command', () => {
+    const initialRows = testRows('current')
+    const consumed = vi.fn()
+    const view = render(createElement(MessageList, null, initialRows))
+    reportBottom(true)
+    beginManualScroll(view)
+    reportBottom(false)
+    const historyRows = [...testRows('history'), ...initialRows]
+    view.rerender(createElement(MessageList, null, historyRows))
+    vi.clearAllMocks()
+
+    view.rerender(
+      createElement(
+        MessageList,
+        {
+          historySyncIntent: { syncId: 'sync-1', inserted: true },
+          onHistorySyncIntentConsumed: consumed
+        },
+        historyRows
+      )
+    )
+
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+      index: 'LAST',
+      align: 'end',
+      behavior: 'smooth'
+    })
+    expect(consumed).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('consumes a committed History intent at bottom without another scroll command', () => {
+    const consumed = vi.fn()
+    const rows = testRows('current')
+    const view = render(createElement(MessageList, null, rows))
+    reportBottom(true)
+    vi.clearAllMocks()
+
+    view.rerender(
+      createElement(
+        MessageList,
+        {
+          historySyncIntent: { syncId: 'sync-1', inserted: true },
+          onHistorySyncIntentConsumed: consumed
+        },
+        rows
+      )
+    )
+
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(consumed).toHaveBeenCalledExactlyOnceWith()
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
   it('keeps token-first local recovery current for the next layout without issuing a second command', () => {

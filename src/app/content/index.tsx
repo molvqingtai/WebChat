@@ -176,7 +176,9 @@ const createContentStore = () => {
     onJoinRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onJoinRoom(listener)),
     onLeaveRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onLeaveRoom(listener)),
     onSessions: (listener) => subscribeDeferred(chatRoom, (room) => room.onSessions(listener)),
-    onError: (listener) => subscribeDeferred(chatRoom, (room) => room.onError(listener))
+    onError: (listener) => subscribeDeferred(chatRoom, (room) => room.onError(listener)),
+    onHistorySyncCompleted: (listener) =>
+      subscribeDeferred(chatRoom, (room) => room.onHistorySyncCompleted?.(listener) ?? (() => {}))
   }
   const deferredWorldRoom: WorldRoom = {
     getState: async () => (await worldRoom.get()).getState(),

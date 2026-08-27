@@ -2,6 +2,7 @@ import EventHub from '@resreq/event-hub'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
 import type {
   ChatRoom as ChatRoomPort,
+  HistorySyncCompletedEvent,
   JoinRoomCommand,
   SendMessageCommand,
   SendReactionCommand,
@@ -427,6 +428,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   private provideHistory(event: HistorySupplyEvent) {
     if (this.disposed) return
+    if (event.type === 'sync-completed') {
+      if (event.completion.domain === this.dependencies.pageDomain) {
+        this.emit('historySyncCompleted', { syncId: event.completion.syncId, inserted: event.completion.inserted })
+      }
+      return
+    }
     if (event.type === 'cancel') {
       const controller = this.activeHistorySupplies.get(event.supplyId)
       if (!controller) return
@@ -670,6 +677,11 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   onError(listener: (error: Error) => void): Unsubscribe {
     this.on('error', listener)
     return () => this.off('error', listener)
+  }
+
+  onHistorySyncCompleted(listener: (completion: HistorySyncCompletedEvent) => void): Unsubscribe {
+    this.on('historySyncCompleted', listener)
+    return () => this.off('historySyncCompleted', listener)
   }
 
   /**

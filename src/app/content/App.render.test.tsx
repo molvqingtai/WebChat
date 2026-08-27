@@ -1,9 +1,12 @@
+import { useEffect } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   ready: false,
   danmakuEnabled: false,
+  historySyncListener: null as null | ((completion: { syncId: string; inserted: boolean }) => void),
+  historySyncIntents: [] as string[],
   danmakuMountKeys: [] as string[],
   localSendTokens: [] as number[],
   onDanmakuClick: null as null | (() => void),
@@ -12,6 +15,9 @@ const fixture = vi.hoisted(() => ({
 
 vi.mock('remesh-react', () => ({
   useRemeshDomain: (domain: unknown) => domain,
+  useRemeshEvent: (_event: unknown, listener: (completion: { syncId: string; inserted: boolean }) => void) => {
+    fixture.historySyncListener = listener
+  },
   useRemeshSend: () => fixture.send,
   useRemeshQuery: (query: string) => {
     switch (query) {
@@ -40,7 +46,8 @@ vi.mock('@/domain/AppStatus', () => ({
 vi.mock('@/domain/ChatRoom', () => ({
   default: () => ({
     query: { JoinIsFinishedQuery: () => 'chat-joined' },
-    command: { JoinRoomCommand: () => 'join-chat' }
+    command: { JoinRoomCommand: () => 'join-chat' },
+    event: { HistorySyncCompletedEvent: 'history-sync-completed' }
   })
 }))
 vi.mock('@/domain/WorldRoom', () => ({
@@ -75,9 +82,24 @@ vi.mock('@/domain/Danmaku', () => ({
 }))
 vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testid="header" /> }))
 vi.mock('@/app/content/views/main', () => ({
-  default: ({ localSendToken }: { localSendToken: number }) => {
+  default: ({
+    historySyncIntent,
+    localSendToken
+  }: {
+    historySyncIntent: { syncId: string } | null
+    localSendToken: number
+  }) => {
     fixture.localSendTokens.push(localSendToken)
-    return <main data-testid="main" data-local-send-token={localSendToken} />
+    useEffect(() => {
+      if (historySyncIntent) fixture.historySyncIntents.push(historySyncIntent.syncId)
+    }, [historySyncIntent])
+    return (
+      <main
+        data-testid="main"
+        data-history-sync-intent={historySyncIntent?.syncId ?? ''}
+        data-local-send-token={localSendToken}
+      />
+    )
   }
 }))
 vi.mock('@/app/content/views/footer', () => ({
@@ -114,6 +136,8 @@ afterEach(() => {
   cleanup()
   fixture.ready = false
   fixture.danmakuEnabled = false
+  fixture.historySyncListener = null
+  fixture.historySyncIntents = []
   fixture.danmakuMountKeys = []
   fixture.localSendTokens = []
   fixture.onDanmakuClick = null
@@ -168,6 +192,19 @@ describe('normal App composition', () => {
     fireEvent.click(screen.getByTestId('local-text-send'))
     expect(screen.getByTestId('main').dataset.localSendToken).toBe('2')
     expect(fixture.localSendTokens).toEqual([0, 1, 2])
+  })
+
+  it('queues each current History completion as one UI-local intent', () => {
+    const view = render(<App />)
+    fixture.historySyncListener?.({ syncId: 'sync-1', inserted: true })
+    view.rerender(<App />)
+
+    expect(screen.getByTestId('main').dataset.historySyncIntent).toBe('sync-1')
+    expect(fixture.historySyncIntents).toEqual(['sync-1'])
+
+    fixture.historySyncListener?.({ syncId: 'sync-1', inserted: true })
+    view.rerender(<App />)
+    expect(fixture.historySyncIntents).toEqual(['sync-1'])
   })
 
   it('keeps the Danmaku mount interface visibility-free', () => {
