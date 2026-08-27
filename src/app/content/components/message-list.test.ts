@@ -837,7 +837,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
   })
 
-  it('retargets a pending head owner across a tail append until its terminal completion', () => {
+  it('releases a pending head owner after its target scroll so bottom callbacks take the ordinary path', () => {
     const rows = testRows('current-1', 'current-2', 'current-3')
     const headRows = [...testRows('history-1', 'history-2'), ...rows]
     const view = render(createElement(MessageList, null, rows))
@@ -870,8 +870,9 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
 
+    reportBottom(false)
     setScrollMetrics(scrollParent, 100, 1_000, 900)
-    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(true)
 
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
