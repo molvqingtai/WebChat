@@ -869,6 +869,12 @@ describe('MessageList Virtuoso integration', () => {
 
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
   it('supersedes a registered head owner when a later head prepend overlaps it', () => {
@@ -904,6 +910,56 @@ describe('MessageList Virtuoso integration', () => {
       offset: -20,
       behavior: 'auto'
     })
+  })
+
+  it('supersedes a pending head owner without letting its old events settle the successor', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const firstHead = [...testRows('history-1', 'history-2'), ...rows]
+    const secondHead = [...testRows('history-3'), ...firstHead]
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="0"]')!, -80, -20)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="1"]')!, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+    vi.clearAllMocks()
+
+    view.rerender(createElement(MessageList, null, firstHead))
+    const firstCall = latestVirtuosoCall()
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="3"]')!, 40, 100)
+    act(() => firstCall.totalListHeightChanged?.(1_000))
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+
+    view.rerender(createElement(MessageList, null, secondHead))
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="4"]')!, 40, 100)
+    act(() => firstCall.totalListHeightChanged?.(1_000))
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+
+    reportTotalListHeightChanged()
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(2)
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenLastCalledWith({
+      index: 4,
+      align: 'start',
+      offset: -20,
+      behavior: 'auto'
+    })
+
+    act(() => firstCall.atBottomStateChange?.(true))
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(2)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="4"]')!, 20, 80)
+    setScrollMetrics(scrollParent, 100, 1_000, 849)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(true)
+
+    expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
+    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(2)
   })
 
   it('closes the action when the final head-rebase geometry is within half a viewport', () => {

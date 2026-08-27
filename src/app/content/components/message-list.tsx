@@ -530,8 +530,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     scrollArea.addEventListener('touchmove', markManualScrollIntent, { passive: true })
     scrollArea.addEventListener('pointerdown', markScrollbarScrollIntent)
     const handleScroll = () => {
-      if (!isCurrentListCallback()) return
-
       const nextScrollTop = scrollParentRef.scrollTop
       const pendingProgrammaticScroll = pendingProgrammaticScrollRef.current
       if (pendingProgrammaticScroll?.viewport === scrollParentRef) {
@@ -539,6 +537,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
         if (
           !isCurrentHeadRebaseTransaction(transaction) ||
+          !hasSameItems(itemKeys, transaction.itemKeys) ||
           transaction.phase !== 'pending' ||
           !hasHeadRebaseTarget(transaction)
         ) {
@@ -547,13 +546,14 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
         pendingProgrammaticScrollRef.current = null
         manualScrollDownRef.current = false
         lastScrollTopRef.current = nextScrollTop
+        cancelHeadRebaseTransaction(transaction)
         const finalActionState = getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current)
         atBottomRef.current = finalActionState.isAtBottom
-        cancelHeadRebaseTransaction(transaction)
         updateViewportActionState(finalActionState)
         return
       }
 
+      if (!isCurrentListCallback()) return
       if (headRebaseTransactionRef.current) return
 
       promoteManualScroll()
