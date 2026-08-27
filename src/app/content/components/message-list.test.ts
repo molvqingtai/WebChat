@@ -481,6 +481,31 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
+  it('retains a tail admission owner across a same-keys rerender until height settlement', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    reportBottom(true)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    const rowsWithN1 = [...initialRows, ...testRows('new-message')]
+    view.rerender(createElement(MessageList, null, rowsWithN1))
+    view.rerender(createElement(MessageList, null, rowsWithN1))
+
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportStaleBottom(true)
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    reportTotalListHeightChanged()
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportBottom(true)
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
+  })
+
   it('keeps one pre-tail physical snapshot when commit geometry changes before followOutput', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
@@ -504,6 +529,34 @@ describe('MessageList Virtuoso integration', () => {
     expect(typeof followOutput).toBe('function')
     expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+  })
+
+  it('settles combined head and tail owners from one height callback', () => {
+    const rows = testRows('current-1', 'current-2', 'current-3')
+    const view = render(createElement(MessageList, null, rows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    setBounds(scrollParent, 0, 100)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="0"]')!, -80, -20)
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="1"]')!, 20, 80)
+
+    beginManualScroll(view)
+    scrollParent.scrollTop = 100
+    reportBottom(false)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    reportBottom(false)
+
+    const combinedRows = [...testRows('history-1', 'history-2'), ...rows, ...testRows('new-tail')]
+    view.rerender(createElement(MessageList, null, combinedRows))
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+
+    setBounds(view.container.querySelector<HTMLElement>('[data-index="3"]')!, 20, 80)
+    reportTotalListHeightChanged()
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportBottom(true)
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
   })
 
   it('shows only beyond half a viewport and preserves unread state across threshold crossings', () => {

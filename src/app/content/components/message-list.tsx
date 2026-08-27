@@ -79,6 +79,8 @@ type ViewportActionState = {
 type TailBottomSnapshot = {
   atBottom: boolean
   callbackPending: boolean
+  itemKeys: readonly string[]
+  viewport: HTMLElement
 }
 
 type HeadRebaseTransaction = {
@@ -202,6 +204,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const initialScrollCancellationPassedHeadRef = useRef(false)
   const headAnchorRef = useRef<HeadAnchor | null>(null)
   const headRebaseTransactionRef = useRef<HeadRebaseTransaction | null>(null)
+  const tailBottomSnapshotRef = useRef<TailBottomSnapshot | null>(null)
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
   const lastLocalSendTokenRef = useRef(localSendToken)
@@ -219,11 +222,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   const isHeadPrepend = headCount > 0 && lastHeadItemKeysRef.current !== itemKeys
   const isTailAppend = tailCount > 0
   const isNewTailAppend = isTailAppend && lastTailItemKeysRef.current !== itemKeys
-  const tailBottomSnapshot = useMemo<TailBottomSnapshot | null>(
-    () =>
-      isTailAppend && scrollParentRef ? { atBottom: isViewportAtBottom(scrollParentRef), callbackPending: true } : null,
-    [isTailAppend, itemKeys, scrollParentRef]
-  )
   const headRebaseTarget = useMemo<HeadAnchor | null>(() => {
     const headAnchor = headAnchorRef.current
     if (
@@ -248,6 +246,19 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     }
     headRebaseTransactionRef.current = null
   }, [])
+
+  const cancelTailBottomSnapshot = useCallback((snapshot?: TailBottomSnapshot | null) => {
+    if (snapshot !== undefined && tailBottomSnapshotRef.current !== snapshot) return
+    tailBottomSnapshotRef.current = null
+  }, [])
+
+  const isCurrentTailBottomSnapshot = useCallback(
+    (snapshot: TailBottomSnapshot) =>
+      tailBottomSnapshotRef.current === snapshot &&
+      snapshot.viewport === scrollParentRef &&
+      hasSameItems(currentItemKeysRef.current, snapshot.itemKeys),
+    [scrollParentRef]
+  )
 
   useInsertionEffect(() => {
     const transaction = headRebaseTransactionRef.current
@@ -290,8 +301,29 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       }
     }
 
+    const tailBottomSnapshot = tailBottomSnapshotRef.current
+    if (!hasChildren || !scrollParentRef || tailBottomSnapshot?.viewport !== scrollParentRef) {
+      cancelTailBottomSnapshot()
+    } else if (tailBottomSnapshot) {
+      const ownerUpdate = getChildUpdate(tailBottomSnapshot.itemKeys, itemKeys)
+      if (ownerUpdate.update === 'replace') {
+        cancelTailBottomSnapshot(tailBottomSnapshot)
+      } else {
+        tailBottomSnapshot.itemKeys = itemKeys
+      }
+    }
+
     currentItemKeysRef.current = itemKeys
     activeViewportRef.current = scrollParentRef
+
+    if (isTailAppend && scrollParentRef) {
+      tailBottomSnapshotRef.current = {
+        atBottom: isViewportAtBottom(scrollParentRef),
+        callbackPending: true,
+        itemKeys,
+        viewport: scrollParentRef
+      }
+    }
 
     if (headRebaseTarget && scrollParentRef) {
       const nextTransaction: HeadRebaseTransaction = {
@@ -303,9 +335,19 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       cancelHeadRebaseTransaction()
       headRebaseTransactionRef.current = nextTransaction
     }
-  }, [cancelHeadRebaseTransaction, childUpdate.update, hasChildren, headRebaseTarget, itemKeys, scrollParentRef])
+  }, [
+    cancelHeadRebaseTransaction,
+    cancelTailBottomSnapshot,
+    childUpdate.update,
+    hasChildren,
+    headRebaseTarget,
+    isTailAppend,
+    itemKeys,
+    scrollParentRef
+  ])
 
   useLayoutEffect(() => () => cancelHeadRebaseTransaction(), [cancelHeadRebaseTransaction])
+  useLayoutEffect(() => () => cancelTailBottomSnapshot(), [cancelTailBottomSnapshot])
 
   const clearNewMessageCount = useCallback(() => {
     if (newMessageCountRef.current === 0) return
@@ -456,7 +498,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   useLayoutEffect(() => {
     if (isNewTailAppend) {
       lastTailItemKeysRef.current = itemKeys
-      const atBottom = tailBottomSnapshot?.atBottom ?? atBottomRef.current
+      const atBottom = tailBottomSnapshotRef.current?.atBottom ?? atBottomRef.current
       atBottomRef.current = atBottom
       if (latestRecoveryRef.current) {
         clearNewMessageCount()
@@ -498,7 +540,6 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     isHeadPrepend,
     isNewTailAppend,
     itemKeys,
-    tailBottomSnapshot,
     tailCount,
     updateViewportActionState
   ])
@@ -517,6 +558,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       lastScrollTopRef.current = scrollParentRef.scrollTop
       manualScrollDownRef.current = false
       cancelHeadRebaseTransaction()
+      cancelTailBottomSnapshot()
       manualScrollIntentRef.current = true
     }
     const markScrollbarScrollIntent = (event: PointerEvent) => {
@@ -573,6 +615,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
   }, [
     acknowledgeManualDeparture,
     cancelHeadRebaseTransaction,
+    cancelTailBottomSnapshot,
     cancelLatestRecovery,
     clearHeadAnchor,
     clearInitialScrollCancellation,
@@ -587,7 +630,13 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     (reportedAtBottom: boolean, settledAtBottom?: boolean) => {
       if (!isCurrentListCallback()) return
       if (headRebaseTransactionRef.current) return
-      if (tailBottomSnapshot?.callbackPending && !tailBottomSnapshot.atBottom) {
+      const tailBottomSnapshot = tailBottomSnapshotRef.current
+      if (
+        tailBottomSnapshot &&
+        tailBottomSnapshot.callbackPending &&
+        !tailBottomSnapshot.atBottom &&
+        isCurrentTailBottomSnapshot(tailBottomSnapshot)
+      ) {
         return
       }
       const atBottom = settledAtBottom ?? (scrollParentRef ? isViewportAtBottom(scrollParentRef) : reportedAtBottom)
@@ -613,8 +662,8 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
       clearInitialScrollCancellation,
       clearNewMessageCount,
       isCurrentListCallback,
+      isCurrentTailBottomSnapshot,
       scrollParentRef,
-      tailBottomSnapshot,
       updateViewportActionState
     ]
   )
@@ -666,7 +715,23 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
 
   const handleTotalListHeightChanged = useCallback(() => {
     if (!scrollParentRef || !isCurrentListCallback()) return
+    const tailBottomSnapshot = tailBottomSnapshotRef.current
+    const hasCurrentTailBottomSnapshot =
+      tailBottomSnapshot !== null &&
+      tailBottomSnapshot.callbackPending &&
+      isCurrentTailBottomSnapshot(tailBottomSnapshot)
     const headRebaseTransaction = headRebaseTransactionRef.current
+    const settleTailBottomSnapshot = (actionState: ViewportActionState) => {
+      if (!tailBottomSnapshot || !hasCurrentTailBottomSnapshot) return
+
+      tailBottomSnapshot.callbackPending = false
+      if (headRebaseTransactionRef.current) {
+        atBottomRef.current = actionState.isAtBottom
+        return
+      }
+      handleAtBottomStateChange(actionState.isAtBottom, actionState.isAtBottom)
+    }
+
     if (headRebaseTransaction) {
       if (!isCurrentHeadRebaseTransaction(headRebaseTransaction)) return
       if (headRebaseTransaction.phase === 'registered') {
@@ -675,6 +740,7 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
           atBottomRef.current = finalActionState.isAtBottom
           cancelHeadRebaseTransaction(headRebaseTransaction)
           updateViewportActionState(finalActionState)
+          settleTailBottomSnapshot(finalActionState)
           return
         }
         runScrollCommand(
@@ -682,13 +748,14 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
           headRebaseTransaction
         )
       }
+      if (hasCurrentTailBottomSnapshot) {
+        settleTailBottomSnapshot(getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current))
+      }
       return
     }
 
-    if (tailBottomSnapshot?.callbackPending && !tailBottomSnapshot.atBottom) {
-      const atBottom = isViewportAtBottom(scrollParentRef)
-      tailBottomSnapshot.callbackPending = false
-      handleAtBottomStateChange(atBottom, atBottom)
+    if (hasCurrentTailBottomSnapshot) {
+      settleTailBottomSnapshot(getPhysicalViewportActionState(scrollParentRef, manualScrollDownRef.current))
       return
     }
 
@@ -700,24 +767,26 @@ const MessageList: FC<MessageListProps> = ({ children, localSendToken = 0 }) => 
     updateViewportActionState(atBottom)
   }, [
     cancelHeadRebaseTransaction,
+    cancelTailBottomSnapshot,
     handleAtBottomStateChange,
     isCurrentHeadRebaseTransaction,
     isCurrentListCallback,
+    isCurrentTailBottomSnapshot,
     runScrollCommand,
     scrollParentRef,
-    tailBottomSnapshot,
     updateViewportActionState
   ])
 
   const handleFollowOutput = useCallback(
     (reportedAtBottom: boolean) => {
+      const tailBottomSnapshot = tailBottomSnapshotRef.current
       const atBottom = tailBottomSnapshot?.atBottom ?? reportedAtBottom
       if (tailBottomSnapshot === null) atBottomRef.current = atBottom
       return isTailAppend && ((isNewTailAppend && latestRecoveryRef.current) || canFollowLatest(atBottom))
         ? 'smooth'
         : false
     },
-    [canFollowLatest, isNewTailAppend, isTailAppend, tailBottomSnapshot]
+    [canFollowLatest, isNewTailAppend, isTailAppend]
   )
 
   const handleFollowLatest = useCallback(() => {
