@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
@@ -7,6 +7,7 @@ const fixture = vi.hoisted(() => ({
   danmakuEnabled: false,
   historySyncListener: null as null | ((completion: { syncId: string; inserted: boolean }) => void),
   historySyncIntents: [] as string[],
+  consumeHistorySyncIntent: null as null | ((syncId: string) => void),
   danmakuMountKeys: [] as string[],
   localSendTokens: [] as number[],
   onDanmakuClick: null as null | (() => void),
@@ -84,12 +85,15 @@ vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testi
 vi.mock('@/app/content/views/main', () => ({
   default: ({
     historySyncIntent,
-    localSendToken
+    localSendToken,
+    onHistorySyncIntentConsumed
   }: {
     historySyncIntent: { syncId: string } | null
     localSendToken: number
+    onHistorySyncIntentConsumed: (syncId: string) => void
   }) => {
     fixture.localSendTokens.push(localSendToken)
+    fixture.consumeHistorySyncIntent = onHistorySyncIntentConsumed
     useEffect(() => {
       if (historySyncIntent) fixture.historySyncIntents.push(historySyncIntent.syncId)
     }, [historySyncIntent])
@@ -138,6 +142,7 @@ afterEach(() => {
   fixture.danmakuEnabled = false
   fixture.historySyncListener = null
   fixture.historySyncIntents = []
+  fixture.consumeHistorySyncIntent = null
   fixture.danmakuMountKeys = []
   fixture.localSendTokens = []
   fixture.onDanmakuClick = null
@@ -205,6 +210,29 @@ describe('normal App composition', () => {
     fixture.historySyncListener?.({ syncId: 'sync-1', inserted: true })
     view.rerender(<App />)
     expect(fixture.historySyncIntents).toEqual(['sync-1'])
+  })
+
+  it('delivers two current History completions in FIFO order when React batches them', () => {
+    render(<App />)
+
+    act(() => {
+      fixture.historySyncListener?.({ syncId: 'sync-1', inserted: true })
+      fixture.historySyncListener?.({ syncId: 'sync-2', inserted: true })
+    })
+
+    expect(screen.getByTestId('main').dataset.historySyncIntent).toBe('sync-1')
+    expect(fixture.historySyncIntents).toEqual(['sync-1'])
+    const consumeFirst = fixture.consumeHistorySyncIntent!
+
+    act(() => consumeFirst('sync-1'))
+    expect(screen.getByTestId('main').dataset.historySyncIntent).toBe('sync-2')
+    expect(fixture.historySyncIntents).toEqual(['sync-1', 'sync-2'])
+
+    act(() => consumeFirst('sync-1'))
+    expect(screen.getByTestId('main').dataset.historySyncIntent).toBe('sync-2')
+
+    act(() => fixture.consumeHistorySyncIntent?.('sync-2'))
+    expect(screen.getByTestId('main').dataset.historySyncIntent).toBe('')
   })
 
   it('keeps the Danmaku mount interface visibility-free', () => {

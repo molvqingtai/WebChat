@@ -20,7 +20,7 @@ export interface MessageListProps {
   children?: ReactElement[] | null
   historySyncIntent?: HistorySyncCompletedEvent | null
   localSendToken?: number
-  onHistorySyncIntentConsumed?: () => void
+  onHistorySyncIntentConsumed?: (syncId: string) => void
 }
 
 const itemKey = (_: number, item: ReactElement) => {
@@ -812,7 +812,7 @@ const MessageList: FC<MessageListProps> = ({
     if (lastHistorySyncIntentRef.current === key) return
 
     lastHistorySyncIntentRef.current = key
-    onHistorySyncIntentConsumed?.()
+    onHistorySyncIntentConsumed?.(key)
     if (isViewportAtBottom(scrollParentRef)) {
       handleAtBottomStateChange(true, true)
       return

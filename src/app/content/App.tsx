@@ -46,18 +46,23 @@ const App = () => {
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
   const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
   const [localSendToken, setLocalSendToken] = useState(0)
-  const [historySyncIntent, setHistorySyncIntent] = useState<HistorySyncCompletedEvent | null>(null)
-  const latestHistorySyncIntentRef = useRef<string | null>(null)
+  const [historySyncIntents, setHistorySyncIntents] = useState<readonly HistorySyncCompletedEvent[]>([])
+  const historySyncIntentKeysRef = useRef(new Set<string>())
+  const historySyncIntent = historySyncIntents[0] ?? null
   const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
   const handleLocalTextSent = useCallback(() => setLocalSendToken((token) => token + 1), [])
-  const consumeHistorySyncIntent = useCallback(() => setHistorySyncIntent(null), [])
+  const consumeHistorySyncIntent = useCallback(
+    (syncId: string) =>
+      setHistorySyncIntents((intents) => (intents[0]?.syncId === syncId ? intents.slice(1) : intents)),
+    []
+  )
 
   useRemeshEvent(chatRoomDomain.event.HistorySyncCompletedEvent, (completion) => {
     if (!completion.inserted) return
     const key = `${window.location.origin}:${completion.syncId}`
-    if (latestHistorySyncIntentRef.current === key) return
-    latestHistorySyncIntentRef.current = key
-    setHistorySyncIntent(completion)
+    if (historySyncIntentKeysRef.current.has(key)) return
+    historySyncIntentKeysRef.current.add(key)
+    setHistorySyncIntents((intents) => [...intents, completion])
   })
 
   useEffect(() => {

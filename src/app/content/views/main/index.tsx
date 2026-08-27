@@ -15,7 +15,7 @@ import { compareEventPosition } from '@/domain/Message'
 export interface MainProps {
   historySyncIntent: HistorySyncCompletedEvent | null
   localSendToken: number
-  onHistorySyncIntentConsumed: () => void
+  onHistorySyncIntentConsumed: (syncId: string) => void
 }
 
 const Main: FC<MainProps> = ({ historySyncIntent, localSendToken, onHistorySyncIntentConsumed }) => {

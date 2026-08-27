@@ -697,7 +697,7 @@ describe('MessageList Virtuoso integration', () => {
       align: 'end',
       behavior: 'smooth'
     })
-    expect(consumed).toHaveBeenCalledExactlyOnceWith()
+    expect(consumed).toHaveBeenCalledExactlyOnceWith('sync-1')
   })
 
   it('consumes a committed History intent at bottom without another scroll command', () => {
@@ -719,7 +719,7 @@ describe('MessageList Virtuoso integration', () => {
     )
 
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(consumed).toHaveBeenCalledExactlyOnceWith()
+    expect(consumed).toHaveBeenCalledExactlyOnceWith('sync-1')
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
