@@ -31,14 +31,17 @@ const groupedRow = (
     last
   />
 )
-const harness = (historyReady: boolean, children: ReactElement[]) => (
-  <div style={{ display: 'grid', gridTemplateRows: '1fr', height: '240px', width: '360px' }}>
-    <MessageList>{historyReady ? children : null}</MessageList>
+const harness = (historyReady: boolean, children: ReactElement[], width = 360, height = 240, localSendToken = 0) => (
+  <div style={{ display: 'grid', gridTemplateRows: '1fr', height: `${height}px`, width: `${width}px` }}>
+    <MessageList localSendToken={localSendToken}>{historyReady ? children : null}</MessageList>
   </div>
 )
 const viewport = () => document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!
 const list = () => document.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
 const atBottom = (element: HTMLElement) => element.scrollTop + element.clientHeight >= element.scrollHeight - 1
+const followAction = (label: string) =>
+  document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"][data-state="open"]`)
+const followActionElement = () => document.querySelector<HTMLButtonElement>('[data-testid="follow-latest-action"]')
 type ScrollCall = ScrollToOptions | readonly [number, number | undefined]
 const isScrollOptions = (call: ScrollCall): call is ScrollToOptions => !Array.isArray(call)
 const suppressResizeObserverLoop = (event: ErrorEvent) => {
@@ -137,6 +140,7 @@ describe('MessageList initial settlement', () => {
     await frame()
     await frame()
 
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
     scrollParent.scrollTo({ top: 0, behavior: 'auto' })
     scrollParent.dispatchEvent(new Event('scroll'))
     await vi.waitFor(() => {
@@ -153,6 +157,275 @@ describe('MessageList initial settlement', () => {
     await frame()
 
     expect(scrollParent.scrollTop).toBe(0)
+    const action = followAction('1 new message')
+    expect(action).not.toBeNull()
+
+    action!.click()
+    await vi.waitFor(() => {
+      expect(atBottom(scrollParent)).toBe(true)
+      expect(followAction('Scroll to latest messages')).toBeNull()
+    })
+  })
+
+  it('centers the ArrowDown action across desktop and narrow list widths and retains its fade exit node', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows, 360))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+
+    const assertCentered = () => {
+      const action = followAction('Scroll to latest messages')
+      expect(action).not.toBeNull()
+      expect(action!.textContent).toBe('')
+      const viewportBounds = scrollParent.getBoundingClientRect()
+      const actionBounds = action!.getBoundingClientRect()
+      expect(
+        Math.abs(actionBounds.left + actionBounds.width / 2 - (viewportBounds.left + viewportBounds.width / 2))
+      ).toBeLessThan(1)
+    }
+
+    await vi.waitFor(assertCentered)
+    await view.rerender(harness(true, initialRows, 220))
+    await vi.waitFor(assertCentered)
+
+    const action = followActionElement()
+    expect(action).not.toBeNull()
+    expect(action!.className).toContain('transition-[opacity,grid-template-columns,gap,padding]')
+
+    scrollParent.scrollTo({ top: scrollParent.scrollHeight - scrollParent.clientHeight, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).toBeNull())
+    expect(followActionElement()).toBe(action)
+    expect(action!.dataset.state).toBe('closed')
+  })
+
+  it('shows only beyond a half-screen of remaining distance and hides at or below it', async () => {
+    const initialRows = history(32)
+    await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+
+    const maxScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight
+    const beyondHalfDistance = Math.ceil(scrollParent.clientHeight * 0.51)
+    scrollParent.scrollTo({ top: maxScrollTop - beyondHalfDistance, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+
+    const withinHalfDistance = Math.floor(scrollParent.clientHeight * 0.49)
+    scrollParent.scrollTo({ top: maxScrollTop - withinHalfDistance, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).toBeNull())
+    expect(followActionElement()?.dataset.state).toBe('closed')
+  })
+
+  it('forces the latest local projection to the bottom after a successful local send token', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows, 360, 240, 0))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+
+    await view.rerender(harness(true, [...initialRows, row('local-send', 88)], 360, 240, 1))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-local-send"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+      expect(followAction('Scroll to latest messages')).toBeNull()
+    })
+  })
+
+  it('keeps click recovery current when N2 arrives before the first smooth travel reaches the bottom', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    await frame()
+    await frame()
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => {
+      expect(scrollParent.scrollTop).toBe(0)
+      expect(document.querySelector('[data-testid="message-0"]')).not.toBeNull()
+    })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+
+    const rowsWithN1 = [...initialRows, row('n1', 72)]
+    await view.rerender(harness(true, rowsWithN1))
+    await vi.waitFor(() => expect(followAction('1 new message')).not.toBeNull())
+
+    followAction('1 new message')!.click()
+    await view.rerender(harness(true, [...rowsWithN1, row('n2', 104)]))
+
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-n2"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+        expect(followAction('Scroll to latest messages')).toBeNull()
+        expect(followAction('1 new message')).toBeNull()
+      },
+      { timeout: 5_000 }
+    )
+  })
+
+  it('cancels click recovery when a manual departure occurs before N2', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    await frame()
+    await frame()
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => {
+      expect(scrollParent.scrollTop).toBe(0)
+      expect(document.querySelector('[data-testid="message-0"]')).not.toBeNull()
+    })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+
+    const rowsWithN1 = [...initialRows, row('n1', 72)]
+    await view.rerender(harness(true, rowsWithN1))
+    await vi.waitFor(() => expect(followAction('1 new message')).not.toBeNull())
+
+    followAction('1 new message')!.click()
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await view.rerender(harness(true, [...rowsWithN1, row('n2', 104)]))
+
+    await vi.waitFor(() => {
+      expect(scrollParent.scrollTop).toBe(0)
+      expect(followAction('1 new message')).not.toBeNull()
+    })
+  })
+
+  it('shows the zero-count return action while browsing older messages', async () => {
+    const initialRows = history(24)
+    await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: 0, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+    followAction('Scroll to latest messages')!.click()
+
+    await vi.waitFor(() => {
+      expect(atBottom(scrollParent)).toBe(true)
+      expect(followAction('Scroll to latest messages')).toBeNull()
+    })
+  })
+
+  it('preserves the reading anchor and never counts a stable-key history prepend as a new tail message', async () => {
+    const currentRows = history(36)
+    const view = await render(harness(true, currentRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(scrollParent.scrollHeight).toBeGreaterThan(scrollParent.clientHeight))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-35"]')).not.toBeNull()
+      expect(getComputedStyle(list()!).visibility).not.toBe('hidden')
+    })
+    const manualScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight - 160
+    expect(manualScrollTop).toBeGreaterThan(0)
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: manualScrollTop, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+
+    const viewportBounds = scrollParent.getBoundingClientRect()
+    const anchor = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="message-"]')).find((row) => {
+      const bounds = row.getBoundingClientRect()
+      return bounds.top >= viewportBounds.top && bounds.bottom <= viewportBounds.bottom
+    })
+    expect(scrollParent.scrollTop).toBe(manualScrollTop)
+    expect(anchor).toBeDefined()
+    const anchorTestId = anchor!.dataset.testid!
+    const anchorOffset = anchor!.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top
+    const scrollHeightBeforePrepend = scrollParent.scrollHeight
+    await view.rerender(harness(true, [row('history-head-1', 88), row('history-head-2', 120), ...currentRows]))
+    const readAnchorPosition = () => {
+      const currentAnchor = document.querySelector<HTMLElement>(`[data-testid="${anchorTestId}"]`)
+      expect(currentAnchor).not.toBeNull()
+      return {
+        offset: currentAnchor!.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top,
+        scrollHeight: scrollParent.scrollHeight,
+        scrollTop: scrollParent.scrollTop
+      }
+    }
+    await vi.waitFor(() => {
+      const position = readAnchorPosition()
+
+      expect(position.scrollHeight).toBeGreaterThan(scrollHeightBeforePrepend)
+      expect(Math.abs(position.offset - anchorOffset)).toBeLessThan(2)
+    })
+
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+    expect(followAction('1 new message')).toBeNull()
+  })
+
+  it('rebases the reading anchor and counts the tail in one canonical head-plus-tail snapshot', async () => {
+    const currentRows = history(36)
+    const view = await render(harness(true, currentRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(scrollParent.scrollHeight).toBeGreaterThan(scrollParent.clientHeight))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-35"]')).not.toBeNull()
+      expect(getComputedStyle(list()!).visibility).not.toBe('hidden')
+    })
+    const manualScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight - 160
+    expect(manualScrollTop).toBeGreaterThan(0)
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    scrollParent.scrollTo({ top: manualScrollTop, behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+
+    const viewportBounds = scrollParent.getBoundingClientRect()
+    const anchor = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="message-"]')).find((row) => {
+      const bounds = row.getBoundingClientRect()
+      return bounds.top >= viewportBounds.top && bounds.bottom <= viewportBounds.bottom
+    })
+    expect(scrollParent.scrollTop).toBe(manualScrollTop)
+    expect(anchor).toBeDefined()
+    const anchorTestId = anchor!.dataset.testid!
+    const anchorOffset = anchor!.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top
+
+    await view.rerender(
+      harness(true, [row('history-head-1', 88), row('history-head-2', 120), ...currentRows, row('new-tail', 104)])
+    )
+
+    await vi.waitFor(() => {
+      const currentAnchor = document.querySelector<HTMLElement>(`[data-testid="${anchorTestId}"]`)
+      expect(currentAnchor).not.toBeNull()
+      expect(
+        Math.abs(currentAnchor!.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top - anchorOffset)
+      ).toBeLessThan(2)
+    })
+    await vi.waitFor(() => expect(followAction('1 new message')).not.toBeNull())
+    expect(followAction('Scroll to latest messages')).toBeNull()
   })
 
   it('first presents a non-empty short history at its natural position without a settlement scroll', async () => {
