@@ -399,10 +399,23 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
         }
         const preCutFrames = [...pendingFrames.values()]
         if (preCutFrames.length > 0) await Promise.allSettled(preCutFrames.map((frame) => frame.task))
-        const incompleteRoom = [...roomRecoveryRequirements.keys()].find(
+        const incompleteRooms = [...roomRecoveryRequirements.keys()].filter(
           (roomId) => rooms.has(roomId) && !roomRecoveries.has(roomId)
         )
-        if (incompleteRoom) throw new Error('Transport Room recovery is incomplete')
+        if (incompleteRooms.length > 0) {
+          // Retire only each exact currently-owned incomplete physical Room through the same
+          // ownership cut as retireRoomForPreparation before rejecting the original error.
+          for (const roomId of incompleteRooms) {
+            const handle = rooms.get(roomId)?.handle
+            if (handle === undefined) continue
+            currentRoom(roomId, handle)
+            await transport.retireRoomsForPreparation([roomId])
+            // A provider close event may already have removed this handle. Otherwise retirement
+            // owns the local routing cut only after the exact provider terminal succeeded.
+            if (rooms.get(roomId)?.handle === handle) forgetRoom(roomId)
+          }
+          throw new Error('Transport Room recovery is incomplete')
+        }
         const current = projection()
         current.recoveryFrames = preCutFrames
           .filter(

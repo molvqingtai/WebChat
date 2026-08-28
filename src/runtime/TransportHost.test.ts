@@ -177,6 +177,100 @@ describe('Offscreen TransportService', () => {
     ).rejects.toThrow('recovery is incomplete')
   })
 
+  it('retires only the exact incomplete current Room before rejecting, so the next rebind enters a clean generation', async () => {
+    const fixture = createTransport()
+    const retire = vi.fn(async (_roomIds: readonly string[]) => {})
+    fixture.transport.retireRoomsForPreparation = retire
+    const service = createTransportService(fixture.transport)
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    const worldRoomId = getWorldRoomId()
+    await service.join(worldRoomId, 'handle-world', binding.admission)
+    await service.requireRoomRecovery('room-a', 'https://example.com', binding.admission)
+    await service.join('room-a', 'handle-a', binding.admission)
+    await service.join('room-b', 'handle-b', binding.admission)
+
+    await expect(
+      service.rebind(
+        () => {},
+        () => {},
+        () => {},
+        () => {},
+        () => {}
+      )
+    ).rejects.toThrow('Transport Room recovery is incomplete')
+    expect(retire).toHaveBeenCalledExactlyOnceWith(['room-a'])
+
+    // The failure terminal retired only room-a; World and the unrelated Room survive, and the
+    // matching requirement/receipt are gone, so the next explicit rebind enters a clean cut.
+    const clean = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    expect(clean.rooms).toEqual([
+      { roomId: worldRoomId, handle: 'handle-world', peerId: `peer:${worldRoomId}` },
+      { roomId: 'room-b', handle: 'handle-b', peerId: 'peer:room-b' }
+    ])
+    expect(clean.roomRecovery.rooms).toEqual([])
+    await expect(
+      service.rebind(
+        () => {},
+        () => {},
+        () => {},
+        () => {},
+        () => {}
+      )
+    ).resolves.toBeDefined()
+  })
+
+  it('does not retire a successor handle installed before the failure cleanup settles', async () => {
+    const fixture = createTransport()
+    let releaseRetire!: () => void
+    const retire = vi.fn(
+      (_roomIds: readonly string[]) =>
+        new Promise<void>((resolve) => {
+          releaseRetire = resolve
+        })
+    )
+    fixture.transport.retireRoomsForPreparation = retire
+    const service = createTransportService(fixture.transport)
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    await service.requireRoomRecovery('room-a', 'https://example.com', binding.admission)
+    await service.join('room-a', 'handle-a', binding.admission)
+
+    const failing = service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledWith(['room-a']))
+    // The provider closes the observed handle and a successor is installed before the
+    // retirement terminal settles; cleanup must not cut the successor.
+    fixture.emit.close('room-a')
+    await service.join('room-a', 'handle-b', binding.admission)
+    releaseRetire()
+    await expect(failing).rejects.toThrow('Transport Room recovery is incomplete')
+
+    await expect(service.send('room-a', 'handle-b', 'payload')).resolves.toBeUndefined()
+    expect(fixture.transport.send).toHaveBeenCalledWith('room-a', 'payload', undefined)
+  })
+
   it('recovers only validated current sessions and fences a late prior-host write', async () => {
     const fixture = createTransport()
     const service = createTransportService(fixture.transport)
