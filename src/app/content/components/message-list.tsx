@@ -24,8 +24,26 @@ const itemKey = (_: number, item: ReactElement) => {
 
 // Follow layer: initial bottom comes from the provider's defaultScrollPosition="end"; manual
 // wheel/touch/keyboard intent and prepend anchoring are owned by the primitive. This layer only
-// adds the chat semantics the primitive does not carry: smooth-follow a new tail while settled at
-// the bottom, and count off-bottom arrivals behind one recovery action.
+// adds the chat semantics the primitive does not carry: one current follow authorization for a
+// new tail while settled at the bottom, and counting off-bottom arrivals behind one recovery
+// action.
+//
+// Authorization contract (Owner acceptance repair): an at-bottom tail append creates or updates
+// the single current authorization. While it is unsettled, self-caused transient off-bottom
+// geometry (the smooth motion itself, or a skipped row's intrinsic reserve converting to a
+// taller real height mid-travel) can neither increment the arrival count nor cancel it. A newer
+// tail commit or a native scroll event retargets only when scrollHeight/tail generation strictly
+// advanced; native `scrollend` settles it: bottom retires, otherwise one deduped smooth command
+// to the current max. Real input intent (wheel, touch move, navigation keys, scrollbar drag)
+// cancels it; pointer/click/selection and programmatic scroll events never do. Every callback is
+// fenced by the current authorization identity so a stale settlement cannot act on a newer one.
+const NAV_SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' '])
+
+interface FollowAuthorization {
+  tailKey: string
+  lastCommandedHeight: number
+}
+
 const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) => {
   const { scrollToEnd } = useMessageScroller()
   const scrollable = useMessageScrollerScrollable()
@@ -33,12 +51,71 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
   const atEndRef = useRef(atEnd)
   const previousTailKeyRef = useRef<string | null>(itemKeys.at(-1) ?? null)
   const previousCountRef = useRef(itemKeys.length)
+  const authorizationRef = useRef<FollowAuthorization | null>(null)
+  const actionRef = useRef<HTMLButtonElement>(null)
   const [newMessageCount, setNewMessageCount] = useState(0)
+
+  const viewportElement = () =>
+    actionRef.current
+      ?.closest('[data-slot="message-scroller"]')
+      ?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]') ?? null
 
   useEffect(() => {
     atEndRef.current = atEnd
     if (atEnd) setNewMessageCount(0)
   }, [atEnd])
+
+  // Native listeners: settlement (`scrollend`), mid-travel retargeting on strictly advanced
+  // geometry (scroll events), and real manual-intent cancellation. No timers, frame loops,
+  // debounce, polling, or Resize/Mutation observers are involved.
+  useEffect(() => {
+    const root = actionRef.current?.closest('[data-slot="message-scroller"]')
+    const viewport = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    if (!viewport) return
+
+    const cancelAuthorization = () => {
+      authorizationRef.current = null
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (NAV_SCROLL_KEYS.has(event.key)) cancelAuthorization()
+    }
+    const retargetIfAdvanced = () => {
+      const authorization = authorizationRef.current
+      if (!authorization) return
+      if (viewport.scrollHeight > authorization.lastCommandedHeight) {
+        authorizationRef.current = { ...authorization, lastCommandedHeight: viewport.scrollHeight }
+        scrollToEnd({ behavior: 'smooth' })
+      }
+    }
+    const onScrollEnd = () => {
+      const authorization = authorizationRef.current
+      if (!authorization) return
+      const settledAtBottom = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1
+      // Retire when physically bottom or when geometry no longer advances; otherwise issue the
+      // one deduped reconciliation command to the current max.
+      authorizationRef.current = null
+      if (!settledAtBottom && viewport.scrollHeight > authorization.lastCommandedHeight) {
+        authorizationRef.current = { ...authorization, lastCommandedHeight: viewport.scrollHeight }
+        scrollToEnd({ behavior: 'smooth' })
+      }
+    }
+
+    viewport.addEventListener('wheel', cancelAuthorization, { passive: true })
+    viewport.addEventListener('touchmove', cancelAuthorization, { passive: true })
+    viewport.addEventListener('keydown', onKeyDown)
+    viewport.addEventListener('scroll', retargetIfAdvanced, { passive: true })
+    viewport.addEventListener('scrollend', onScrollEnd)
+    const scrollbar = root?.querySelector('[data-slot="scroll-area-scrollbar"]')
+    scrollbar?.addEventListener('pointerdown', cancelAuthorization)
+    return () => {
+      viewport.removeEventListener('wheel', cancelAuthorization)
+      viewport.removeEventListener('touchmove', cancelAuthorization)
+      viewport.removeEventListener('keydown', onKeyDown)
+      viewport.removeEventListener('scroll', retargetIfAdvanced)
+      viewport.removeEventListener('scrollend', onScrollEnd)
+      scrollbar?.removeEventListener('pointerdown', cancelAuthorization)
+    }
+  }, [scrollToEnd])
 
   useEffect(() => {
     const previousTailKey = previousTailKeyRef.current
@@ -47,16 +124,24 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     previousCountRef.current = itemKeys.length
     const tailKey = previousTailKeyRef.current
     if (tailKey === null || tailKey === previousTailKey) return
+
     if (previousTailKey === null || !itemKeys.includes(previousTailKey)) {
-      // The list was replaced; there is no meaningful unread delta.
+      // The list was replaced; retire any stale authorization with the old identity.
+      authorizationRef.current = null
       setNewMessageCount(0)
       if (atEndRef.current) scrollToEnd({ behavior: 'auto' })
       return
     }
     // Tail append of one or more rows.
     const added = Math.max(1, itemKeys.length - previousCount)
-    if (atEndRef.current) {
+    if (atEndRef.current || authorizationRef.current) {
+      // Create or update the single current authorization: a newer append retargets the same
+      // current tail; while authorized, transient off-bottom geometry cannot count or cancel.
       setNewMessageCount(0)
+      authorizationRef.current = {
+        tailKey,
+        lastCommandedHeight: viewportElement()?.scrollHeight ?? authorizationRef.current?.lastCommandedHeight ?? 0
+      }
       scrollToEnd({ behavior: 'smooth' })
     } else {
       setNewMessageCount((count) => count + added)
@@ -80,8 +165,15 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
         newMessageCount > 0 ? 'grid-cols-[auto_1fr] gap-x-1.5 px-2' : 'grid-cols-[auto_0fr] gap-x-0 px-1.5',
         actionVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
       )}
+      ref={actionRef}
       onClick={() => {
+        // Recovery is an explicit user command to the bottom, so it also carries one current
+        // authorization: mid-travel reserve-to-real growth reconciles instead of latching.
         setNewMessageCount(0)
+        authorizationRef.current = {
+          tailKey: itemKeys.at(-1) ?? '',
+          lastCommandedHeight: viewportElement()?.scrollHeight ?? 0
+        }
         scrollToEnd({ behavior: 'smooth' })
       }}
     >

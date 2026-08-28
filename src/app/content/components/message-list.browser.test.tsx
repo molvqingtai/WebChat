@@ -375,3 +375,226 @@ describe('MessageList follow and recovery', () => {
     )
   })
 })
+
+describe('MessageList authorized follow and sole scroll ownership (acceptance repair)', () => {
+  it('settles at the physical bottom when a reserved tail row renders taller than the intrinsic fallback during the smooth follow', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    // Native smooth motion without command interception: the appended 140px row starts
+    // skipped with the 104px intrinsic reserve and becomes real while the smooth follow is
+    // traveling. The authorized follow must retarget/reconcile to the settled physical bottom
+    // instead of completing at the stale reserve target and latching the counter on.
+    await view.rerender(harness(true, [...initialRows, row('growing-append', 140)]))
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-growing-append"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+      },
+      { timeout: 5000 }
+    )
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+  })
+
+  it('exposes a single repository shadcn ScrollArea viewport as the engine geometry/command owner', async () => {
+    const initialRows = history(24)
+    await render(harness(true, initialRows))
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull(), {
+      timeout: 5000
+    })
+
+    // Exactly one repository ScrollArea viewport carries the engine viewport identity/state;
+    // no native or nested second overflow owner exists. The repository ScrollBar follows the
+    // Radix hover model, mounting on real scroll/hover of the scroll area.
+    const radixOwners = [...document.querySelectorAll<HTMLElement>('[data-radix-scroll-area-viewport]')]
+    expect(radixOwners).toHaveLength(1)
+    const owner = radixOwners[0]
+    expect(owner.getAttribute('data-slot')).toContain('message-scroller-viewport')
+    expect(owner.getAttribute('role')).toBe('region')
+    expect(owner.getAttribute('aria-label')).toBe('Messages')
+
+    const scrollerRoot = document.querySelector<HTMLElement>('[data-slot="message-scroller"]')!
+    const nestedOwners = [...scrollerRoot.querySelectorAll<HTMLElement>('*')].filter((element) => {
+      if (element === owner) return false
+      const overflowY = getComputedStyle(element).overflowY
+      return (overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight
+    })
+    expect(nestedOwners).toHaveLength(0)
+
+    owner.scrollTop = 100
+    owner.dispatchEvent(new Event('scroll', { bubbles: true }))
+    owner.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).not.toBeNull(), {
+      timeout: 5000
+    })
+  })
+
+  it('retargets the current authorization when a second tail lands while the follow is traveling', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    // The second append commits while the first follow is still traveling; the same current
+    // authorization must retarget to the newer tail (including its reserve-to-real growth).
+    await view.rerender(harness(true, [...initialRows, row('first-tail', 72)]))
+    await view.rerender(harness(true, [...initialRows, row('first-tail', 72), row('second-tail', 140)]))
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-second-tail"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+      },
+      { timeout: 5000 }
+    )
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+  })
+
+  it('does not cancel the authorized follow on programmatic scroll events', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    await view.rerender(harness(true, [...initialRows, row('programmatic-tail', 140)]))
+    // Bare scroll events carry no user intent; the authorized follow must still settle.
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-programmatic-tail"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+      },
+      { timeout: 5000 }
+    )
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+  })
+
+  it('cancels the authorized follow on real wheel, touch, navigation-key, or scrollbar-drag intent', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    const cancelIntents: Array<{ name: string; dispatch: () => void | Promise<void> }> = [
+      {
+        name: 'wheel',
+        dispatch: () => {
+          scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true }))
+        }
+      },
+      {
+        name: 'touch',
+        dispatch: () => {
+          scrollParent.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true }))
+        }
+      },
+      {
+        name: 'navigation-key',
+        dispatch: () => {
+          scrollParent.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+        }
+      },
+      {
+        name: 'scrollbar-drag',
+        dispatch: async () => {
+          // The repository ScrollBar follows the Radix hover model: it mounts only after a
+          // real scroll/hover of the scroll area. Drive a real nonzero scroll plus the native
+          // scroll/pointerenter inputs, then explicitly await and assert its presence before
+          // the drag. A programmatic offset change carries no user intent, so the authorized
+          // follow under test is not cancelled by this setup.
+          scrollParent.scrollTop = 100
+          scrollParent.dispatchEvent(new Event('scroll', { bubbles: true }))
+          scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+          await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).not.toBeNull(), {
+            timeout: 5000
+          })
+          document
+            .querySelector('[data-slot="scroll-area-scrollbar"]')!
+            .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+        }
+      }
+    ]
+
+    for (const [index, intent] of cancelIntents.entries()) {
+      // Re-settle at the bottom behind one authorized follow, then cancel it with real intent.
+      followAction()?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true), { timeout: 5000 })
+      await frame()
+
+      // The 140px intent row outgrows its 104px reserve mid-travel; with the authorization
+      // cancelled there is no reconciliation, so the list settles short of the bottom and the
+      // next append takes the ordinary off-bottom count path.
+      await view.rerender(harness(true, [...initialRows, row(`intent-${index}`, 140)]))
+      await intent.dispatch()
+      await view.rerender(
+        harness(true, [...initialRows, row(`intent-${index}`, 140), row(`after-intent-${index}`, 72)])
+      )
+      initialRows.push(row(`intent-${index}`, 140), row(`after-intent-${index}`, 72))
+      await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('1 new message'), {
+        timeout: 5000
+      })
+    }
+  })
+
+  it('does not cancel the authorized follow on benign pointer selection or clicks', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    await view.rerender(harness(true, [...initialRows, row('pointer-tail', 140)]))
+    for (const type of ['pointerdown', 'pointerup', 'click']) {
+      scrollParent.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true }))
+    }
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-pointer-tail"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+      },
+      { timeout: 5000 }
+    )
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+  })
+
+  it('fences stale authorization callbacks when the semantic list is replaced mid-travel', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    // The authorized follow for the old tail is still traveling when the room/list identity is
+    // replaced; no stale settlement or retarget may command the new list, which settles on its
+    // own initial end with a zero arrival count.
+    await view.rerender(harness(true, [...initialRows, row('old-room-tail', 140)]))
+    const roomRows = [row('room-b-1', 96), row('room-b-2', 120), row('room-b-3', 140)]
+    await view.rerender(harness(true, roomRows))
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-room-b-3"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+      },
+      { timeout: 5000 }
+    )
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+    expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+  })
+})

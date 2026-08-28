@@ -13,6 +13,7 @@ import { ArrowDownIcon } from 'lucide-react'
 
 import { cn } from '@/utils'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 function MessageScrollerProvider(props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>) {
   return <MessageScrollerPrimitive.Provider {...props} />
@@ -30,14 +31,31 @@ function MessageScroller({ className, ...props }: React.ComponentProps<typeof Me
 
 function MessageScrollerViewport({
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
   return (
-    <MessageScrollerPrimitive.Viewport
-      data-slot="message-scroller-viewport"
-      className={cn('size-full min-h-0 min-w-0 overflow-y-auto overscroll-contain contain-content', className)}
-      {...props}
-    />
+    // The repository shadcn Scroll Area is the single visible scroll container/scrollbar:
+    // through its `viewport` composition seam the engine Viewport renders with the
+    // repository's Radix Viewport as its `render` target (the engine's render seam is the
+    // Owner-authorized minimal dependency patch, mirroring the engine's own Button render
+    // prop). One DOM element then owns overflow, Radix ScrollBar measurement, the engine
+    // viewport ref, every geometry read, and every scroll command.
+    <ScrollArea
+      className="size-full min-h-0 min-w-0"
+      viewport={({ children: content, Viewport, viewportClassName, viewportRef }) => (
+        <MessageScrollerPrimitive.Viewport
+          render={<Viewport ref={viewportRef} className={viewportClassName} />}
+          data-slot="message-scroller-viewport"
+          className={cn('size-full min-h-0 min-w-0 contain-content', className)}
+          {...props}
+        >
+          {content}
+        </MessageScrollerPrimitive.Viewport>
+      )}
+    >
+      {children}
+    </ScrollArea>
   )
 }
 

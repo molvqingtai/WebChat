@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@shadcn/react@0.3.0': 37c12634f18864940a840d08baa8c48b7f42f51220f97e9635536b98e87994f6
+
 importers:
 
   .:
@@ -61,7 +64,7 @@ importers:
         version: 0.3.7(supports-color@7.2.0)
       '@shadcn/react':
         specifier: 0.3.0
-        version: 0.3.0(@types/react@19.2.17)(react@19.2.7)
+        version: 0.3.0(patch_hash=37c12634f18864940a840d08baa8c48b7f42f51220f97e9635536b98e87994f6)(@types/react@19.2.17)(react@19.2.7)
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.3)
@@ -7560,7 +7563,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@shadcn/react@0.3.0(@types/react@19.2.17)(react@19.2.7)':
+  '@shadcn/react@0.3.0(patch_hash=37c12634f18864940a840d08baa8c48b7f42f51220f97e9635536b98e87994f6)(@types/react@19.2.17)(react@19.2.7)':
     optionalDependencies:
       '@types/react': 19.2.17
       react: 19.2.7
