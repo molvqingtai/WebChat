@@ -69,15 +69,25 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
   // geometry (scroll events), and real manual-intent cancellation. No timers, frame loops,
   // debounce, polling, or Resize/Mutation observers are involved.
   useEffect(() => {
-    const root = actionRef.current?.closest('[data-slot="message-scroller"]')
+    const root = actionRef.current?.closest<HTMLElement>('[data-slot="message-scroller"]')
     const viewport = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
-    if (!viewport) return
+    if (!viewport || !root) return
 
     const cancelAuthorization = () => {
       authorizationRef.current = null
     }
     const onKeyDown = (event: KeyboardEvent) => {
       if (NAV_SCROLL_KEYS.has(event.key)) cancelAuthorization()
+    }
+    // Scrollbar drags cancel through one delegated listener on the constantly mounted
+    // scroller root: the repository Radix ScrollBar only mounts on hover/scroll, so binding
+    // the scrollbar element itself at mount would miss every later drag. Only pointerdowns
+    // originating inside the repository scrollbar subtree cancel; every other pointer target
+    // (messages, content, viewport, selection, clicks) leaves the authorization untouched.
+    const onPointerDown = (event: PointerEvent) => {
+      if ((event.target as HTMLElement | null)?.closest('[data-slot="scroll-area-scrollbar"]')) {
+        cancelAuthorization()
+      }
     }
     const retargetIfAdvanced = () => {
       const authorization = authorizationRef.current
@@ -105,15 +115,14 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     viewport.addEventListener('keydown', onKeyDown)
     viewport.addEventListener('scroll', retargetIfAdvanced, { passive: true })
     viewport.addEventListener('scrollend', onScrollEnd)
-    const scrollbar = root?.querySelector('[data-slot="scroll-area-scrollbar"]')
-    scrollbar?.addEventListener('pointerdown', cancelAuthorization)
+    root.addEventListener('pointerdown', onPointerDown)
     return () => {
       viewport.removeEventListener('wheel', cancelAuthorization)
       viewport.removeEventListener('touchmove', cancelAuthorization)
       viewport.removeEventListener('keydown', onKeyDown)
       viewport.removeEventListener('scroll', retargetIfAdvanced)
       viewport.removeEventListener('scrollend', onScrollEnd)
-      scrollbar?.removeEventListener('pointerdown', cancelAuthorization)
+      root.removeEventListener('pointerdown', onPointerDown)
     }
   }, [scrollToEnd])
 

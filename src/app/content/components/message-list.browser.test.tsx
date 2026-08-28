@@ -510,19 +510,20 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
       {
         name: 'scrollbar-drag',
         dispatch: async () => {
-          // The repository ScrollBar follows the Radix hover model: it mounts only after a
-          // real scroll/hover of the scroll area. Drive a real nonzero scroll plus the native
-          // scroll/pointerenter inputs, then explicitly await and assert its presence before
-          // the drag. A programmatic offset change carries no user intent, so the authorized
-          // follow under test is not cancelled by this setup.
+          // The repository Radix ScrollBar follows the hover model: it is absent at rest and
+          // mounts only on real scroll/hover. Prove the full path — no mounted scrollbar, an
+          // outstanding authorized follow, real overflow, hover-mount, then a drag on its
+          // actual thumb descendant. The delegated root listener (production) is the only
+          // thing that can cancel here; without it this control fails.
+          expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull()
+          scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
           scrollParent.scrollTop = 100
           scrollParent.dispatchEvent(new Event('scroll', { bubbles: true }))
-          scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
-          await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).not.toBeNull(), {
+          await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-thumb"]')).not.toBeNull(), {
             timeout: 5000
           })
           document
-            .querySelector('[data-slot="scroll-area-scrollbar"]')!
+            .querySelector('[data-slot="scroll-area-thumb"]')!
             .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
         }
       }
