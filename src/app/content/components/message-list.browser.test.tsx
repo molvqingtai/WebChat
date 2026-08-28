@@ -514,15 +514,13 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
       {
         name: 'scrollbar-drag',
         dispatch: async () => {
-          // The repository Radix ScrollBar follows the hover model: it is absent at rest and
-          // mounts only on real scroll/hover. Prove the full path — no mounted scrollbar, an
-          // outstanding authorized follow, real overflow, hover-mount, then a drag on its
-          // actual thumb descendant. The delegated root listener (production) is the only
-          // thing that can cancel here; without it this control fails.
-          expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull()
+          // The repository Radix ScrollBar mounts only on a Root pointerenter (hover model).
+          // Issue the control's one production-testing pointerenter, require the real
+          // scrollbar/thumb to mount, then drag its actual thumb descendant. The delegated
+          // root listener (production) is the only thing that can cancel the follow
+          // authorization here; without it the next tail follows instead of counting and this
+          // control fails.
           scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
-          scrollParent.scrollTop = 100
-          scrollParent.dispatchEvent(new Event('scroll', { bubbles: true }))
           await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-thumb"]')).not.toBeNull(), {
             timeout: 5000
           })
@@ -539,10 +537,31 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
       await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true), { timeout: 5000 })
       await frame()
 
+      if (intent.name === 'scrollbar-drag') {
+        // Fixture normalization before any authorization: establish a known mounted state,
+        // then dismiss it through Radix's own hover lifecycle so the absent state is
+        // deterministic regardless of stray pointer activity on the runner. This cycle is
+        // pre-authorization and cannot satisfy the later drag-cancellation contract.
+        scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+        await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-thumb"]')).not.toBeNull(), {
+          timeout: 5000
+        })
+        scrollParent.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))
+        await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull(), {
+          timeout: 5000
+        })
+        expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull()
+      }
+
       // The 140px intent row outgrows its 104px reserve mid-travel; with the authorization
       // cancelled there is no reconciliation, so the list settles short of the bottom and the
       // next append takes the ordinary off-bottom count path.
       await view.rerender(harness(true, [...initialRows, row(`intent-${index}`, 140)]))
+      if (intent.name === 'scrollbar-drag') {
+        // Authorization and its scrolls must not mount the hover-type bar: it mounts only on
+        // a Root pointerenter, which this control issues explicitly below.
+        expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull()
+      }
       await intent.dispatch()
       await view.rerender(
         harness(true, [...initialRows, row(`intent-${index}`, 140), row(`after-intent-${index}`, 72)])
