@@ -58,18 +58,6 @@ const hasSuffix = (suffix: readonly string[], values: readonly string[]) =>
 const hasSameItems = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index])
 
-const getVisibleItemLocation = (scrollParent: HTMLElement) => {
-  const viewportBounds = scrollParent.getBoundingClientRect()
-  const item = Array.from(scrollParent.querySelectorAll<HTMLElement>('[data-index]')).find((item) => {
-    const bounds = item.getBoundingClientRect()
-    return bounds.top >= viewportBounds.top && bounds.bottom <= viewportBounds.bottom
-  })
-  const index = Number(item?.dataset.index)
-  if (!item || !Number.isInteger(index)) return null
-
-  return { index, offset: viewportBounds.top - item.getBoundingClientRect().top }
-}
-
 type HeadAnchor = {
   index: number
   key: string
@@ -88,6 +76,7 @@ type TailBottomSnapshot = {
   follow: boolean
   itemKeys: readonly string[]
   localSend: boolean
+  recoveryPending: boolean
   restore: 'pending' | 'commanded' | null
   scrollPending: boolean
   viewport: HTMLElement
@@ -207,7 +196,6 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
   const latestRecoveryRef = useRef(false)
   const newMessageCountRef = useRef(0)
   const lastHistorySyncIntentRef = useRef<string | null>(null)
-  const localSendFrameRef = useRef<number | null>(null)
   const localSendIntentRef = useRef(false)
   const hasChildren = children !== null && children !== undefined
   const itemKeys = useMemo(
@@ -328,6 +316,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
     activeViewportRef.current = scrollParentRef
 
     if (isTailAppend && scrollParentRef) {
+      const recoveryPending = tailBottomSnapshotRef.current?.recoveryPending ?? false
       const atBottom = isViewportAtBottom(scrollParentRef)
       const localSend = localSendIntentRef.current
       localSendIntentRef.current = false
@@ -339,6 +328,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
         follow,
         itemKeys,
         localSend,
+        recoveryPending,
         restore: null,
         scrollPending: true,
         viewport: scrollParentRef
@@ -476,10 +466,9 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
 
     if (isViewportAtBottom(scrollParentRef)) return
 
-    if (!getVisibleItemLocation(scrollParentRef)) return
-
+    const top = scrollParentRef.scrollTop
     initialScrollCancellationPendingRef.current = false
-    runScrollCommand({ command: 'cancel-initial', top: scrollParentRef.scrollTop })
+    runScrollCommand({ command: 'cancel-initial', top })
     clearInitialScrollCancellation()
   }, [clearInitialScrollCancellation, runScrollCommand, scrollParentRef])
 
@@ -658,17 +647,20 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
     updateViewportActionState
   ])
 
-  const scheduleLocalSendFollow = useCallback(
-    (snapshot: TailBottomSnapshot) => {
-      if (localSendFrameRef.current !== null) cancelAnimationFrame(localSendFrameRef.current)
-      localSendFrameRef.current = requestAnimationFrame(() => {
-        localSendFrameRef.current = null
-        if (!isCurrentTailBottomSnapshot(snapshot)) return
-        handleFollowLatest()
-      })
-    },
-    [handleFollowLatest, isCurrentTailBottomSnapshot]
-  )
+  const handleFollowAction = useCallback(() => {
+    const tailBottomSnapshot = tailBottomSnapshotRef.current
+    if (
+      tailBottomSnapshot &&
+      !tailBottomSnapshot.localSend &&
+      tailBottomSnapshot.scrollPending &&
+      isCurrentTailBottomSnapshot(tailBottomSnapshot)
+    ) {
+      tailBottomSnapshot.recoveryPending = true
+      clearNewMessageCount()
+      return
+    }
+    handleFollowLatest()
+  }, [clearNewMessageCount, handleFollowLatest, isCurrentTailBottomSnapshot])
 
   const handleAtBottomStateChange = useCallback(
     (reportedAtBottom: boolean, settledAtBottom?: boolean) => {
@@ -802,9 +794,6 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
         return
       }
       handleAtBottomStateChange(actionState.isAtBottom, actionState.isAtBottom)
-      if (tailBottomSnapshot.localSend && isCurrentTailBottomSnapshot(tailBottomSnapshot)) {
-        scheduleLocalSendFollow(tailBottomSnapshot)
-      }
     }
 
     if (headRebaseTransaction) {
@@ -848,7 +837,6 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
     isCurrentListCallback,
     isCurrentTailBottomSnapshot,
     runScrollCommand,
-    scheduleLocalSendFollow,
     scrollParentRef,
     updateViewportActionState
   ])
@@ -859,6 +847,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
       if (
         !tailBottomSnapshot ||
         !tailBottomSnapshot.scrollPending ||
+        totalCount <= 0 ||
         totalCount !== itemKeys.length ||
         !isCurrentTailBottomSnapshot(tailBottomSnapshot)
       ) {
@@ -866,7 +855,21 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
       }
 
       tailBottomSnapshot.scrollPending = false
-      if (latestRecoveryRef.current || tailBottomSnapshot.follow) {
+      if (tailBottomSnapshot.recoveryPending || tailBottomSnapshot.localSend) {
+        cancelTailBottomSnapshot(tailBottomSnapshot)
+        manualScrollIntentRef.current = false
+        manualScrollActiveRef.current = false
+        manualScrollPausedRef.current = false
+        pendingProgrammaticScrollRef.current = null
+        cancelHeadRebaseTransaction()
+        latestRecoveryRef.current = true
+        clearInitialScrollCancellation()
+        clearHeadAnchor()
+        clearNewMessageCount()
+        updateViewportActionState()
+        return { index: totalCount - 1, align: 'end' as const, behavior: 'smooth' as const }
+      }
+      if ((latestRecoveryRef.current && !tailBottomSnapshot.localSend) || tailBottomSnapshot.follow) {
         return { index: totalCount - 1, align: 'end' as const, behavior: 'auto' as const }
       }
 
@@ -874,21 +877,36 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
       if (anchor && itemKeys[anchor.index] === anchor.key) tailBottomSnapshot.restore = 'pending'
       return false
     },
-    [isCurrentTailBottomSnapshot, itemKeys.length]
+    [
+      cancelHeadRebaseTransaction,
+      cancelTailBottomSnapshot,
+      clearHeadAnchor,
+      clearInitialScrollCancellation,
+      clearNewMessageCount,
+      isCurrentTailBottomSnapshot,
+      itemKeys.length,
+      updateViewportActionState
+    ]
   )
 
   useRemeshEvent(chatRoomDomain.event.SendTextMessageEvent, () => {
+    const tailBottomSnapshot = tailBottomSnapshotRef.current
+    if (
+      tailBottomSnapshot &&
+      !tailBottomSnapshot.localSend &&
+      !tailBottomSnapshot.recoveryPending &&
+      !tailBottomSnapshot.follow &&
+      isCurrentTailBottomSnapshot(tailBottomSnapshot)
+    ) {
+      tailBottomSnapshot.localSend = true
+      if (!tailBottomSnapshot.scrollPending) {
+        cancelTailBottomSnapshot(tailBottomSnapshot)
+        handleFollowLatest()
+      }
+      return
+    }
     localSendIntentRef.current = true
   })
-
-  useLayoutEffect(
-    () => () => {
-      if (localSendFrameRef.current === null) return
-      cancelAnimationFrame(localSendFrameRef.current)
-      localSendFrameRef.current = null
-    },
-    []
-  )
 
   useLayoutEffect(() => {
     if (!historySyncIntent || !hasChildren || !scrollParentRef) return
@@ -933,6 +951,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
             isScrolling={handleIsScrolling}
             totalListHeightChanged={handleTotalListHeightChanged}
             scrollIntoViewOnChange={handleScrollIntoViewOnChange}
+            followOutput={false}
             firstItemIndex={firstItemIndex}
             initialTopMostItemIndex={initialTopMostItemIndex}
             data={children}
@@ -958,7 +977,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
             hasNewMessages ? 'grid-cols-[auto_1fr] gap-x-1.5 px-2' : 'grid-cols-[auto_0fr] gap-x-0 px-1.5',
             isFollowActionVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
           )}
-          onClick={handleFollowLatest}
+          onClick={handleFollowAction}
         >
           <ArrowDownIcon size={14} aria-hidden="true" />
           {hasNewMessages ? (

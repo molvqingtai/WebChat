@@ -1,0 +1,90 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index fa294a6c2546197da0d1c4139d753104f4f02539..661e102e569b0aef842931864ec50c9167f6fe4c 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1103,7 +1103,7 @@ const fe = q(
+     },
+     { log: p }
+   ]) => {
+-    const I = U(), w = U(), R = T(0);
++    const I = U(), w = U(), R = T(0), cancelRetainedLocation = U(), ownScrollCommands = new WeakSet();
+     let h = null, f = null, a = null;
+     function S() {
+       h !== null && (h(), h = null), a !== null && (a(), a = null), f && (clearTimeout(f), f = null), M(c, !1);
+@@ -1135,17 +1135,32 @@ const fe = q(
+               });
+             } else
+               h = yt(x(e, $o(150)), Ft);
+-            return f = setTimeout(() => {
++            const Zt = { behavior: K, top: St };
++            return ownScrollCommands.add(Zt), f = setTimeout(() => {
+               S();
+-            }, 1200), M(c, !0), O("scrolling from index to", { behavior: K, index: lt, top: St }, mt.DEBUG), { behavior: K, top: St };
++            }, 1200), M(c, !0), O("scrolling from index to", { behavior: K, index: lt, top: St }, mt.DEBUG), Zt;
+           }
+         )
+       ),
+       d
++    ), Y(
++      cancelRetainedLocation,
++      () => {
++        S();
++      }
++    ), Y(
++      x(
++        d,
++        P((Zt) => !ownScrollCommands.has(Zt))
++      ),
++      () => {
++        S();
++      }
+     ), {
+       scrollTargetReached: w,
+       scrollToIndex: I,
+-      topListHeight: R
++      topListHeight: R,
++      cancelRetainedLocation
+     };
+   },
+   rt(Lt, It, Gt),
+@@ -1807,7 +1822,7 @@ const Xo = (t, e) => typeof t == "function" ? yn(t(e)) : e && yn(t), Jo = q(
+   ([
+     { listRefresh: t, totalCount: e, fixedItemSize: n, data: o },
+     { atBottomState: r, isAtBottom: s },
+-    { scrollToIndex: i },
++    { scrollToIndex: i, cancelRetainedLocation: retireRetainedLocation },
+     { scrolledToInitialItem: l },
+     { didMount: c, propsReady: d },
+     { log: m },
+@@ -1843,9 +1858,7 @@ const Xo = (t, e) => typeof t == "function" ? yn(t(e)) : e && yn(t), Jo = q(
+       }
+     );
+     function a(y) {
+-      const k = yt(r, (u) => {
+-        y && !u.atBottom && u.notAtBottomBecause === "SIZE_INCREASED" && h === null && (it(m)("scrolling to bottom due to increased size", {}, mt.DEBUG), f("auto"));
+-      });
++      const k = yt(r, () => {});
+       setTimeout(k, 100);
+     }
+     Y(
+@@ -1881,7 +1894,10 @@ const Xo = (t, e) => typeof t == "function" ? yn(t(e)) : e && yn(t), Jo = q(
+       x(
+         at(x(H, Ut(1)), c),
+         $(W(S), l, v, p),
+-        B(([[y, k], u, g, C, L]) => k && g && u?.({ context: L, totalCount: y, scrollingInProgress: C })),
++        B(([[y, k], u, g, C, L]) => {
++          k && g && u && M(retireRetainedLocation, null);
++          return k && g && u?.({ context: L, totalCount: y, scrollingInProgress: C });
++        }),
+         P((y) => !!y),
+         zt(0)
+       ),
+@@ -2294,7 +2310,7 @@ function Xe(t, e, n) {
+   function d(f) {
+     return s.reduce((a, S) => (a[S] = (H) => {
+       const y = f[e.methods[S]];
+-      M(y, H);
++      S === "scrollTo" && f.cancelRetainedLocation !== void 0 && M(f.cancelRetainedLocation, null), M(y, H);
+     }, a), {});
+   }
+   function m(f) {

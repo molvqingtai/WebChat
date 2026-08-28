@@ -26,10 +26,6 @@ const virtuosoCalls = vi.hoisted(() => [] as VirtuosoCall[])
 const virtuosoLifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }))
 const virtuosoRenderControl = vi.hoisted(() => ({ beforeParentLayout: null as (() => void) | null }))
 const localSendEventControl = vi.hoisted(() => ({ listener: null as null | (() => void) }))
-const animationFrameControl = vi.hoisted(() => ({
-  callbacks: new Map<number, FrameRequestCallback>(),
-  nextId: 0
-}))
 const virtuosoHandle = vi.hoisted(() => ({
   autoscrollToBottom: vi.fn(),
   getState: vi.fn(),
@@ -39,6 +35,10 @@ const virtuosoHandle = vi.hoisted(() => ({
   scrollToIndex: vi.fn()
 }))
 const scrollAreaRefControl = vi.hoisted(() => ({ manual: false, ref: null as Ref<HTMLDivElement> | null }))
+
+vi.mock('@number-flow/react', () => ({
+  default: ({ value }: { value: number }) => createElement('span', null, value)
+}))
 
 vi.mock('remesh-react', () => ({
   useRemeshDomain: () => ({ event: { SendTextMessageEvent: 'send-text-message' } }),
@@ -206,12 +206,6 @@ const reportTotalListHeightChanged = () => {
 }
 const reportScrollIntoViewOnChange = (totalCount = latestVirtuosoCall().data.length) =>
   latestVirtuosoCall().scrollIntoViewOnChange?.({ context: undefined, scrollingInProgress: false, totalCount })
-const runNextAnimationFrame = () => {
-  const next = animationFrameControl.callbacks.entries().next().value as [number, FrameRequestCallback] | undefined
-  if (!next) throw new TypeError('Expected an animation frame')
-  animationFrameControl.callbacks.delete(next[0])
-  act(() => next[1](0))
-}
 const emitLocalSend = () => act(() => localSendEventControl.listener?.())
 const beginManualScroll = (view: ReturnType<typeof render>) => {
   act(() => view.getByTestId('scroll-area').dispatchEvent(new Event('wheel', { bubbles: true })))
@@ -244,20 +238,6 @@ beforeEach(() => {
   virtuosoRenderControl.beforeParentLayout = null
   virtuosoLifecycle.unmounts = 0
   vi.clearAllMocks()
-  animationFrameControl.callbacks.clear()
-  animationFrameControl.nextId = 0
-  vi.stubGlobal(
-    'requestAnimationFrame',
-    vi.fn((callback: FrameRequestCallback) => {
-      const id = animationFrameControl.nextId++
-      animationFrameControl.callbacks.set(id, callback)
-      return id
-    })
-  )
-  vi.stubGlobal(
-    'cancelAnimationFrame',
-    vi.fn((id: number) => animationFrameControl.callbacks.delete(id))
-  )
   scrollAreaRefControl.manual = false
   scrollAreaRefControl.ref = null
   localSendEventControl.listener = null
@@ -338,7 +318,7 @@ describe('MessageList Virtuoso integration', () => {
       rows = [...rows, ...testRows(source)]
       view.rerender(createElement(MessageList, null, rows))
 
-      expect(latestVirtuosoCall().followOutput).toBeUndefined()
+      expect(latestVirtuosoCall().followOutput).toBe(false)
       expect(reportScrollIntoViewOnChange()).toEqual({
         index: latestVirtuosoCall().data.length - 1,
         align: 'end',
@@ -355,7 +335,7 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...rows]))
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
@@ -386,17 +366,45 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
 
     const button = view.getByRole('button', { name: '1 new message' })
     expect(button.textContent).toContain('1 new message')
     expect(button.className).toContain('grid-cols-[auto_1fr]')
     expect(button.className).toContain('transition-[opacity,grid-template-columns,gap,padding]')
+    expect(reportScrollIntoViewOnChange()).toBe(false)
     act(() => button.click())
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledWith({ index: 1, align: 'end', behavior: 'smooth' })
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
+  })
+
+  it('defers an unsettled received-tail click to the current list-change location', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    reportBottom(true)
+    beginManualScroll(view)
+    reportBottom(false)
+    vi.clearAllMocks()
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('received-unsettled')]))
+    act(() => view.getByRole('button', { name: '1 new message' }).click())
+
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    let location: ReturnType<typeof reportScrollIntoViewOnChange>
+    act(() => {
+      location = reportScrollIntoViewOnChange()
+    })
+    expect(location).toEqual({
+      index: latestVirtuosoCall().data.length - 1,
+      align: 'end',
+      behavior: 'smooth'
+    })
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
   })
 
   it('keeps click recovery current when N2 appends before it reaches the bottom', () => {
@@ -413,14 +421,18 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...rowsWithN1, ...testRows('n2')]))
 
-    expect(reportScrollIntoViewOnChange()).toEqual({
+    let location: ReturnType<typeof reportScrollIntoViewOnChange>
+    act(() => {
+      location = reportScrollIntoViewOnChange()
+    })
+    expect(location).toEqual({
       index: latestVirtuosoCall().data.length - 1,
       align: 'end',
-      behavior: 'auto'
+      behavior: 'smooth'
     })
     expect(virtuosoHandle.autoscrollToBottom).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
     expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
   })
@@ -442,7 +454,7 @@ describe('MessageList Virtuoso integration', () => {
     view.rerender(createElement(MessageList, null, [...rowsWithN1, ...testRows('n2')]))
 
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
   })
 
@@ -472,7 +484,7 @@ describe('MessageList Virtuoso integration', () => {
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('n1')]))
 
     expect(view.getByTestId('follow-latest-action').getAttribute('aria-label')).toBe('1 new message')
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
   })
 
   it('caps the pending tail count at 99+ in the follow action label', () => {
@@ -541,7 +553,7 @@ describe('MessageList Virtuoso integration', () => {
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
@@ -625,7 +637,7 @@ describe('MessageList Virtuoso integration', () => {
     virtuosoRenderControl.beforeParentLayout = null
     setScrollMetrics(scrollParent, 100, 1_000, 0)
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
     expect(reportScrollIntoViewOnChange()).toBe(false)
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
@@ -721,57 +733,53 @@ describe('MessageList Virtuoso integration', () => {
     scrollParent.scrollTop = 100
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
 
     reportScrolling(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
   })
 
-  it('follows the current latest item in the frame after its tail height settles', () => {
+  it('returns a semantic latest location for a current local tail at the bottom', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
     reportBottom(true)
     vi.clearAllMocks()
 
     emitLocalSend()
-
-    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(animationFrameControl.callbacks).toHaveLength(0)
-
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
-    expect(animationFrameControl.callbacks).toHaveLength(0)
-    reportTotalListHeightChanged()
-    expect(animationFrameControl.callbacks).toHaveLength(1)
-    runNextAnimationFrame()
+    let location: ReturnType<typeof reportScrollIntoViewOnChange>
+    act(() => {
+      location = reportScrollIntoViewOnChange()
+    })
 
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
-      index: 1,
+    expect(location).toEqual({
+      index: latestVirtuosoCall().data.length - 1,
       align: 'end',
       behavior: 'smooth'
     })
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
-  it('does not issue a local-send command immediately and uses the latest count after an off-bottom projection', () => {
+  it('returns a semantic latest location for a current local tail off-bottom', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
     reportBottom(false)
     vi.clearAllMocks()
 
     emitLocalSend()
-
-    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(animationFrameControl.callbacks).toHaveLength(0)
-
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
+    let location: ReturnType<typeof reportScrollIntoViewOnChange>
+    act(() => {
+      location = reportScrollIntoViewOnChange()
+    })
 
-    reportTotalListHeightChanged()
-    runNextAnimationFrame()
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
-      index: 1,
+    expect(location).toEqual({
+      index: latestVirtuosoCall().data.length - 1,
       align: 'end',
       behavior: 'smooth'
     })
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
   it('consumes one committed History intent off-bottom with one existing follow command', () => {
@@ -827,7 +835,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(view.getByTestId('follow-latest-action').dataset.state).toBe('closed')
   })
 
-  it('coalesces successful local sends before the next frame and cancels a pending frame on unmount', () => {
+  it('returns one semantic latest location for each committed local tail', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
     reportBottom(true)
@@ -835,12 +843,12 @@ describe('MessageList Virtuoso integration', () => {
 
     emitLocalSend()
     emitLocalSend()
-    expect(animationFrameControl.callbacks).toHaveLength(0)
-
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
-    reportTotalListHeightChanged()
-    runNextAnimationFrame()
-    expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
+    let firstLocation: ReturnType<typeof reportScrollIntoViewOnChange>
+    act(() => {
+      firstLocation = reportScrollIntoViewOnChange()
+    })
+    expect(firstLocation).toEqual({ index: latestVirtuosoCall().data.length - 1, align: 'end', behavior: 'smooth' })
 
     emitLocalSend()
     view.rerender(
@@ -850,10 +858,12 @@ describe('MessageList Virtuoso integration', () => {
         ...testRows('second-local-projection')
       ])
     )
-    reportTotalListHeightChanged()
-    expect(animationFrameControl.callbacks).toHaveLength(1)
-    view.unmount()
-    expect(animationFrameControl.callbacks).toHaveLength(0)
+    let secondLocation: ReturnType<typeof reportScrollIntoViewOnChange>
+    act(() => {
+      secondLocation = reportScrollIntoViewOnChange()
+    })
+    expect(secondLocation).toEqual({ index: latestVirtuosoCall().data.length - 1, align: 'end', behavior: 'smooth' })
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
   it('does not let a received tail schedule local-send recovery', () => {
@@ -867,8 +877,7 @@ describe('MessageList Virtuoso integration', () => {
     const receivedRows = [...initialRows, ...testRows('same-user-tail-sync')]
     view.rerender(createElement(MessageList, null, receivedRows))
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(animationFrameControl.callbacks).toHaveLength(0)
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
   })
 
   it('waits for manual scrolling to end before following once at the bottom', () => {
@@ -941,7 +950,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(virtuosoHandle.scrollTo).toHaveBeenCalledWith({ top: 100 })
   })
 
-  it('does not replace initial settlement when every visible item is partial', () => {
+  it('cancels initial settlement once at the current scroll position when every visible item is partial', () => {
     const view = render(createElement(MessageList, null, testRows('partial-top', 'partial-bottom')))
     const scrollParent = latestVirtuosoCall().customScrollParent!
     const topItem = view.container.querySelector<HTMLElement>('[data-index="0"]')!
@@ -961,7 +970,8 @@ describe('MessageList Virtuoso integration', () => {
     act(() => scrollParent.dispatchEvent(new Event('scroll')))
     reportBottom(false)
 
-    expect(virtuosoHandle.scrollTo).not.toHaveBeenCalled()
+    expect(virtuosoHandle.scrollTo).toHaveBeenCalledTimes(1)
+    expect(virtuosoHandle.scrollTo).toHaveBeenCalledWith({ top: 100 })
   })
 
   it('keeps the action through intermediate head-rebase geometry until programmatic completion', () => {
@@ -1425,14 +1435,14 @@ describe('MessageList Virtuoso integration', () => {
     const pausedTailRows = [...rows, ...testRows('new-tail')]
     view.rerender(createElement(MessageList, null, pausedTailRows))
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
 
     view.rerender(createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...pausedTailRows]))
     setBounds(view.container.querySelector<HTMLElement>('[data-index="3"]')!, 40, 100)
     act(() => latestVirtuosoCall().totalListHeightChanged?.(1_000))
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(virtuosoHandle.scrollBy).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollIntoView).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollTo).not.toHaveBeenCalled()
@@ -1471,7 +1481,7 @@ describe('MessageList Virtuoso integration', () => {
       createElement(MessageList, null, [...testRows('history-1', 'history-2'), ...rows, ...testRows('new-tail')])
     )
 
-    expect(latestVirtuosoCall().followOutput).toBeUndefined()
+    expect(latestVirtuosoCall().followOutput).toBe(false)
     expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
     expect(virtuosoHandle.scrollBy).not.toHaveBeenCalled()
     expect(virtuosoHandle.scrollIntoView).not.toHaveBeenCalled()

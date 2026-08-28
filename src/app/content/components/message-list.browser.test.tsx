@@ -48,6 +48,11 @@ const harness = (historyReady: boolean, children: ReactElement[], width = 360, h
 const viewport = () => document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!
 const list = () => document.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
 const atBottom = (element: HTMLElement) => element.scrollTop + element.clientHeight >= element.scrollHeight - 1
+const settledAtBottom = (element: HTMLElement, tailTestId: string) =>
+  document.querySelector(`[data-testid="${tailTestId}"]`) !== null &&
+  element.scrollHeight > element.clientHeight &&
+  element.scrollTop > 0 &&
+  atBottom(element)
 const followAction = (label: string) =>
   document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"][data-state="open"]`)
 const followActionElement = () => document.querySelector<HTMLButtonElement>('[data-testid="follow-latest-action"]')
@@ -125,7 +130,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, initialRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
     scrollParent.dispatchEvent(new Event('scroll'))
     await frame()
     await frame()
@@ -184,7 +189,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, initialRows, 360))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
     scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
     scrollParent.scrollTo({ top: 0, behavior: 'auto' })
     scrollParent.dispatchEvent(new Event('scroll'))
@@ -220,7 +225,7 @@ describe('MessageList initial settlement', () => {
     await render(harness(true, initialRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-31')).toBe(true))
     scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
 
     const maxScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight
@@ -241,7 +246,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, initialRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
     scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
     scrollParent.scrollTo({ top: 0, behavior: 'auto' })
     scrollParent.dispatchEvent(new Event('scroll'))
@@ -261,7 +266,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, initialRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
     const offsets = [scrollParent.scrollTop]
     let sampling = true
     const sample = () => {
@@ -288,7 +293,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, initialRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
     scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
     const maxScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight
     scrollParent.scrollTo({ top: maxScrollTop - Math.ceil(scrollParent.clientHeight * 0.51), behavior: 'auto' })
@@ -316,14 +321,50 @@ describe('MessageList initial settlement', () => {
     expect(offsets.some((offset) => offset > initialOffset && offset < finalOffset)).toBe(true)
   })
 
+  it('keeps a second local projection smooth while the first local follow is in flight', async () => {
+    const initialRows = history(24)
+    const firstLocal = row('local-send-first', 720)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
+    const initialOffset = scrollParent.scrollTop
+    localSendEventControl.listener?.()
+    await view.rerender(harness(true, [...initialRows, firstLocal]))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-local-send-first"]')).not.toBeNull()
+      expect(scrollParent.scrollTop).toBeGreaterThan(initialOffset)
+      expect(atBottom(scrollParent)).toBe(false)
+    })
+
+    const secondStart = scrollParent.scrollTop
+    const offsets: number[] = []
+    let sampling = true
+    const sample = () => {
+      if (document.querySelector('[data-testid="message-local-send-second"]')) offsets.push(scrollParent.scrollTop)
+      if (sampling) requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+
+    localSendEventControl.listener?.()
+    await view.rerender(harness(true, [...initialRows, firstLocal, row('local-send-second', 88)]))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-local-send-second"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    sampling = false
+
+    const finalOffset = scrollParent.scrollTop
+    expect(offsets.some((offset) => offset > secondStart && offset < finalOffset)).toBe(true)
+  })
+
   it('keeps click recovery current when N2 arrives before the first smooth travel reaches the bottom', async () => {
     const initialRows = history(24)
     const view = await render(harness(true, initialRows))
     const scrollParent = viewport()
 
     await vi.waitFor(() => {
-      expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull()
-      expect(atBottom(scrollParent)).toBe(true)
+      expect(settledAtBottom(scrollParent, 'message-23')).toBe(true)
     })
     await frame()
     await frame()
@@ -361,8 +402,7 @@ describe('MessageList initial settlement', () => {
     const scrollParent = viewport()
 
     await vi.waitFor(() => {
-      expect(document.querySelector('[data-testid="message-23"]')).not.toBeNull()
-      expect(atBottom(scrollParent)).toBe(true)
+      expect(settledAtBottom(scrollParent, 'message-23')).toBe(true)
     })
     await frame()
     await frame()
@@ -397,7 +437,7 @@ describe('MessageList initial settlement', () => {
     await render(harness(true, initialRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-23')).toBe(true))
     scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
     scrollParent.scrollTo({ top: 0, behavior: 'auto' })
     scrollParent.dispatchEvent(new Event('scroll'))
@@ -416,7 +456,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, currentRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-35')).toBe(true))
     await vi.waitFor(() => expect(scrollParent.scrollHeight).toBeGreaterThan(scrollParent.clientHeight))
     await vi.waitFor(() => {
       expect(document.querySelector('[data-testid="message-35"]')).not.toBeNull()
@@ -464,7 +504,7 @@ describe('MessageList initial settlement', () => {
     const view = await render(harness(true, currentRows))
     const scrollParent = viewport()
 
-    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await vi.waitFor(() => expect(settledAtBottom(scrollParent, 'message-35')).toBe(true))
     await vi.waitFor(() => expect(scrollParent.scrollHeight).toBeGreaterThan(scrollParent.clientHeight))
     await vi.waitFor(() => {
       expect(document.querySelector('[data-testid="message-35"]')).not.toBeNull()

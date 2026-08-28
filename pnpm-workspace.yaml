@@ -5,3 +5,5 @@ allowBuilds:
   spawn-sync: true
   utf-8-validate: true
   wxt: true
+patchedDependencies:
+  react-virtuoso@4.18.12: patches/react-virtuoso@4.18.12.patch
