@@ -66,10 +66,14 @@ const suppressResizeObserverLoop = (event: ErrorEvent) => {
 }
 
 beforeEach(() => window.addEventListener('error', suppressResizeObserverLoop))
-afterEach(() => {
+afterEach(async () => {
   Element.prototype.scrollTo = originalScrollTo
   window.removeEventListener('error', suppressResizeObserverLoop)
-  cleanup()
+  // `cleanup()` returns a Promise: it must be awaited so a preceding test's React root (and
+  // any hover-mounted Radix scrollbar) is actually detached before the next render queries
+  // the shared document. Un-awaited cleanup leaks that DOM into later controls on slower
+  // runners (same leak class as the historical stable-key prepend fixture).
+  await cleanup()
 })
 
 describe('MessageList initial settlement', () => {
@@ -511,14 +515,11 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
         name: 'scrollbar-drag',
         dispatch: async () => {
           // The repository Radix ScrollBar follows the hover model: it is absent at rest and
-          // mounts on real scroll/hover with a hide delay. Prove the full path — deterministically
-          // reach the no-mounted-scrollbar state first (a preceding follow's scroll-hide window may
-          // still be active), then hold an outstanding authorized follow, real overflow,
-          // hover-mount, and a drag on its actual thumb descendant. The delegated root listener
-          // (production) is the only thing that can cancel here; without it this control fails.
-          await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull(), {
-            timeout: 5000
-          })
+          // mounts only on real scroll/hover. Prove the full path — no mounted scrollbar, an
+          // outstanding authorized follow, real overflow, hover-mount, then a drag on its
+          // actual thumb descendant. The delegated root listener (production) is the only
+          // thing that can cancel here; without it this control fails.
+          expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull()
           scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
           scrollParent.scrollTop = 100
           scrollParent.dispatchEvent(new Event('scroll', { bubbles: true }))
