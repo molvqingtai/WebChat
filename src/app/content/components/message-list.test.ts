@@ -643,6 +643,33 @@ describe('MessageList Virtuoso integration', () => {
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
   })
 
+  it('applies the ordinary bottom transition when tail settlement reads the physical bottom before the follow command', () => {
+    const initialRows = testRows('current')
+    const view = render(createElement(MessageList, null, initialRows))
+    const scrollParent = latestVirtuosoCall().customScrollParent!
+    reportBottom(true)
+
+    setScrollMetrics(scrollParent, 100, 1_000, 0)
+    act(() => scrollParent.dispatchEvent(new Event('scroll')))
+    expect(view.getByRole('button', { name: 'Scroll to latest messages' })).not.toBeNull()
+
+    view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('new-message')]))
+    expect(view.getByRole('button', { name: '1 new message' })).not.toBeNull()
+
+    // The matching tail height settlement reads the physical bottom before scrollIntoViewOnChange.
+    setScrollMetrics(scrollParent, 100, 1_000, 900)
+    reportTotalListHeightChanged()
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
+    expect(view.queryByRole('button', { name: 'Scroll to latest messages' })).toBeNull()
+
+    // The remaining command owner must not override the settled physical-bottom result.
+    expect(reportScrollIntoViewOnChange()).toBe(false)
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    reportBottom(true)
+    expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
+    expect(view.queryByRole('button', { name: '1 new message' })).toBeNull()
+  })
+
   it('settles combined head and tail owners from one height callback', () => {
     const rows = testRows('current-1', 'current-2', 'current-3')
     const view = render(createElement(MessageList, null, rows))

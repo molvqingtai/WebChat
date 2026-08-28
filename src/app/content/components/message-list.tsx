@@ -793,6 +793,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
         atBottomRef.current = actionState.isAtBottom
         return
       }
+      tailBottomSnapshot.atBottom = actionState.isAtBottom
       handleAtBottomStateChange(actionState.isAtBottom, actionState.isAtBottom)
     }
 
@@ -874,7 +875,8 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
       }
 
       const anchor = tailBottomSnapshot.anchor
-      if (anchor && itemKeys[anchor.index] === anchor.key) tailBottomSnapshot.restore = 'pending'
+      if (anchor && !tailBottomSnapshot.atBottom && itemKeys[anchor.index] === anchor.key)
+        tailBottomSnapshot.restore = 'pending'
       return false
     },
     [
