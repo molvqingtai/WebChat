@@ -728,7 +728,7 @@ describe('MessageList Virtuoso integration', () => {
     expect(latestVirtuosoCall().followOutput).toBeUndefined()
   })
 
-  it('follows the current latest item in the next frame after a successful local send', () => {
+  it('follows the current latest item in the frame after its tail height settles', () => {
     const initialRows = testRows('current')
     const view = render(createElement(MessageList, null, initialRows))
     reportBottom(true)
@@ -737,9 +737,12 @@ describe('MessageList Virtuoso integration', () => {
     emitLocalSend()
 
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(animationFrameControl.callbacks).toHaveLength(1)
+    expect(animationFrameControl.callbacks).toHaveLength(0)
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
+    expect(animationFrameControl.callbacks).toHaveLength(0)
+    reportTotalListHeightChanged()
+    expect(animationFrameControl.callbacks).toHaveLength(1)
     runNextAnimationFrame()
 
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
@@ -758,10 +761,11 @@ describe('MessageList Virtuoso integration', () => {
     emitLocalSend()
 
     expect(virtuosoHandle.scrollToIndex).not.toHaveBeenCalled()
-    expect(animationFrameControl.callbacks).toHaveLength(1)
+    expect(animationFrameControl.callbacks).toHaveLength(0)
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
 
+    reportTotalListHeightChanged()
     runNextAnimationFrame()
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledExactlyOnceWith({
       index: 1,
@@ -831,13 +835,22 @@ describe('MessageList Virtuoso integration', () => {
 
     emitLocalSend()
     emitLocalSend()
-    expect(animationFrameControl.callbacks).toHaveLength(1)
+    expect(animationFrameControl.callbacks).toHaveLength(0)
 
     view.rerender(createElement(MessageList, null, [...initialRows, ...testRows('local-projection')]))
+    reportTotalListHeightChanged()
     runNextAnimationFrame()
     expect(virtuosoHandle.scrollToIndex).toHaveBeenCalledTimes(1)
 
     emitLocalSend()
+    view.rerender(
+      createElement(MessageList, null, [
+        ...initialRows,
+        ...testRows('local-projection'),
+        ...testRows('second-local-projection')
+      ])
+    )
+    reportTotalListHeightChanged()
     expect(animationFrameControl.callbacks).toHaveLength(1)
     view.unmount()
     expect(animationFrameControl.callbacks).toHaveLength(0)

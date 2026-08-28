@@ -87,6 +87,7 @@ type TailBottomSnapshot = {
   callbackPending: boolean
   follow: boolean
   itemKeys: readonly string[]
+  localSend: boolean
   restore: 'pending' | 'commanded' | null
   scrollPending: boolean
   viewport: HTMLElement
@@ -207,6 +208,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
   const newMessageCountRef = useRef(0)
   const lastHistorySyncIntentRef = useRef<string | null>(null)
   const localSendFrameRef = useRef<number | null>(null)
+  const localSendIntentRef = useRef(false)
   const hasChildren = children !== null && children !== undefined
   const itemKeys = useMemo(
     () => (hasChildren ? children.map((item, index) => itemKey(index, item)) : []),
@@ -327,13 +329,16 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
 
     if (isTailAppend && scrollParentRef) {
       const atBottom = isViewportAtBottom(scrollParentRef)
-      const follow = canFollowLatest(atBottom)
+      const localSend = localSendIntentRef.current
+      localSendIntentRef.current = false
+      const follow = !localSend && canFollowLatest(atBottom)
       const snapshot = {
         anchor: follow ? null : getHeadAnchor(scrollParentRef, previousItemKeysRef.current ?? itemKeys),
         atBottom,
         callbackPending: true,
         follow,
         itemKeys,
+        localSend,
         restore: null,
         scrollPending: true,
         viewport: scrollParentRef
@@ -631,6 +636,40 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
     updateViewportActionState
   ])
 
+  const handleFollowLatest = useCallback(() => {
+    manualScrollIntentRef.current = false
+    manualScrollActiveRef.current = false
+    manualScrollPausedRef.current = false
+    pendingProgrammaticScrollRef.current = null
+    cancelHeadRebaseTransaction()
+    latestRecoveryRef.current = true
+    clearInitialScrollCancellation()
+    clearHeadAnchor()
+    clearNewMessageCount()
+    updateViewportActionState()
+    const index = currentItemKeysRef.current.length - 1
+    if (index >= 0) runScrollCommand({ command: 'follow-latest', index })
+  }, [
+    cancelHeadRebaseTransaction,
+    clearHeadAnchor,
+    clearInitialScrollCancellation,
+    clearNewMessageCount,
+    runScrollCommand,
+    updateViewportActionState
+  ])
+
+  const scheduleLocalSendFollow = useCallback(
+    (snapshot: TailBottomSnapshot) => {
+      if (localSendFrameRef.current !== null) cancelAnimationFrame(localSendFrameRef.current)
+      localSendFrameRef.current = requestAnimationFrame(() => {
+        localSendFrameRef.current = null
+        if (!isCurrentTailBottomSnapshot(snapshot)) return
+        handleFollowLatest()
+      })
+    },
+    [handleFollowLatest, isCurrentTailBottomSnapshot]
+  )
+
   const handleAtBottomStateChange = useCallback(
     (reportedAtBottom: boolean, settledAtBottom?: boolean) => {
       const tailBottomSnapshot = tailBottomSnapshotRef.current
@@ -755,7 +794,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
       if (!tailBottomSnapshot || !hasCurrentTailBottomSnapshot || !tailBottomSnapshot.callbackPending) return
 
       tailBottomSnapshot.callbackPending = false
-      if (latestRecoveryRef.current) {
+      if (latestRecoveryRef.current && !tailBottomSnapshot.localSend) {
         return
       }
       if (headRebaseTransactionRef.current) {
@@ -763,6 +802,9 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
         return
       }
       handleAtBottomStateChange(actionState.isAtBottom, actionState.isAtBottom)
+      if (tailBottomSnapshot.localSend && isCurrentTailBottomSnapshot(tailBottomSnapshot)) {
+        scheduleLocalSendFollow(tailBottomSnapshot)
+      }
     }
 
     if (headRebaseTransaction) {
@@ -806,6 +848,7 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
     isCurrentListCallback,
     isCurrentTailBottomSnapshot,
     runScrollCommand,
+    scheduleLocalSendFollow,
     scrollParentRef,
     updateViewportActionState
   ])
@@ -834,34 +877,8 @@ const MessageList: FC<MessageListProps> = ({ children, historySyncIntent = null,
     [isCurrentTailBottomSnapshot, itemKeys.length]
   )
 
-  const handleFollowLatest = useCallback(() => {
-    manualScrollIntentRef.current = false
-    manualScrollActiveRef.current = false
-    manualScrollPausedRef.current = false
-    pendingProgrammaticScrollRef.current = null
-    cancelHeadRebaseTransaction()
-    latestRecoveryRef.current = true
-    clearInitialScrollCancellation()
-    clearHeadAnchor()
-    clearNewMessageCount()
-    updateViewportActionState()
-    const index = currentItemKeysRef.current.length - 1
-    if (index >= 0) runScrollCommand({ command: 'follow-latest', index })
-  }, [
-    cancelHeadRebaseTransaction,
-    clearHeadAnchor,
-    clearInitialScrollCancellation,
-    clearNewMessageCount,
-    runScrollCommand,
-    updateViewportActionState
-  ])
-
   useRemeshEvent(chatRoomDomain.event.SendTextMessageEvent, () => {
-    if (localSendFrameRef.current !== null) cancelAnimationFrame(localSendFrameRef.current)
-    localSendFrameRef.current = requestAnimationFrame(() => {
-      localSendFrameRef.current = null
-      handleFollowLatest()
-    })
+    localSendIntentRef.current = true
   })
 
   useLayoutEffect(

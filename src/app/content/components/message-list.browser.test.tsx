@@ -256,6 +256,66 @@ describe('MessageList initial settlement', () => {
     })
   })
 
+  it('animates a local projection from the previous bottom to its new physical bottom', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    const offsets = [scrollParent.scrollTop]
+    let sampling = true
+    const sample = () => {
+      offsets.push(scrollParent.scrollTop)
+      if (sampling) requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+
+    localSendEventControl.listener?.()
+    await view.rerender(harness(true, [...initialRows, row('local-send-bottom', 88)]))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-local-send-bottom"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    sampling = false
+
+    const finalOffset = scrollParent.scrollTop
+    const initialOffset = offsets[0]
+    expect(offsets.some((offset) => offset > initialOffset && offset < finalOffset)).toBe(true)
+  })
+
+  it('animates a local projection from more than half a viewport away from the bottom', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+    const maxScrollTop = scrollParent.scrollHeight - scrollParent.clientHeight
+    scrollParent.scrollTo({ top: maxScrollTop - Math.ceil(scrollParent.clientHeight * 0.51), behavior: 'auto' })
+    scrollParent.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(followAction('Scroll to latest messages')).not.toBeNull())
+
+    const offsets = [scrollParent.scrollTop]
+    let sampling = true
+    const sample = () => {
+      offsets.push(scrollParent.scrollTop)
+      if (sampling) requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+
+    localSendEventControl.listener?.()
+    await view.rerender(harness(true, [...initialRows, row('local-send-far', 88)]))
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="message-local-send-far"]')).not.toBeNull()
+      expect(atBottom(scrollParent)).toBe(true)
+    })
+    sampling = false
+
+    const finalOffset = scrollParent.scrollTop
+    const initialOffset = offsets[0]
+    expect(offsets.some((offset) => offset > initialOffset && offset < finalOffset)).toBe(true)
+  })
+
   it('keeps click recovery current when N2 arrives before the first smooth travel reaches the bottom', async () => {
     const initialRows = history(24)
     const view = await render(harness(true, initialRows))
