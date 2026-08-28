@@ -511,11 +511,14 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
         name: 'scrollbar-drag',
         dispatch: async () => {
           // The repository Radix ScrollBar follows the hover model: it is absent at rest and
-          // mounts only on real scroll/hover. Prove the full path — no mounted scrollbar, an
-          // outstanding authorized follow, real overflow, hover-mount, then a drag on its
-          // actual thumb descendant. The delegated root listener (production) is the only
-          // thing that can cancel here; without it this control fails.
-          expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull()
+          // mounts on real scroll/hover with a hide delay. Prove the full path — deterministically
+          // reach the no-mounted-scrollbar state first (a preceding follow's scroll-hide window may
+          // still be active), then hold an outstanding authorized follow, real overflow,
+          // hover-mount, and a drag on its actual thumb descendant. The delegated root listener
+          // (production) is the only thing that can cancel here; without it this control fails.
+          await vi.waitFor(() => expect(document.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull(), {
+            timeout: 5000
+          })
           scrollParent.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
           scrollParent.scrollTop = 100
           scrollParent.dispatchEvent(new Event('scroll', { bubbles: true }))
