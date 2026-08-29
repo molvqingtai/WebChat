@@ -11,20 +11,140 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import { flushSync } from 'react-dom'
-import { MinusIcon, RotateCcwIcon, PlusIcon, XIcon } from 'lucide-react'
+import { MinusIcon, PlusIcon, RotateCwIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  MEDIA_PREVIEW_MAX_ZOOM,
-  MEDIA_PREVIEW_MIN_ZOOM,
-  clampMediaPreviewTransform,
-  getMediaPreviewLayout,
-  getMediaPreviewPanBounds,
-  zoomMediaPreviewAtPoint,
-  zoomMediaPreviewBetweenPoints,
-  type MediaPreviewPoint,
-  type MediaPreviewSize,
-  type MediaPreviewTransform
-} from './media-preview-geometry'
+
+export const MEDIA_PREVIEW_MARGIN = 24
+export const MEDIA_PREVIEW_MIN_ZOOM = 0.25
+export const MEDIA_PREVIEW_MAX_ZOOM = 4
+export const MEDIA_PREVIEW_TOOLBAR_GAP = 12
+export const MEDIA_PREVIEW_TOOLBAR_HEIGHT = 36
+
+export interface MediaPreviewSize {
+  width: number
+  height: number
+}
+
+export interface MediaPreviewPoint {
+  x: number
+  y: number
+}
+
+export interface MediaPreviewRect extends MediaPreviewPoint, MediaPreviewSize {}
+
+export interface MediaPreviewFit extends MediaPreviewSize {
+  availableWidth: number
+  availableHeight: number
+}
+
+export interface MediaPreviewTransform extends MediaPreviewPoint {
+  zoom: number
+}
+
+export interface MediaPreviewLayout {
+  interaction: MediaPreviewRect
+  toolbar: MediaPreviewRect
+  center: MediaPreviewPoint
+  fit: MediaPreviewFit | null
+}
+
+export type MediaPreviewRotation = 0 | 90 | 180 | 270
+
+const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value))
+
+const fitMediaPreview = (natural: MediaPreviewSize, available: MediaPreviewSize): MediaPreviewFit => {
+  const scale =
+    natural.width > 0 && natural.height > 0
+      ? Math.min(1, available.width / natural.width, available.height / natural.height)
+      : 0
+
+  return {
+    availableWidth: available.width,
+    availableHeight: available.height,
+    width: natural.width * scale,
+    height: natural.height * scale
+  }
+}
+
+export const getMediaPreviewLayout = (
+  natural: MediaPreviewSize | null,
+  viewport: MediaPreviewSize
+): MediaPreviewLayout => {
+  const width = Math.max(0, viewport.width - MEDIA_PREVIEW_MARGIN * 2)
+  const toolbarY = Math.max(0, viewport.height - MEDIA_PREVIEW_MARGIN - MEDIA_PREVIEW_TOOLBAR_HEIGHT)
+  const height = Math.max(0, toolbarY - MEDIA_PREVIEW_TOOLBAR_GAP - MEDIA_PREVIEW_MARGIN)
+  const interaction = { x: MEDIA_PREVIEW_MARGIN, y: MEDIA_PREVIEW_MARGIN, width, height }
+
+  return {
+    interaction,
+    toolbar: {
+      x: MEDIA_PREVIEW_MARGIN,
+      y: toolbarY,
+      width,
+      height: MEDIA_PREVIEW_TOOLBAR_HEIGHT
+    },
+    center: {
+      x: interaction.x + interaction.width / 2,
+      y: interaction.y + interaction.height / 2
+    },
+    fit: natural ? fitMediaPreview(natural, interaction) : null
+  }
+}
+
+export const getMediaPreviewPanBounds = (fit: MediaPreviewFit, zoom: number): MediaPreviewPoint => ({
+  x: Math.max(0, (fit.width * zoom - fit.availableWidth) / 2),
+  y: Math.max(0, (fit.height * zoom - fit.availableHeight) / 2)
+})
+
+export const clampMediaPreviewTransform = (
+  transform: MediaPreviewTransform,
+  fit: MediaPreviewFit
+): MediaPreviewTransform => {
+  const zoom = clamp(transform.zoom, MEDIA_PREVIEW_MIN_ZOOM, MEDIA_PREVIEW_MAX_ZOOM)
+  const bounds = getMediaPreviewPanBounds(fit, zoom)
+  return {
+    zoom,
+    x: bounds.x === 0 ? 0 : clamp(transform.x, -bounds.x, bounds.x),
+    y: bounds.y === 0 ? 0 : clamp(transform.y, -bounds.y, bounds.y)
+  }
+}
+
+export const zoomMediaPreviewBetweenPoints = (
+  transform: MediaPreviewTransform,
+  nextZoom: number,
+  sourceFocalPoint: MediaPreviewPoint,
+  targetFocalPoint: MediaPreviewPoint,
+  fit: MediaPreviewFit
+) => {
+  const zoom = clamp(nextZoom, MEDIA_PREVIEW_MIN_ZOOM, MEDIA_PREVIEW_MAX_ZOOM)
+  const ratio = zoom / transform.zoom
+  return clampMediaPreviewTransform(
+    {
+      zoom,
+      x: targetFocalPoint.x - (sourceFocalPoint.x - transform.x) * ratio,
+      y: targetFocalPoint.y - (sourceFocalPoint.y - transform.y) * ratio
+    },
+    fit
+  )
+}
+
+export const zoomMediaPreviewAtPoint = (
+  transform: MediaPreviewTransform,
+  nextZoom: number,
+  focalPoint: MediaPreviewPoint,
+  fit: MediaPreviewFit
+): MediaPreviewTransform => zoomMediaPreviewBetweenPoints(transform, nextZoom, focalPoint, focalPoint, fit)
+
+export const getMediaPreviewRotatedSize = (
+  natural: MediaPreviewSize | null,
+  rotation: MediaPreviewRotation
+): MediaPreviewSize | null => {
+  if (!natural || rotation === 0 || rotation === 180) return natural
+  return { width: natural.height, height: natural.width }
+}
+
+export const rotateMediaPreviewClockwise = (rotation: MediaPreviewRotation): MediaPreviewRotation =>
+  ((rotation + 90) % 360) as MediaPreviewRotation
 
 const ZOOM_STEP = 0.25
 const PREVIEW_BACKDROP_LAYER = 2147483646
@@ -57,6 +177,7 @@ interface PreviewState {
   current: CurrentPreview | null
   naturalSize: MediaPreviewSize | null
   transform: MediaPreviewTransform
+  rotation: MediaPreviewRotation
   viewport: MediaPreviewSize
 }
 
@@ -112,6 +233,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     current: null,
     naturalSize: null,
     transform: initialTransform,
+    rotation: 0,
     viewport: { width: window.innerWidth, height: window.innerHeight }
   }))
   const stateRef = useRef(state)
@@ -129,9 +251,13 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const suppressBackdropClickRef = useRef(false)
   const suppressionTimerRef = useRef<number | null>(null)
 
+  const effectiveNaturalSize = useMemo(
+    () => getMediaPreviewRotatedSize(state.naturalSize, state.rotation),
+    [state.naturalSize, state.rotation]
+  )
   const layout = useMemo(
-    () => getMediaPreviewLayout(state.naturalSize, state.viewport),
-    [state.naturalSize, state.viewport]
+    () => getMediaPreviewLayout(effectiveNaturalSize, state.viewport),
+    [effectiveNaturalSize, state.viewport]
   )
   const fit = layout.fit
   const renderedTransform = useMemo(
@@ -245,7 +371,13 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         selectedPreviewRef.current = null
         phaseRef.current = 'closed'
         commitState(
-          { current: null, naturalSize: null, transform: initialTransform, viewport: stateRef.current.viewport },
+          {
+            current: null,
+            naturalSize: null,
+            transform: initialTransform,
+            rotation: 0,
+            viewport: stateRef.current.viewport
+          },
           synchronous
         )
         if (closing.activator.isConnected) closing.activator.focus({ preventScroll: true })
@@ -341,6 +473,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
             current,
             naturalSize: null,
             transform: initialTransform,
+            rotation: 0,
             viewport
           },
           synchronous
@@ -451,7 +584,10 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       const currentState = stateRef.current
       const viewport = { width: window.innerWidth, height: window.innerHeight }
       if (currentState.viewport.width === viewport.width && currentState.viewport.height === viewport.height) return
-      const nextFit = getMediaPreviewLayout(currentState.naturalSize, viewport).fit
+      const nextFit = getMediaPreviewLayout(
+        getMediaPreviewRotatedSize(currentState.naturalSize, currentState.rotation),
+        viewport
+      ).fit
       commitState(
         {
           ...currentState,
@@ -484,6 +620,23 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   )
 
   const resetTransform = useCallback(() => commitTransform(initialTransform), [commitTransform])
+
+  const rotateClockwise = useCallback(() => {
+    const currentState = stateRef.current
+    const rotation = rotateMediaPreviewClockwise(currentState.rotation)
+    const nextFit = getMediaPreviewLayout(
+      getMediaPreviewRotatedSize(currentState.naturalSize, rotation),
+      currentState.viewport
+    ).fit
+    const transform = nextFit
+      ? clampMediaPreviewTransform(currentState.transform, nextFit)
+      : {
+          zoom: Math.min(MEDIA_PREVIEW_MAX_ZOOM, Math.max(MEDIA_PREVIEW_MIN_ZOOM, currentState.transform.zoom)),
+          x: 0,
+          y: 0
+        }
+    commitState({ ...currentState, rotation, transform })
+  }, [commitState])
 
   useLayoutEffect(() => {
     if (!previewOpen) return
@@ -690,13 +843,16 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     inlineSize: `${layout.interaction.width}px`,
     blockSize: `${layout.interaction.height}px`
   }
+  const quarterTurn = state.rotation === 90 || state.rotation === 270
   const imageStyle = {
-    inlineSize: fit ? `${fit.width}px` : 'auto',
-    blockSize: fit ? `${fit.height}px` : 'auto',
-    maxInlineSize: `${layout.interaction.width}px`,
-    maxBlockSize: `${layout.interaction.height}px`,
+    inlineSize: fit ? `${quarterTurn ? fit.height : fit.width}px` : 'auto',
+    blockSize: fit ? `${quarterTurn ? fit.width : fit.height}px` : 'auto',
+    maxInlineSize: `${quarterTurn ? layout.interaction.height : layout.interaction.width}px`,
+    maxBlockSize: `${quarterTurn ? layout.interaction.width : layout.interaction.height}px`,
     objectFit: 'contain' as const,
-    transform: `translate3d(${renderedTransform.x}px, ${renderedTransform.y}px, 0) scale(${renderedTransform.zoom})`,
+    transform: `translate3d(${renderedTransform.x}px, ${renderedTransform.y}px, 0) scale(${renderedTransform.zoom})${
+      state.rotation === 0 ? '' : ` rotate(${state.rotation}deg)`
+    }`,
     transformOrigin: 'center'
   }
   const toolbarBandStyle = {
@@ -790,11 +946,11 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
               variant="secondary"
               size="icon"
               className="rounded-full shadow"
-              aria-label="Reset zoom"
-              title="Reset zoom"
-              onClick={resetTransform}
+              aria-label="Rotate clockwise"
+              title="Rotate clockwise"
+              onClick={rotateClockwise}
             >
-              <RotateCcwIcon />
+              <RotateCwIcon />
             </Button>
             <Button
               type="button"

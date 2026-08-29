@@ -2,18 +2,18 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { createRef, useCallback, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Markdown } from './markdown'
-import {
-  clampMediaPreviewTransform,
-  getMediaPreviewLayout,
-  getMediaPreviewPanBounds,
-  zoomMediaPreviewAtPoint
-} from './media-preview-geometry'
 import MediaPreview, {
   MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY,
   MEDIA_PREVIEW_TRANSITION_PART,
   MediaPreviewContext,
+  clampMediaPreviewTransform,
+  getMediaPreviewLayout,
+  getMediaPreviewPanBounds,
+  getMediaPreviewRotatedSize,
+  rotateMediaPreviewClockwise,
   type MediaPreviewHandle,
-  type MediaPreviewRequest
+  type MediaPreviewRequest,
+  zoomMediaPreviewAtPoint
 } from './media-preview'
 
 const firstSource = 'data:image/png;base64,iVBORw0KGgo='
@@ -155,6 +155,35 @@ describe('MediaPreview geometry', () => {
       }
     })
   })
+
+  it('exports clockwise geometry that swaps the effective fit and clamps both quarter turns', () => {
+    const viewport = { width: 900, height: 700 }
+    const landscape = { width: 1200, height: 600 }
+    const portrait = { width: 600, height: 1200 }
+
+    expect(rotateMediaPreviewClockwise(0)).toBe(90)
+    expect(rotateMediaPreviewClockwise(90)).toBe(180)
+    expect(rotateMediaPreviewClockwise(180)).toBe(270)
+    expect(rotateMediaPreviewClockwise(270)).toBe(0)
+    expect(getMediaPreviewRotatedSize(landscape, 90)).toEqual({ width: 600, height: 1200 })
+    expect(getMediaPreviewRotatedSize(landscape, 270)).toEqual({ width: 600, height: 1200 })
+
+    const landscapeFit = getMediaPreviewLayout(getMediaPreviewRotatedSize(landscape, 90), viewport).fit!
+    expect(landscapeFit).toEqual({ availableWidth: 852, availableHeight: 604, width: 302, height: 604 })
+    expect(clampMediaPreviewTransform({ zoom: 2, x: 999, y: 999 }, landscapeFit)).toEqual({
+      zoom: 2,
+      x: 0,
+      y: 302
+    })
+
+    const portraitFit = getMediaPreviewLayout(getMediaPreviewRotatedSize(portrait, 270), viewport).fit!
+    expect(portraitFit).toEqual({ availableWidth: 852, availableHeight: 604, width: 852, height: 426 })
+    expect(clampMediaPreviewTransform({ zoom: 2, x: 999, y: 999 }, portraitFit)).toEqual({
+      zoom: 2,
+      x: 426,
+      y: 124
+    })
+  })
 })
 
 describe('MediaPreview ownership and settlement', () => {
@@ -173,10 +202,13 @@ describe('MediaPreview ownership and settlement', () => {
       naturalHeight: { configurable: true, value: 1000 }
     })
     fireEvent.load(firstImage)
-    ;['Zoom out', 'Zoom in', 'Reset zoom', 'Close preview'].forEach((name) => {
+    ;['Zoom out', 'Zoom in', 'Rotate clockwise', 'Close preview'].forEach((name) => {
       const control = screen.getByRole('button', { name })
       expect(control.getAttribute('title')).toBe(name)
     })
+    expect(
+      screen.getByRole('button', { name: 'Rotate clockwise' }).querySelector('svg')?.getAttribute('class')
+    ).toContain('lucide-rotate-cw')
 
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
@@ -253,16 +285,17 @@ describe('MediaPreview ownership and settlement', () => {
     expect(image().style.transform).toBe(upperBoundary)
   })
 
-  it('resets and reopens at the fitted 1x transform after zooming below it', () => {
+  it('keeps keyboard 0 as the zoom reset and reopens at the fitted 1x transform', () => {
     render(<Harness />)
     openFirst()
     const image = () => previewImage('First')
     const zoomOut = screen.getByRole('button', { name: 'Zoom out' })
+    const dialog = screen.getByRole('dialog', { name: 'Image preview' })
 
     fireEvent.click(zoomOut)
     fireEvent.click(zoomOut)
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(0.5)')
-    fireEvent.click(screen.getByRole('button', { name: 'Reset zoom' }))
+    fireEvent.keyDown(dialog, { key: '0' })
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(1)')
 
     fireEvent.click(zoomOut)
@@ -270,6 +303,45 @@ describe('MediaPreview ownership and settlement', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
     openFirst()
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(1)')
+  })
+
+  it('cycles clockwise without replacing the image or zoom, while replacement and reopening reset rotation', () => {
+    render(<Harness />)
+    const firstTrigger = screen.getByRole('button', { name: 'Preview First' })
+    const secondTrigger = screen.getByRole('button', { name: 'Preview Second' })
+    openFirst()
+
+    const dialog = screen.getByRole('dialog', { name: 'Image preview' })
+    const image = previewImage('First')
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 1200 },
+      naturalHeight: { configurable: true, value: 600 }
+    })
+    fireEvent.load(image)
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    const rotate = screen.getByRole('button', { name: 'Rotate clockwise' })
+
+    fireEvent.click(rotate)
+    expect(previewImage('First')).toBe(image)
+    expect(image.style.transform).toBe('translate3d(0px, 0px, 0) scale(1.5) rotate(90deg)')
+    fireEvent.keyDown(dialog, { key: '0' })
+    expect(image.style.transform).toBe('translate3d(0px, 0px, 0) scale(1) rotate(90deg)')
+
+    fireEvent.click(rotate)
+    expect(image.style.transform).toBe('translate3d(0px, 0px, 0) scale(1) rotate(180deg)')
+    fireEvent.click(rotate)
+    expect(image.style.transform).toBe('translate3d(0px, 0px, 0) scale(1) rotate(270deg)')
+    fireEvent.click(rotate)
+    expect(image.style.transform).toBe('translate3d(0px, 0px, 0) scale(1)')
+
+    fireEvent.click(rotate)
+    fireEvent.click(secondTrigger)
+    expect(previewTransform('Second')).toBe('translate3d(0px, 0px, 0) scale(1)')
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate clockwise' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    fireEvent.click(firstTrigger)
+    expect(previewTransform('First')).toBe('translate3d(0px, 0px, 0) scale(1)')
   })
 
   it('uses pinch focal zoom and clamps a continued single-pointer pan to explicit axis bounds', () => {
