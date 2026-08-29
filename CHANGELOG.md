@@ -1,3 +1,36 @@
+## [2.7.2](https://github.com/molvqingtai/WebChat/compare/v2.7.1...v2.7.2) (2026-08-29)
+
+### Bug Fixes
+
+- **app-button:** bound logo size before styles load ([1e4971f](https://github.com/molvqingtai/WebChat/commit/1e4971f296a121206b690d71c49b0c86fb19e6c8))
+- **content:** cancel follow authorization on delegated scrollbar drag ([121d1a4](https://github.com/molvqingtai/WebChat/commit/121d1a49237cf88d2f7055d1c5e370adc4ba06be))
+- **content:** compose shadcn ScrollArea viewport and authorize continuous bottom follow ([30f9756](https://github.com/molvqingtai/WebChat/commit/30f9756bc1c1f10513c9b55587e39f0336e5a270))
+- **content:** gate follow action behind 0.5-viewport distance and reconcile post-settle growth ([63f3d4c](https://github.com/molvqingtai/WebChat/commit/63f3d4cf7a3cb513c10effbd147509164d618b7b))
+- **history:** sort provider snapshots before pagination ([2452974](https://github.com/molvqingtai/WebChat/commit/2452974e922f0131ef5f7a88ecc45727fde258fd))
+- **runtime:** bind applier ownership and exact retry identity ([178c914](https://github.com/molvqingtai/WebChat/commit/178c91424a9e4692bc272ab4ab774ae27a3e61fb))
+- **runtime:** bind document lifecycle to suppliers and retries ([d618328](https://github.com/molvqingtai/WebChat/commit/d618328f1c17109fefa999164d333277f1eeec91))
+- **runtime:** close lifecycle callback races ([9da5699](https://github.com/molvqingtai/WebChat/commit/9da56998a5715966b7f4b46165fb6e52281e7f59))
+- **runtime:** close one-way readiness, admission, and host-replacement races ([b6335b0](https://github.com/molvqingtai/WebChat/commit/b6335b00183942d745c5162faa3bb128b6284298))
+- **runtime:** coalesce room joins and cancellations ([b17f3de](https://github.com/molvqingtai/WebChat/commit/b17f3dedded1b3c0152a26018d619342e089db22))
+- **runtime:** drop stale lease and epoch naming aliases ([0d84d45](https://github.com/molvqingtai/WebChat/commit/0d84d4557c02788a3222f72d3bc1fd543adb3cb0))
+- **runtime:** enforce exact runtime lifecycle admission ([30323d0](https://github.com/molvqingtai/WebChat/commit/30323d0a38de86d5ed18aff6f48840c7b16f3d97))
+- **runtime:** fence drain lifecycle and read admission ([55bc6cb](https://github.com/molvqingtai/WebChat/commit/55bc6cba2108c21577226535f0a737061e1adc88))
+- **runtime:** fence stale supplier terminals by exact ownership ([a1d5c59](https://github.com/molvqingtai/WebChat/commit/a1d5c59095a48575f152ee0a12723f3fa76ec135))
+- **runtime:** linearize callback admission ([1c2a59c](https://github.com/molvqingtai/WebChat/commit/1c2a59c8700269d51e936e44b95da763aee2de6b))
+- **runtime:** linearize empty rebind admission ([35f7b10](https://github.com/molvqingtai/WebChat/commit/35f7b10593194dc58e2ca873cd5d933976938621))
+- **runtime:** make World peer joins idempotent ([4527b1a](https://github.com/molvqingtai/WebChat/commit/4527b1a7f65aa8cd6bedcd774c70b8c811ab164f))
+- **runtime:** order supplier terminal sink before entry retirement ([c618905](https://github.com/molvqingtai/WebChat/commit/c618905f5292d49a0a09b8cd10accc60530b7423))
+- **runtime:** pin exact document capability and supplier ownership ([fb604f0](https://github.com/molvqingtai/WebChat/commit/fb604f0ba8589cae33c5182d7bf07e4a0cb242e1))
+- **runtime:** recheck supplier ownership at every terminal settle ([134e8d4](https://github.com/molvqingtai/WebChat/commit/134e8d4fded13aa444dd516734b3ce86331797f0))
+- **runtime:** remove invalid rebind recovery vetoes ([efbf82f](https://github.com/molvqingtai/WebChat/commit/efbf82f6e88de98ed413bb5a4c3be05e700e071e))
+- **runtime:** remove redundant coordinator state ([52a587a](https://github.com/molvqingtai/WebChat/commit/52a587a8fe5cc0567e3fb9e2ffeda4004b2310d9))
+- **runtime:** replace page callbacks with one-way current-state invalidation ([791caf5](https://github.com/molvqingtai/WebChat/commit/791caf584f735aeff9000330cf745dc26ef77a76))
+- **runtime:** restore World state after runtime replacement ([e21d3b7](https://github.com/molvqingtai/WebChat/commit/e21d3b7cfc72fb2b0d1a1c3ce72e8d92a502e242))
+- **runtime:** retire test-only seams and redundant ownership aliases ([d56f66e](https://github.com/molvqingtai/WebChat/commit/d56f66eb5f8d1175313e3f2e638f14a676926d85))
+- **runtime:** serialize exact lifecycle transitions ([03fa6fd](https://github.com/molvqingtai/WebChat/commit/03fa6fd7de782ae87663387ec82554c156100f37))
+- **runtime:** serialize Offscreen lifecycle recovery ([8ff919a](https://github.com/molvqingtai/WebChat/commit/8ff919ae5950aac8967a04db30c851308174c52e))
+- **runtime:** upgrade Artico and remove local patch ([737b2ac](https://github.com/molvqingtai/WebChat/commit/737b2ace8009346fb5bacc8fbc4daf656d0dc49c))
+
 ## [2.7.1](https://github.com/molvqingtai/WebChat/compare/v2.7.0...v2.7.1) (2026-08-20)
 
 ### Bug Fixes
