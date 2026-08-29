@@ -1,0 +1,311 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "WebChat Event-Driven Runtime Lifecycle",
+    "subtitle": "Exact browser events restore current ownership; callbacks project state; accepted actions execute once",
+    "output": "webchat-runtime-lifecycle.html"
+  },
+  "lanes": [
+    { "id": "page", "label": "Page / Content Script" },
+    { "id": "background", "label": "Chromium MV3 Background" },
+    { "id": "offscreen", "label": "Chromium Offscreen Proxy" },
+    { "id": "firefox", "label": "Firefox MV2 Background" },
+    { "id": "release", "label": "Binding + Domain Release" },
+    { "id": "stale", "label": "Stale / Invalid Work", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "ingress", "label": "Event ingress", "fromCol": 0, "toCol": 0 },
+    { "id": "restore", "label": "Restore ownership", "fromCol": 1, "toCol": 2, "variant": "emphasis" },
+    { "id": "ready", "label": "Project current state", "fromCol": 3, "toCol": 4, "variant": "dashed" },
+    { "id": "operate", "label": "Operate", "fromCol": 5, "toCol": 5, "variant": "security" }
+  ],
+  "groups": [
+    {
+      "id": "logical_owner",
+      "label": "Logical Runtime owner",
+      "lane": "background",
+      "fromCol": 0,
+      "toCol": 5,
+      "variant": "emphasis"
+    },
+    {
+      "id": "transport_only",
+      "label": "WebRTC transport only",
+      "lane": "offscreen",
+      "fromCol": 0,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": ["page_event", "wake_background", "runtime_owner", "exact_binding", "execute_once"],
+  "nodes": [
+    {
+      "id": "page_event",
+      "lane": "page",
+      "col": 0,
+      "type": "frontend",
+      "label": "Page Event",
+      "sublabel": "RPC / lifecycle",
+      "tag": "no polling"
+    },
+    {
+      "id": "bind_sessions",
+      "lane": "page",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Bind Sessions",
+      "sublabel": "load / rebind"
+    },
+    {
+      "id": "full_sessions",
+      "lane": "page",
+      "col": 4,
+      "type": "backend",
+      "label": "Full Sessions",
+      "sublabel": "immediate full",
+      "width": 96
+    },
+    {
+      "id": "later_deltas",
+      "lane": "page",
+      "col": 5,
+      "type": "messagebus",
+      "label": "Later Deltas",
+      "sublabel": "ordered changes",
+      "width": 92
+    },
+
+    {
+      "id": "wake_background",
+      "lane": "background",
+      "col": 0,
+      "type": "cloud",
+      "label": "Wake / Reuse",
+      "sublabel": "browser event"
+    },
+    {
+      "id": "runtime_owner",
+      "lane": "background",
+      "col": 2,
+      "type": "backend",
+      "label": "Runtime Owner",
+      "sublabel": "Rooms + Sessions"
+    },
+    {
+      "id": "exact_binding",
+      "lane": "background",
+      "col": 4,
+      "type": "security",
+      "label": "Exact Binding",
+      "sublabel": "exact page",
+      "width": 96
+    },
+    {
+      "id": "execute_once",
+      "lane": "background",
+      "col": 5,
+      "type": "backend",
+      "label": "Execute Once",
+      "sublabel": "target ready",
+      "tag": "exact result",
+      "width": 92
+    },
+
+    {
+      "id": "endpoint_state",
+      "lane": "offscreen",
+      "col": 0,
+      "type": "cloud",
+      "label": "Endpoint State",
+      "sublabel": "current / fresh"
+    },
+    {
+      "id": "restart_callbacks",
+      "lane": "offscreen",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Restart onXXX",
+      "sublabel": "one-to-one pairs"
+    },
+    {
+      "id": "current_transport",
+      "lane": "offscreen",
+      "col": 4,
+      "type": "cloud",
+      "label": "Current State",
+      "sublabel": "transport state",
+      "width": 96
+    },
+    {
+      "id": "later_events",
+      "lane": "offscreen",
+      "col": 5,
+      "type": "messagebus",
+      "label": "Later Events",
+      "sublabel": "current callback",
+      "width": 92
+    },
+
+    {
+      "id": "persistent_host",
+      "lane": "firefox",
+      "col": 0,
+      "type": "backend",
+      "label": "MV2 Host",
+      "sublabel": "persistent page"
+    },
+    {
+      "id": "firefox_runtime",
+      "lane": "firefox",
+      "col": 2,
+      "type": "backend",
+      "label": "Runtime + RTC",
+      "sublabel": "same document"
+    },
+    {
+      "id": "firefox_ready",
+      "lane": "firefox",
+      "col": 4,
+      "type": "security",
+      "label": "Target Ready",
+      "sublabel": "no Offscreen",
+      "width": 96
+    },
+    {
+      "id": "firefox_action",
+      "lane": "firefox",
+      "col": 5,
+      "type": "backend",
+      "label": "Execute Once",
+      "sublabel": "direct handle",
+      "width": 92
+    },
+
+    {
+      "id": "detach",
+      "lane": "release",
+      "col": 0,
+      "type": "frontend",
+      "label": "Detach",
+      "sublabel": "binding removed"
+    },
+    {
+      "id": "grace_token",
+      "lane": "release",
+      "col": 2,
+      "type": "security",
+      "label": "Grace Token",
+      "sublabel": "5s generation"
+    },
+    {
+      "id": "current_check",
+      "lane": "release",
+      "col": 4,
+      "type": "security",
+      "label": "Still Current?",
+      "sublabel": "zero pages",
+      "width": 96
+    },
+    {
+      "id": "release_old",
+      "lane": "release",
+      "col": 5,
+      "type": "cloud",
+      "label": "Release Old",
+      "sublabel": "exact handle",
+      "width": 92
+    },
+
+    {
+      "id": "stale_input",
+      "lane": "stale",
+      "col": 0,
+      "type": "security",
+      "label": "Stale Input",
+      "sublabel": "old generation"
+    },
+    {
+      "id": "drop_stale",
+      "lane": "stale",
+      "col": 5,
+      "type": "security",
+      "label": "Discard",
+      "sublabel": "no state mutation",
+      "tag": "no replay"
+    }
+  ],
+  "edges": [
+    {
+      "from": "page_event",
+      "to": "wake_background",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "drop"
+    },
+    { "from": "wake_background", "to": "runtime_owner", "variant": "emphasis" },
+    { "from": "runtime_owner", "to": "exact_binding", "variant": "emphasis" },
+    { "from": "exact_binding", "to": "execute_once", "variant": "emphasis" },
+
+    { "from": "page_event", "to": "bind_sessions", "variant": "dashed" },
+    { "from": "bind_sessions", "to": "full_sessions", "variant": "dashed" },
+    { "from": "full_sessions", "to": "later_deltas", "variant": "dashed" },
+
+    { "from": "endpoint_state", "to": "restart_callbacks", "variant": "dashed" },
+    { "from": "restart_callbacks", "to": "current_transport", "variant": "dashed" },
+    { "from": "current_transport", "to": "later_events", "variant": "dashed" },
+
+    { "from": "persistent_host", "to": "firefox_runtime", "variant": "default" },
+    { "from": "firefox_runtime", "to": "firefox_ready", "variant": "default" },
+    { "from": "firefox_ready", "to": "firefox_action", "variant": "default" },
+
+    { "from": "detach", "to": "grace_token", "variant": "security" },
+    { "from": "grace_token", "to": "current_check", "variant": "security" },
+    { "from": "current_check", "to": "release_old", "variant": "security" },
+
+    { "from": "stale_input", "to": "drop_stale", "variant": "security", "role": "error" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Runtime Ownership",
+      "items": [
+        "Chromium Background owns logical Rooms, Sessions, bindings, recovery, and release",
+        "Chromium Offscreen owns only the WebRTC proxy and RTCPeerConnection",
+        "Firefox persistent Background owns both logical Runtime and WebRTC",
+        "A current action waits only for its target domain; live-domain recovery is non-blocking"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Two Independent Callback Restarts",
+      "items": [
+        "onSessionsChange is subscribe + immediate full snapshot for both initial load and rebind",
+        "Background fresh invalidates Page callback IDs and asks exact provisional Pages to rebind",
+        "Background or Offscreen fresh re-executes each affected one-to-one onXXX callback pair",
+        "Both-current reuses callbacks; Offscreen-only fresh never triggers Page rebind"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Event-Driven Contract",
+      "items": [
+        "Page RPC and Offscreen provider events are authoritative Chromium wake sources",
+        "Commands return exact handle/readiness; asynchronous transport events use callbacks",
+        "Accepted actions execute once; old callback payloads may expire and are never replayed",
+        "No Page polling, ACK, queue, ledger, receipt, adapter, sequencing, or extra heartbeat"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Generation Fences",
+      "items": [
+        "Transport, callback, binding, Room, and grace work must match the current generation",
+        "Full Sessions completes and exact binding revalidates before ordered deltas activate",
+        "Zero-page grace releases only the exact old Room handle after its current deadline",
+        "Background reconcile is best-effort; heartbeat only checks injector APPLY readiness"
+      ]
+    }
+  ]
+}

@@ -5,5 +5,3 @@ allowBuilds:
   spawn-sync: true
   utf-8-validate: true
   wxt: true
-patchedDependencies:
-  '@rtco/client@0.3.6': patches/@rtco__client@0.3.6.patch

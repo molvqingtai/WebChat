@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { Remesh } from 'remesh'
 import LifecycleDomain from './Lifecycle'
 import type { Clock } from '@/domain/runtime/externs/Clock'
@@ -29,38 +27,40 @@ const setup = () => {
 }
 
 describe('LifecycleDomain', () => {
-  it('makes host creation single-flight and automatically requests rebuild with online pages', () => {
+  it('tracks an attached page lease', () => {
     const { store, runtime } = setup()
-    let createRequests = 0
-    store.subscribeEvent(runtime.event.HostCreateRequestedEvent, () => {
-      createRequests += 1
-    })
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 1 }))
+    expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))?.tabIds).toEqual([1])
+  })
 
-    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', pageId: 'page-a' }))
-    store.send(runtime.command.RequestHostCommand())
-    store.send(runtime.command.RequestHostCommand())
-    expect(store.query(runtime.query.HostPhaseQuery())).toBe('connecting')
-    expect(createRequests).toBe(1)
+  it('a stable same-tab attach on an active membership is a true no-op', () => {
+    const { store, runtime } = setup()
+    const attached = vi.fn()
+    store.subscribeEvent(runtime.event.PageAttachedEvent, attached)
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 1 }))
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 2 }))
+    expect(attached).toHaveBeenCalledTimes(1)
 
-    store.send(runtime.command.HostReadyCommand())
-    store.send(runtime.command.HostDestroyedCommand())
-    expect(store.query(runtime.query.HostPhaseQuery())).toBe('connecting')
-    expect(createRequests).toBe(2)
+    // An unchanged attach must not rewrite equivalent state or emit another attached event.
+    const before = store.query(runtime.query.DomainLeaseQuery('https://example.com'))
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 2 }))
+    expect(attached).toHaveBeenCalledTimes(1)
+    expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))).toEqual(before)
   })
 
   it('uses one idempotent lease per page and one grace generation for real two-tab cleanup', () => {
     const { clock, store, runtime } = setup()
     const domain = 'https://example.com'
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-b' }))
-    expect(store.query(runtime.query.DomainLeaseQuery(domain))?.pageIds).toEqual(['page-a', 'page-b'])
+    store.send(runtime.command.AttachPageCommand({ domain, tabId: 1 }))
+    store.send(runtime.command.AttachPageCommand({ domain, tabId: 1 }))
+    store.send(runtime.command.AttachPageCommand({ domain, tabId: 2 }))
+    expect(store.query(runtime.query.DomainLeaseQuery(domain))?.tabIds).toEqual([1, 2])
 
-    store.send(runtime.command.DetachPageCommand({ domain, pageId: 'page-a' }))
+    store.send(runtime.command.DetachPageCommand({ domain, tabId: 1 }))
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     expect(store.query(runtime.query.DomainLeaseQuery(domain))?.phase).toBe('active')
 
-    store.send(runtime.command.DetachPageCommand({ domain, pageId: 'page-b' }))
+    store.send(runtime.command.DetachPageCommand({ domain, tabId: 2 }))
     expect(store.query(runtime.query.DomainLeaseQuery(domain))?.phase).toBe('grace')
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     expect(store.query(runtime.query.DomainLeaseQuery(domain))).toBeNull()
@@ -68,27 +68,14 @@ describe('LifecycleDomain', () => {
 
   it('rebuilds coordinator lease truth idempotently from persisted page facts', () => {
     const persisted = [
-      { domain: 'https://example.com', pageId: 'page-a' },
-      { domain: 'https://example.com', pageId: 'page-b' }
+      { domain: 'https://example.com', tabId: 1 },
+      { domain: 'https://example.com', tabId: 2 }
     ]
     const restarted = setup()
     persisted.forEach((lease) => restarted.store.send(restarted.runtime.command.AttachPageCommand(lease)))
     persisted.forEach((lease) => restarted.store.send(restarted.runtime.command.AttachPageCommand(lease)))
     const leases = restarted.store.query(restarted.runtime.query.DomainLeasesQuery())
     expect(leases).toHaveLength(1)
-    expect(leases[0].pageIds).toEqual(['page-a', 'page-b'])
-  })
-
-  it('has no timestamp expiry authority for physical page lifetime', () => {
-    const { store, runtime } = setup()
-    const domain = 'https://example.com'
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
-
-    expect(store.query(runtime.query.DomainLeaseQuery(domain))).not.toHaveProperty('pageLastSeenAt')
-    expect(runtime.command).not.toHaveProperty('ExpirePagesCommand')
-    expect(runtime.event).not.toHaveProperty('PageExpiredEvent')
-    expect(readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Lifecycle.ts'), 'utf8')).not.toMatch(
-      /pageLastSeenAt|seenAt|ExpirePagesCommand|PageExpiredEvent/
-    )
+    expect(leases[0].tabIds).toEqual([1, 2])
   })
 })

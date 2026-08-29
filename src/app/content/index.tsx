@@ -81,11 +81,15 @@ const preparationLockCoordinator = import.meta.env.FIREFOX
   ? createDirectPreparationCoordinator()
   : createWebLocksPreparationCoordinator()
 
+let initializeRuntimeImpl: () => Promise<unknown> = () => {
+  throw new Error('Content store has not been created')
+}
+
 const initializationDependencies: InitializationDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
   prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator),
   prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator),
-  initializeRuntime: initClient,
+  initializeRuntime: () => initializeRuntimeImpl(),
   detachRuntime: detachClient
 }
 
@@ -142,8 +146,7 @@ const createContentStore = () => {
   const deferredMessageDatabase: Database<MessageDatabaseSchema> = {
     read: async (stores, operation, signal) => (await messageDatabase.get()).read(stores, operation, signal),
     write: async (stores, operation, signal) => (await messageDatabase.get()).write(stores, operation, signal),
-    watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener)),
-    close: async () => (await messageDatabase.get()).close()
+    watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener))
   }
   async function deferredSendMessage(command: SendTextCommand): Promise<TextMessage>
   async function deferredSendMessage(command: SendReactionCommand): Promise<ReactionMessage>
@@ -214,7 +217,10 @@ const createContentStore = () => {
     // inspectors: __DEV__ ? [RemeshLogger()] : []
   })
 
+  let applicationDependenciesActivated = false
   const activateApplicationDependencies = () => {
+    if (applicationDependenciesActivated) return
+    applicationDependenciesActivated = true
     // A watcher failure on the page's own database owns a current visible/persistence-dependent
     // projection: it reaches this page's existing toast route once with the original message.
     const database = createIndexedDBMessageDatabase({
@@ -223,15 +229,15 @@ const createContentStore = () => {
           store.getDomain(ToastDomain()).command.ErrorCommand(error instanceof Error ? error.message : String(error))
         )
     })
-    const ChatRoomImpl = createChatRoomImpl(database)
+    const runtimeChatRoom = createChatRoomImpl(database)
     const WorldRoomImpl = createWorldRoomImpl()
     const ReadinessImpl = createReadinessImpl(whenHostPhase)
     const lifecycleBundle = createConnectionLifecycle()
-    ChatRoomImpl.epochSource.bindConnectionResultReporter(lifecycleBundle.report)
+    runtimeChatRoom.bindConnectionResultReporter(lifecycleBundle.report)
     // One attempt-owned History loading Toast per incoming sync: the Runtime projects activate/dismiss
     // with a complete attempt owner id, and the page maps it to the generic loading Toast (no count,
     // no fixed duration). The owner id guarantees one sync never dismisses another or an unrelated Toast.
-    ChatRoomImpl.epochSource.onHistoryFeedback((event) => {
+    runtimeChatRoom.onHistoryFeedback((event) => {
       store.send(
         event.type === 'loading'
           ? store
@@ -243,8 +249,8 @@ const createContentStore = () => {
 
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
     messageDatabase.resolve(database)
-    chatRoom.resolve(ChatRoomImpl.value)
-    realizedChatRoom = ChatRoomImpl.epochSource
+    chatRoom.resolve(runtimeChatRoom)
+    realizedChatRoom = runtimeChatRoom
     worldRoom.resolve(WorldRoomImpl.value)
     readiness.resolve(ReadinessImpl.value)
     currentConnectionLifecycle = lifecycleBundle.value
@@ -252,10 +258,17 @@ const createContentStore = () => {
   }
 
   // Every distinct real control-plane failure surfaces as a fresh original-message toast while the
-  // lease keeps its bounded polling; detach ends the lifecycle and therefore further failures.
+  // runtime attachment is active; detach ends the lifecycle and therefore further failures.
   whenFailure((error) => {
     store.send(store.getDomain(ToastDomain()).command.ErrorCommand(error.message))
   })
+
+  // The production readiness barrier: the Chat, persistence, and World appliers exist before the
+  // first drain pull, so initialization readiness is published only after every stage settles.
+  initializeRuntimeImpl = async () => {
+    activateApplicationDependencies()
+    return initClient()
+  }
 
   return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }
 }
@@ -284,7 +297,7 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        documentLifecycle.bind({ store, sendLifecycle, initLease: initClient, detachLease: detachClient })
+        documentLifecycle.bind({ store, sendLifecycle, initRuntime: initClient, detachRuntime: detachClient })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>

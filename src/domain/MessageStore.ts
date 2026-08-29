@@ -90,8 +90,7 @@ export const MessageDatabaseExtern = Remesh.extern<Database<MessageDatabaseSchem
   default: {
     read: unavailable,
     write: unavailable,
-    watch: unavailable,
-    close: unavailable
+    watch: unavailable
   }
 })
 
@@ -126,7 +125,7 @@ const SystemNoticeRecordSchema = v.strictObject({
 
 const MessageRecordSchema = v.variant('type', [ChatMessageRecordSchema, SystemNoticeRecordSchema])
 
-class InvalidMessageRecordError extends TypeError {
+export class InvalidMessageRecordError extends TypeError {
   override readonly name = 'InvalidMessageRecordError'
 }
 

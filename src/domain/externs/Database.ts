@@ -89,6 +89,4 @@ export interface Database<Schema extends DatabaseSchema<Schema>> {
   ): Promise<Result>
 
   watch<const Stores extends Scope<StoreName<Schema>>>(stores: Stores, listener: () => void): Unsubscribe
-
-  close(): Promise<void>
 }

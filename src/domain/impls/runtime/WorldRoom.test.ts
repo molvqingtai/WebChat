@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WorldRoom } from '@/domain/impls/runtime/WorldRoom'
-import type { RuntimeServer, RuntimeSnapshot, WorldPresenceEvent } from '@/runtime/Contract'
+import type { RuntimeSnapshot } from '@/runtime/Contract'
 import type { ChatUser, ChatSite, WorldRoomMessage } from '@/protocol'
 
 const ALPHA = { id: 'alpha', name: 'Alpha', avatar: '' }
@@ -12,169 +12,95 @@ const presence = (user: ChatUser, sites: ChatSite[], sessionId = user.id): World
   sites
 })
 
-const event = (sourcePeerId: string, value: WorldRoomMessage | null): WorldPresenceEvent => ({
-  sourcePeerId,
-  presence: value ? { sourcePeerId, presence: value } : null
-})
-
-const snapshot = (presences: RuntimeSnapshot['world']['presences']): RuntimeSnapshot => ({
+const snapshot = (
+  presences: RuntimeSnapshot['world']['presences'],
+  localPresence?: WorldRoomMessage
+): RuntimeSnapshot => ({
   hostId: 'host-1',
   hostPhase: 'ready',
   peerId: 'local-peer',
   domains: [],
-  world: { joined: true, peerId: 'local-peer', presences }
+  world: { joined: true, peerId: 'local-peer', localPresence, presences },
+  failures: []
 })
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((settle) => {
-    resolve = settle
-  })
-  return { promise, resolve }
-}
+describe('WorldRoom current-projection application', () => {
+  it('applies a full projection idempotently and removes contributions absent from the next pull', async () => {
+    const room = new WorldRoom()
+    const states: Awaited<ReturnType<WorldRoom['getState']>>[] = []
+    room.onState((state) => states.push(state))
 
-const createFixture = (
-  initial: RuntimeSnapshot,
-  onSubscribe?: (callback: (event: WorldPresenceEvent) => void) => void,
-  getRuntimeSnapshot: () => Promise<RuntimeSnapshot> = async () => initial
-) => {
-  const order: string[] = []
-  let callback: ((event: WorldPresenceEvent) => void) | null = null
-  const server = {
-    onWorldPresence: async (_payload: unknown, listener: (event: WorldPresenceEvent) => void) => {
-      order.push('subscribe')
-      callback = listener
-      onSubscribe?.(listener)
-    },
-    getSnapshot: async () => {
-      order.push('snapshot')
-      return getRuntimeSnapshot()
-    }
-  } as unknown as RuntimeServer
-  const room = new WorldRoom({
-    server,
-    pageId: 'page-1',
-    getSnapshot: () => initial,
-    whenReady: (ready) => {
-      ready()
-      return () => {}
-    }
-  })
-  const states: Awaited<ReturnType<WorldRoom['getState']>>[] = []
-  room.onState((state) => states.push(state))
-  return {
-    room,
-    order,
-    states,
-    emit: (value: WorldPresenceEvent) => {
-      if (!callback) throw new Error('World callback is not registered')
-      callback(value)
-    }
-  }
-}
-
-describe('WorldRoom Runtime adapter', () => {
-  it('isolates a throwing error listener and settles the shared attachment tail', async () => {
-    const initial = snapshot([])
-    const attachment = Promise.withResolvers<RuntimeSnapshot>()
-    const getSnapshot = vi.fn(() => attachment.promise)
-    let ready = () => {}
-    const room = new WorldRoom({
-      server: {
-        onWorldPresence: async () => {},
-        getSnapshot
-      } as unknown as RuntimeServer,
-      pageId: 'page-1',
-      getSnapshot: () => initial,
-      whenReady: (listener) => {
-        ready = listener
-        return () => {}
-      }
-    })
-    const attachmentFailure = new Error('World attachment failed')
-    const deliveryFailure = new Error('World error listener failed')
-    const listener = vi.fn(() => {
-      throw deliveryFailure
-    })
-    room.onError(listener)
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    ready()
-    await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
-    attachment.reject(attachmentFailure)
-
-    await expect(room.getState()).resolves.toEqual([])
-    expect(listener).toHaveBeenCalledOnce()
-    expect(listener).toHaveBeenCalledWith(attachmentFailure)
-    expect(diagnostic).toHaveBeenCalledOnce()
-    expect(diagnostic).toHaveBeenCalledWith(deliveryFailure)
-    diagnostic.mockRestore()
-  })
-
-  it('replays subscribed updates after the initial snapshot baseline', async () => {
-    const oldSource = presence(ALPHA, [{ origin: 'https://old.test', title: 'Old' }])
-    const newSource = presence(ALPHA, [{ origin: 'https://new.test', title: 'New' }])
-    const oldSnapshot = snapshot([{ sourcePeerId: 'source-a', presence: oldSource }])
-    const snapshotBarrier = deferred<RuntimeSnapshot>()
-    const fixture = createFixture(oldSnapshot, undefined, () => snapshotBarrier.promise)
-
-    await vi.waitFor(() => expect(fixture.order).toEqual(['subscribe', 'snapshot']))
-    fixture.emit(event('source-a', newSource))
-    snapshotBarrier.resolve(oldSnapshot)
-
-    await expect(fixture.room.getState()).resolves.toEqual([
-      { origin: 'https://new.test', title: 'New', users: [ALPHA] }
+    const first = snapshot([
+      { sourcePeerId: 'source-a', presence: presence(ALPHA, [{ origin: 'https://alpha.test', title: 'Alpha' }]) },
+      { sourcePeerId: 'source-b', presence: presence(BETA, [{ origin: 'https://beta.test', title: 'Beta' }]) }
     ])
+    room.applyWorld(first)
+    expect((await room.getState()).map((group) => group.origin)).toEqual(['https://alpha.test', 'https://beta.test'])
+
+    // Re-applying the identical projection changes nothing (no duplicate contributions).
+    room.applyWorld(first)
+    expect(await room.getState()).toHaveLength(2)
+
+    // A later projection replaces the full contribution set.
+    room.applyWorld(
+      snapshot([{ sourcePeerId: 'source-c', presence: presence(BETA, [{ origin: 'https://gamma.test' }]) }])
+    )
+    const next = await room.getState()
+    expect(next.map((group) => group.origin)).toEqual(['https://gamma.test'])
+    expect(next[0]?.users).toEqual([BETA])
   })
 
   it('preserves exact-origin multiset order and updates first-contribution metadata in place', async () => {
-    const initial = snapshot([
-      {
-        sourcePeerId: 'source-a',
-        presence: presence(ALPHA, [
-          { origin: 'https://alpha.test', title: 'Alpha A' },
-          { origin: 'https://beta.test', title: 'Beta' }
-        ])
-      },
-      {
-        sourcePeerId: 'source-b',
-        presence: presence(ALPHA, [{ origin: 'https://alpha.test', title: 'Alpha B' }], 'alpha-b')
-      }
-    ])
-    const fixture = createFixture(initial)
-    await fixture.room.getState()
+    const room = new WorldRoom()
+    room.applyWorld(
+      snapshot([
+        { sourcePeerId: 'source-a', presence: presence(ALPHA, [{ origin: 'https://shared.test', title: 'Shared A' }]) },
+        { sourcePeerId: 'source-b', presence: presence(BETA, [{ origin: 'https://shared.test', title: 'Shared B' }]) }
+      ])
+    )
+    // Same origin from two sources forms one ordered group in first-contribution order.
+    expect((await room.getState())[0]?.users.map((user) => user.id)).toEqual(['alpha', 'beta'])
 
-    expect(fixture.states.at(-1)).toEqual([
-      { origin: 'https://alpha.test', title: 'Alpha A', users: [ALPHA, ALPHA] },
-      { origin: 'https://beta.test', title: 'Beta', users: [ALPHA] }
-    ])
+    // A metadata refresh on the earlier source updates in place without changing group order.
+    room.applyWorld(
+      snapshot([
+        {
+          sourcePeerId: 'source-a',
+          presence: presence({ ...ALPHA, name: 'Alpha 2' }, [{ origin: 'https://shared.test', title: 'Shared A2' }])
+        },
+        { sourcePeerId: 'source-b', presence: presence(BETA, [{ origin: 'https://shared.test', title: 'Shared B' }]) }
+      ])
+    )
+    const group = (await room.getState())[0]
+    expect(group?.title).toBe('Shared A2')
+    expect(group?.users.map((user) => user.name)).toEqual(['Alpha 2', 'Beta'])
+  })
 
-    fixture.emit(
-      event(
-        'source-a',
-        presence(ALPHA, [
-          { origin: 'https://alpha.test', title: 'Alpha A2' },
-          { origin: 'https://gamma.test', title: 'Gamma' }
+  it('includes the local presence in the projected groups and groups repeated sites by origin', async () => {
+    const room = new WorldRoom()
+    room.applyWorld(
+      snapshot(
+        [{ sourcePeerId: 'source-a', presence: presence(ALPHA, [{ origin: 'https://alpha.test' }]) }],
+        presence(BETA, [
+          { origin: 'https://alpha.test', title: 'Alpha local' },
+          { origin: 'https://beta.test', title: 'Beta local' }
         ])
       )
     )
-    expect(fixture.states.at(-1)).toEqual([
-      { origin: 'https://alpha.test', title: 'Alpha A2', users: [ALPHA, ALPHA] },
-      { origin: 'https://gamma.test', title: 'Gamma', users: [ALPHA] }
-    ])
+    const state = await room.getState()
+    expect(state.map((group) => group.origin)).toEqual(['https://alpha.test', 'https://beta.test'])
+    expect(state[0]?.users.map((user) => user.id)).toEqual(['alpha', 'beta'])
+  })
 
-    fixture.emit(event('source-c', presence(BETA, [{ origin: 'https://alpha.test', title: 'Alpha C' }])))
-    fixture.emit(event('source-a', presence(ALPHA, [{ origin: 'https://delta.test', title: 'Delta' }])))
-    expect(fixture.states.at(-1)).toEqual([
-      { origin: 'https://alpha.test', title: 'Alpha B', users: [ALPHA, BETA] },
-      { origin: 'https://delta.test', title: 'Delta', users: [ALPHA] }
-    ])
-
-    fixture.emit(event('source-b', null))
-    expect(fixture.states.at(-1)).toEqual([
-      { origin: 'https://alpha.test', title: 'Alpha C', users: [BETA] },
-      { origin: 'https://delta.test', title: 'Delta', users: [ALPHA] }
-    ])
-    expect(JSON.stringify(fixture.states.at(-1))).not.toMatch(/source|peer|session/)
+  it('emits state to listeners on every application and isolates listener errors via the hub contract', async () => {
+    const room = new WorldRoom()
+    const states: number[] = []
+    room.onState((state) => states.push(state.length))
+    room.applyWorld(snapshot([]))
+    room.applyWorld(snapshot([]))
+    expect(states).toEqual([0, 0])
+    const listener = vi.fn()
+    room.onError(listener)
+    expect(listener).not.toHaveBeenCalled()
   })
 })

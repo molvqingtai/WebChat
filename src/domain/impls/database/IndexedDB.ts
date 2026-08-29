@@ -592,7 +592,7 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>,
   options?: { onWatcherError?: (error: unknown) => void }
-): Database<Schema> => new IndexedDBDatabase(definition, options?.onWatcherError)
+): IndexedDBDatabase<Schema> => new IndexedDBDatabase(definition, options?.onWatcherError)
 
 /**
  * A cross-tab deletion contender can hold the old store open indefinitely (Firefox preparation runs without
@@ -661,5 +661,5 @@ export const prepareIndexedDBMessageDatabase = (coordinator?: PreparationLockCoo
 
 export const createIndexedDBMessageDatabase = (options?: {
   onWatcherError?: (error: unknown) => void
-}): Database<MessageDatabaseSchema> =>
+}): IndexedDBDatabase<MessageDatabaseSchema> =>
   createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION), options)

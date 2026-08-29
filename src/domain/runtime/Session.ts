@@ -1,7 +1,11 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, {
+  type WireFailureStage,
+  type WireMessageEvent,
+  type WirePreparedMessageEvent
+} from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
@@ -32,12 +36,14 @@ import {
   type TextMessageRecord
 } from '@/domain/Message'
 import type { RuntimeSession, RuntimeSessionEvent, RuntimeSessionSnapshot } from '@/runtime/Contract'
+import type { RoomTransportRecovery } from '@/runtime/RoomTransport'
 import stringToHex from '@/utils/stringToHex'
 
 export type SessionPreparationMode = 'join' | 'reconnect' | 'recover'
 
 interface SessionBinding extends RuntimeSession {
   presenceId: string
+  sourceGeneration: number
 }
 
 export interface SessionDomainState {
@@ -48,6 +54,8 @@ export interface SessionDomainState {
   user: ChatUser
   site: ChatSite
   joinedAt: number
+  /** True only when the current local generation was newly allocated (not a retained recovery). */
+  fresh: boolean
   sessions: SessionBinding[]
 }
 
@@ -61,6 +69,9 @@ interface PreparedSession {
   reboundBindings: Array<{ presenceId: string; sourcePeerId: string }>
   /** Unprotected same-source bindings this attempt displaced (rollback/supersession transfers none). */
   displacedBindings: SessionBinding[]
+  /** Set only by Server's private dual-replacement prepare path. */
+  stagedEpoch?: string
+  stagedChatGeneration?: number
 }
 
 /** One observer-side pending-leave deadline per remote presence (idempotent duplicates). */
@@ -92,6 +103,8 @@ interface PendingChatSend {
 interface LiveRelease {
   domain: string
   roomId: string
+  /** Monotonic private lifecycle version used to fence cross-domain replacement waits. */
+  generation: number
   /**
    * Phase of the awaited active-record cleanup write. A late release request attaches without
    * emitting cleanup while a write is `pending`, retries only an observed `failed` write, and
@@ -102,6 +115,13 @@ interface LiveRelease {
 
 export interface SessionOperationSucceeded {
   operationId: string
+}
+
+/** Owner-confirmed local recovery intent; emitted only after hydration committed. */
+export interface SessionRecoveryHydrated {
+  domain: string
+  roomId: string
+  local: Pick<SessionDomainState, 'sessionId' | 'presenceId' | 'user' | 'site' | 'joinedAt'>
 }
 
 /** Typed allocation-success payloads: the exact record variant is the boundary contract. */
@@ -194,7 +214,11 @@ const currentBindingForSource = (
       )
   )
 
-const projectRuntimeSession = ({ presenceId: _presenceId, ...session }: SessionBinding): RuntimeSession => session
+const projectRuntimeSession = ({
+  presenceId: _presenceId,
+  sourceGeneration: _sourceGeneration,
+  ...session
+}: RuntimeSession & { presenceId: string; sourceGeneration?: number }): RuntimeSession => session
 const snapshot = (runtime: SessionDomainState): RuntimeSessionSnapshot => ({
   localSession: { sessionId: runtime.sessionId, user: runtime.user, joinedAt: runtime.joinedAt },
   sessions: runtime.sessions.map(projectRuntimeSession)
@@ -249,6 +273,13 @@ const SessionDomain = Remesh.domain({
       name: 'Session.LiveReleasesState',
       default: []
     })
+    // This is Runtime-private lifecycle state, not a public Page or provider protocol value.
+    // A Server replacement captures it before awaiting in-flight release terminals, then fails
+    // closed if another release begins before the replacement's first current-owner cut.
+    const ReleaseGenerationState = domain.state<number>({
+      name: 'Session.ReleaseGenerationState',
+      default: 0
+    })
     const PendingChatSendsState = domain.state<PendingChatSend[]>({
       name: 'Session.PendingChatSendsState',
       default: []
@@ -274,6 +305,16 @@ const SessionDomain = Remesh.domain({
     const ReleasingDomainQuery = domain.query({
       name: 'Session.ReleasingDomainQuery',
       impl: ({ get }, runtimeDomain: string) => get(LiveReleasesState()).some((item) => item.domain === runtimeDomain)
+    })
+    /** Server-private current release identities; never forwarded outside the Runtime. */
+    const LiveReleasesQuery = domain.query({
+      name: 'Session.LiveReleasesQuery',
+      impl: ({ get }) => get(LiveReleasesState())
+    })
+    /** Monotonic lifecycle version for fencing an observed set of in-flight releases. */
+    const ReleaseGenerationQuery = domain.query({
+      name: 'Session.ReleaseGenerationQuery',
+      impl: ({ get }) => get(ReleaseGenerationState())
     })
     // True after a manual-refresh reset: the committed aggregate is gone but the active local
     // logical seed was retained, authorizing the canonical replacement attempt.
@@ -331,6 +372,10 @@ const SessionDomain = Remesh.domain({
     const PreparedEvent = domain.event<{ attemptId: string; domain: string; roomId: string }>({
       name: 'Session.PreparedEvent'
     })
+    /** Server-private prepare terminal for a dual replacement; never enters Connection's normal join effect. */
+    const EpochPreparedEvent = domain.event<{ attemptId: string; epoch: string; domain: string; roomId: string }>({
+      name: 'Session.EpochPreparedEvent'
+    })
     const PreparationFailedEvent = domain.event<{ attemptId: string; error: Error }>({
       name: 'Session.PreparationFailedEvent'
     })
@@ -373,6 +418,9 @@ const SessionDomain = Remesh.domain({
     const RuntimeSessionChangedEvent = domain.event<RuntimeSessionEvent>({
       name: 'Session.RuntimeSessionChangedEvent'
     })
+    const RecoveryHydratedEvent = domain.event<SessionRecoveryHydrated>({
+      name: 'Session.RecoveryHydratedEvent'
+    })
     const BindingChangedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
       name: 'Session.BindingChangedEvent'
     })
@@ -402,6 +450,135 @@ const SessionDomain = Remesh.domain({
         PresenceDomainsState().new(
           replaceBy(get(PresenceDomainsState()), (item) => item.domain === record.domain, record)
         )
+    })
+
+    /**
+     * Seeds a fresh logical Runtime from the Offscreen transport's atomic current-room cut.
+     * This intentionally performs no persistence, publication, notification, or History work:
+     * recovered sessions are current state, not new joins.
+     */
+    const RecoverTransportStateCommand = domain.command({
+      name: 'Session.RecoverTransportStateCommand',
+      impl: ({ get }, payload: RoomTransportRecovery) => {
+        const domains = get(DomainsState())
+        const presences = get(PresenceDomainsState())
+        const recovered = payload.rooms.flatMap((recovery) => {
+          if (
+            domains.some((item) => item.domain === recovery.domain || item.roomId === recovery.roomId) ||
+            getChatRoomId(recovery.domain) !== recovery.roomId
+          ) {
+            return []
+          }
+          const sessions = [
+            ...new Map(
+              recovery.sessions.map(({ sourcePeerId, sourceGeneration, session }) => [
+                `${sourcePeerId}\u0000${sourceGeneration}`,
+                {
+                  sourcePeerId,
+                  sessionId: session.sessionId,
+                  presenceId: session.presenceId,
+                  user: session.user,
+                  joinedAt: session.joinedAt,
+                  sourceGeneration
+                } satisfies SessionBinding
+              ])
+            ).values()
+          ]
+          const runtime: SessionDomainState = {
+            domain: recovery.domain,
+            roomId: recovery.roomId,
+            sessionId: recovery.local.sessionId,
+            presenceId: recovery.local.presenceId,
+            user: recovery.local.user,
+            site: recovery.local.site,
+            joinedAt: recovery.local.joinedAt,
+            fresh: false,
+            sessions
+          }
+          const presence: PresenceDomainRecord = {
+            domain: runtime.domain,
+            lastJoinedAt: Math.max(runtime.joinedAt, ...sessions.map((session) => session.joinedAt)),
+            local: {
+              presenceId: runtime.presenceId,
+              userId: runtime.user.id,
+              joinedAt: runtime.joinedAt,
+              status: 'active'
+            },
+            observers: sessions.map((session) => ({
+              presenceId: session.presenceId,
+              sessionId: session.sessionId,
+              user: session.user,
+              joinedAt: session.joinedAt,
+              status: 'active'
+            }))
+          }
+          return [{ runtime, presence }]
+        })
+        return recovered.length === 0
+          ? null
+          : [
+              DomainsState().new([...domains, ...recovered.map(({ runtime }) => runtime)]),
+              PresenceDomainsState().new([...presences, ...recovered.map(({ presence }) => presence)]),
+              ...recovered.map(({ runtime }) =>
+                RecoveryHydratedEvent({
+                  domain: runtime.domain,
+                  roomId: runtime.roomId,
+                  local: {
+                    sessionId: runtime.sessionId,
+                    presenceId: runtime.presenceId,
+                    user: runtime.user,
+                    site: runtime.site,
+                    joinedAt: runtime.joinedAt
+                  }
+                })
+              )
+            ]
+      }
+    })
+
+    /**
+     * Reconciles the old durable observation record before the recovered current Runtime may
+     * process ordinary ingress. Active owner facts win their exact presence slots; historical
+     * ended observations and the largest joined timestamp are retained without persistence.
+     */
+    const ReconcileRecoveredPresenceCommand = domain.command({
+      name: 'Session.ReconcileRecoveredPresenceCommand',
+      impl: ({ get }, payload: { domain: string; record: PresenceDomainRecord }) => {
+        const runtime = get(DomainsState()).find((item) => item.domain === payload.domain)
+        if (!runtime) return null
+        const current = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
+        const active = runtime.sessions.map((session) => ({
+          presenceId: session.presenceId,
+          sessionId: session.sessionId,
+          user: session.user,
+          joinedAt: session.joinedAt,
+          status: 'active' as const
+        }))
+        const observers = active.reduce(
+          (items, observation) => replaceObservation(items, observation),
+          payload.record.observers
+        )
+        const local = {
+          presenceId: runtime.presenceId,
+          userId: runtime.user.id,
+          joinedAt: runtime.joinedAt,
+          status: 'active' as const
+        }
+        const record: PresenceDomainRecord = {
+          domain: runtime.domain,
+          lastJoinedAt: Math.max(
+            payload.record.lastJoinedAt,
+            current?.lastJoinedAt ?? 0,
+            runtime.joinedAt,
+            ...observers.map((observer) => observer.joinedAt)
+          ),
+          local,
+          observers
+        }
+        return PresenceDomainsState().new(
+          replaceBy(get(PresenceDomainsState()), (item) => item.domain === runtime.domain, record)
+        )
+      }
     })
 
     const PrepareDomainCommand = domain.command({
@@ -477,6 +654,7 @@ const SessionDomain = Remesh.domain({
           user,
           site,
           joinedAt: local.joinedAt,
+          fresh: !current && local.status === 'pending',
           sessions: payload.mode === 'join' ? (committed?.sessions ?? []) : []
         }
         const prepared: PreparedSession = {
@@ -497,6 +675,58 @@ const SessionDomain = Remesh.domain({
       }
     })
 
+    const PrepareEpochDomainCommand = domain.command({
+      name: 'Session.PrepareEpochDomainCommand',
+      impl: (
+        { get },
+        payload: {
+          attemptId: string
+          epoch: string
+          chatGeneration: number
+          domain: string
+          roomId: string
+          local: Pick<SessionDomainState, 'sessionId' | 'presenceId' | 'user' | 'site' | 'joinedAt'>
+        }
+      ) => {
+        if (!payload.epoch || payload.local.site.origin !== payload.domain) return null
+        const prepared = get(PreparedSessionsState())
+        const existing = prepared.find((item) => item.runtime.domain === payload.domain)
+        if (existing && (existing.stagedEpoch !== payload.epoch || existing.attemptId !== payload.attemptId))
+          return null
+        const runtime: SessionDomainState = {
+          domain: payload.domain,
+          roomId: payload.roomId,
+          sessionId: payload.local.sessionId,
+          presenceId: payload.local.presenceId,
+          user: { ...payload.local.user },
+          site: { ...payload.local.site },
+          joinedAt: payload.local.joinedAt,
+          fresh: false,
+          sessions: []
+        }
+        const owner: PreparedSession = {
+          attemptId: payload.attemptId,
+          mode: 'reconnect',
+          runtime,
+          observers: [],
+          isNewPresence: false,
+          reboundBindings: [],
+          displacedBindings: [],
+          stagedEpoch: payload.epoch,
+          stagedChatGeneration: payload.chatGeneration
+        }
+        return [
+          PreparedSessionsState().new(replaceBy(prepared, (item) => item.runtime.domain === payload.domain, owner)),
+          EpochPreparedEvent({
+            attemptId: payload.attemptId,
+            epoch: payload.epoch,
+            domain: payload.domain,
+            roomId: payload.roomId
+          })
+        ]
+      }
+    })
+
     const PublishPreparedCommand = domain.command({
       name: 'Session.PublishPreparedCommand',
       impl: ({ get }, attemptId: string) => {
@@ -507,6 +737,28 @@ const SessionDomain = Remesh.domain({
               attemptId,
               error: new Error('Prepared session disappeared')
             })
+      }
+    })
+
+    const BindPreparedEpochCommand = domain.command({
+      name: 'Session.BindPreparedEpochCommand',
+      impl: ({ get }, payload: { attemptId: string; epoch: string; chatGeneration: number }) => {
+        const prepared = get(PreparedSessionsState())
+        const current = prepared.find((item) => item.attemptId === payload.attemptId)
+        if (
+          !current ||
+          (current.stagedEpoch !== undefined &&
+            (current.stagedEpoch !== payload.epoch || current.stagedChatGeneration !== payload.chatGeneration))
+        ) {
+          return null
+        }
+        return PreparedSessionsState().new(
+          replaceBy(prepared, (item) => item.attemptId === payload.attemptId, {
+            ...current,
+            stagedEpoch: payload.epoch,
+            stagedChatGeneration: payload.chatGeneration
+          })
+        )
       }
     })
 
@@ -576,6 +828,7 @@ const SessionDomain = Remesh.domain({
         ]
         const promotedRuntime: SessionDomainState = {
           ...prepared.runtime,
+          fresh: prepared.isNewPresence,
           sessions: [
             ...prepared.runtime.sessions,
             ...(previous?.sessions ?? []).filter(
@@ -679,6 +932,96 @@ const SessionDomain = Remesh.domain({
       }
     })
 
+    const SilentInstallEpochCommand = domain.command({
+      name: 'Session.SilentInstallEpochCommand',
+      impl: ({ get }, payload: { attemptId: string; epoch: string; chatGeneration: number }) => {
+        const prepared = get(PreparedSessionsState()).find((item) => item.attemptId === payload.attemptId)
+        if (
+          !prepared ||
+          prepared.stagedEpoch !== payload.epoch ||
+          prepared.stagedChatGeneration !== payload.chatGeneration
+        ) {
+          return null
+        }
+        // Server has already validated the tuple. This is deliberately a total, state-only move:
+        // publication, persistence, notifications, and the ordinary commit terminal remain gated.
+        return [
+          DomainsState().new(
+            replaceBy(get(DomainsState()), (item) => item.domain === prepared.runtime.domain, prepared.runtime)
+          ),
+          PreparedSessionsState().new(
+            get(PreparedSessionsState()).filter((item) => item.attemptId !== payload.attemptId)
+          )
+        ]
+      }
+    })
+
+    const AbortEpochCommand = domain.command({
+      name: 'Session.AbortEpochCommand',
+      impl: ({ get }, payload: { attemptId: string; epoch: string; chatGeneration: number }) => {
+        const prepared = get(PreparedSessionsState())
+        return prepared.some(
+          (item) =>
+            item.attemptId === payload.attemptId &&
+            item.stagedEpoch === payload.epoch &&
+            item.stagedChatGeneration === payload.chatGeneration
+        )
+          ? PreparedSessionsState().new(
+              prepared.filter(
+                (item) =>
+                  !(
+                    item.attemptId === payload.attemptId &&
+                    item.stagedEpoch === payload.epoch &&
+                    item.stagedChatGeneration === payload.chatGeneration
+                  )
+              )
+            )
+          : null
+      }
+    })
+
+    /**
+     * Removes the old committed ROOM owner without publishing a leave or empty projection. Only
+     * the local presence lifecycle survives as a private successor intent; remote observations,
+     * source bindings, queues, and ordinary prepared owners are fenced with the retired epoch.
+     */
+    const BeginEpochReplacementCommand = domain.command({
+      name: 'Session.BeginEpochReplacementCommand',
+      impl: ({ get }, payload: { domain: string }) => {
+        const current = get(DomainsState()).find((item) => item.domain === payload.domain)
+        const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
+        const local = current
+          ? {
+              presenceId: current.presenceId,
+              userId: current.user.id,
+              joinedAt: current.joinedAt,
+              status: 'active' as const
+            }
+          : presence?.local
+        const nextPresence = local
+          ? {
+              domain: payload.domain,
+              lastJoinedAt: Math.max(presence?.lastJoinedAt ?? 0, local.joinedAt),
+              local,
+              observers: []
+            }
+          : undefined
+        return [
+          DomainsState().new(get(DomainsState()).filter((item) => item.domain !== payload.domain)),
+          PreparedSessionsState().new(
+            get(PreparedSessionsState()).filter((item) => item.runtime.domain !== payload.domain)
+          ),
+          PresenceDomainsState().new(
+            nextPresence
+              ? replaceBy(get(PresenceDomainsState()), (item) => item.domain === payload.domain, nextPresence)
+              : get(PresenceDomainsState()).filter((item) => item.domain !== payload.domain)
+          ),
+          PendingLeavesState().new(get(PendingLeavesState()).filter((item) => item.domain !== payload.domain)),
+          PendingChatSendsState().new(get(PendingChatSendsState()).filter((item) => item.domain !== payload.domain))
+        ]
+      }
+    })
+
     const AbortPreparedCommand = domain.command({
       name: 'Session.AbortPreparedCommand',
       impl: ({ get }, attemptId: string) => {
@@ -725,11 +1068,24 @@ const SessionDomain = Remesh.domain({
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
         const current = runtime ?? prepared?.runtime
         if (!current) return ReleaseCompletedEvent({ domain: runtimeDomain })
-        const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId, cleanup: 'pending' }
+        const generation = get(ReleaseGenerationState()) + 1
+        if (!Number.isSafeInteger(generation)) {
+          return DomainReleaseFailedEvent({
+            domain: runtimeDomain,
+            error: new Error('Runtime release generation exhausted')
+          })
+        }
+        const release: LiveRelease = {
+          domain: runtimeDomain,
+          roomId: current.roomId,
+          generation,
+          cleanup: 'pending'
+        }
         // Fence every domain-owned observer deadline BEFORE the awaited cleanup write: a grace
         // expiry can never queue a stale pre-release record behind the cleanup, while the fenced
         // records still close live/History authority until the release resolves.
         return [
+          ReleaseGenerationState().new(generation),
           LiveReleasesState().new([...get(LiveReleasesState()), release]),
           PendingLeavesState().new(
             get(PendingLeavesState()).map((item) => (item.domain === runtimeDomain ? { ...item, fenced: true } : item))
@@ -1153,6 +1509,7 @@ const SessionDomain = Remesh.domain({
         const displacedBinding = displaced ?? undefined
         const session: SessionBinding = {
           sourcePeerId: payload.sourcePeerId,
+          sourceGeneration: payload.sourceGeneration ?? 0,
           sessionId: message.sessionId,
           presenceId: message.presenceId,
           user: message.user,
@@ -1327,6 +1684,21 @@ const SessionDomain = Remesh.domain({
             ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
             : [])
         ]
+      }
+    })
+
+    const ApplyStagedSessionMessageCommand = domain.command({
+      name: 'Session.ApplyStagedSessionMessageCommand',
+      impl: ({ get }, payload: WirePreparedMessageEvent & { message: SessionMessage }) => {
+        const prepared = get(PreparedSessionsState()).find(
+          (item) =>
+            item.runtime.roomId === payload.roomId &&
+            item.stagedEpoch === payload.epoch &&
+            item.stagedChatGeneration === payload.roomGeneration
+        )
+        // A staged frame is never allowed to fall back into an ordinary prepared attempt or a
+        // committed domain. The route/epoch/generation triple is its complete authority.
+        return prepared ? ApplySessionMessageCommand(payload) : null
       }
     })
 
@@ -1716,6 +2088,17 @@ const SessionDomain = Remesh.domain({
         )
     })
     domain.effect({
+      name: 'Session.StagedWireSessionEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.PreparedMessageAcceptedEvent).pipe(
+          filter(
+            (event): event is WirePreparedMessageEvent & { message: SessionMessage } =>
+              'type' in event.message && event.message.type === MESSAGE_TYPE.SESSION
+          ),
+          map(ApplyStagedSessionMessageCommand)
+        )
+    })
+    domain.effect({
       name: 'Session.WireLiveEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
@@ -1736,6 +2119,8 @@ const SessionDomain = Remesh.domain({
         PreparedSessionQuery,
         PresenceDomainQuery,
         ReleasingDomainQuery,
+        LiveReleasesQuery,
+        ReleaseGenerationQuery,
         RetainedLocalSeedQuery,
         FinalizingPresenceQuery,
         RoomDomainQuery,
@@ -1744,9 +2129,16 @@ const SessionDomain = Remesh.domain({
       },
       command: {
         HydratePresenceCommand,
+        RecoverTransportStateCommand,
+        ReconcileRecoveredPresenceCommand,
         PrepareDomainCommand,
+        PrepareEpochDomainCommand,
         PublishPreparedCommand,
+        BindPreparedEpochCommand,
         CommitPreparedCommand,
+        SilentInstallEpochCommand,
+        AbortEpochCommand,
+        BeginEpochReplacementCommand,
         AbortPreparedCommand,
         BeginReleaseDomainCommand,
         ResetDomainConnectionCommand,
@@ -1763,6 +2155,7 @@ const SessionDomain = Remesh.domain({
       },
       event: {
         PreparedEvent,
+        EpochPreparedEvent,
         PreparationFailedEvent,
         PreparedPublishedEvent,
         PreparedPublishFailedEvent,
@@ -1773,6 +2166,7 @@ const SessionDomain = Remesh.domain({
         DomainReleaseFailedEvent,
         PresencePersistenceSettledEvent,
         RuntimeSessionChangedEvent,
+        RecoveryHydratedEvent,
         BindingChangedEvent,
         BindingRemovedEvent,
         OperationSucceededEvent,

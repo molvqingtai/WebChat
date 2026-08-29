@@ -13,6 +13,8 @@ const fixture = vi.hoisted(() => ({
   joinCalls: [] as string[],
   sendCalls: [] as { roomId: string; payload: string; target?: string | string[] }[],
   deliveries: [] as { roomId: string; payload: string }[],
+  leaveCalls: [] as string[],
+  closeCalls: [] as string[],
   readySendFailures: new Map<string, Error>(),
   queuedSendFailures: [] as Error[],
   joinShouldThrow: undefined as (() => Error) | undefined,
@@ -109,6 +111,7 @@ vi.mock('@rtco/client', () => {
     }
 
     leave() {
+      fixture.leaveCalls.push(this.roomId)
       if (fixture.leaveShouldThrow) throw fixture.leaveShouldThrow()
       this.emit('close')
     }
@@ -164,6 +167,7 @@ vi.mock('@rtco/client', () => {
     }
 
     close() {
+      fixture.closeCalls.push(this.id)
       if (fixture.closeShouldThrow) throw fixture.closeShouldThrow()
       this.closed = true
     }
@@ -212,6 +216,8 @@ beforeEach(() => {
   fixture.joinCalls.length = 0
   fixture.sendCalls.length = 0
   fixture.deliveries.length = 0
+  fixture.leaveCalls.length = 0
+  fixture.closeCalls.length = 0
   fixture.readySendFailures.clear()
   fixture.queuedSendFailures.length = 0
   fixture.room = null
@@ -223,6 +229,68 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Artico RoomTransport', () => {
+  it('retires exact Chat and World owners through both direct provider terminals before successors join', async () => {
+    const transport = createRoomTransport()
+    await transport.join('chat-a')
+    await transport.join('world-a')
+    const [chatPeer, worldPeer] = fixture.peers
+
+    await transport.retireRoomsForPreparation(['chat-a', 'world-a'])
+
+    expect(fixture.leaveCalls).toEqual(['chat-a', 'world-a'])
+    expect(fixture.closeCalls).toEqual([chatPeer!.id, worldPeer!.id])
+    expect(transport.peerIdOf('chat-a')).toBe('')
+    expect(transport.peerIdOf('world-a')).toBe('')
+    expect(fixture.joinCalls).toEqual(['chat-a', 'world-a'])
+
+    await transport.join('chat-a')
+    await transport.join('world-a')
+    expect(fixture.joinCalls).toEqual(['chat-a', 'world-a', 'chat-a', 'world-a'])
+    transport.dispose()
+  })
+
+  it.each(['leave', 'close'] as const)(
+    'propagates a direct provider %s failure before any successor is joined',
+    async (step) => {
+      const transport = createRoomTransport()
+      await transport.join('chat-a')
+      await transport.join('world-a')
+      const failure = new Error(`${step} rejected`)
+      if (step === 'leave') fixture.leaveShouldThrow = () => failure
+      else fixture.closeShouldThrow = () => failure
+
+      await expect(transport.retireRoomsForPreparation(['chat-a', 'world-a'])).rejects.toBe(failure)
+
+      expect(fixture.joinCalls).toEqual(['chat-a', 'world-a'])
+      expect(transport.peerIdOf('chat-a')).toBe('')
+      expect(transport.peerIdOf('world-a')).toBe('')
+      transport.dispose()
+    }
+  )
+
+  it('quarantines a failed owner until an explicit retirement reaches its physical terminal', async () => {
+    const transport = createRoomTransport()
+    await transport.join('chat-a')
+    const failure = new Error('old peer did not close')
+    fixture.closeShouldThrow = () => failure
+
+    try {
+      await expect(transport.retireRoomsForPreparation(['chat-a'])).rejects.toBe(failure)
+      await expect(transport.join('chat-a')).rejects.toBe(failure)
+      expect(fixture.peers).toHaveLength(1)
+      expect(fixture.joinCalls).toEqual(['chat-a'])
+
+      fixture.closeShouldThrow = undefined
+      await expect(transport.retireRoomsForPreparation(['chat-a'])).resolves.toBeUndefined()
+      await transport.join('chat-a')
+      expect(fixture.peers).toHaveLength(2)
+      expect(fixture.joinCalls).toEqual(['chat-a', 'chat-a'])
+    } finally {
+      fixture.closeShouldThrow = undefined
+      transport.dispose()
+    }
+  })
+
   it('uses one scoped peer and the fixed WebChat signaling endpoint per room', async () => {
     const transport = createRoomTransport()
 

@@ -47,25 +47,31 @@ describe('replaceable application boundaries', () => {
     )
     expect(messageStore).toMatch(/query\(query\?: MessageQuery\): Promise<readonly MessageRecord\[\]>/)
     expect(messageStore).not.toMatch(/\blist\s*\(|findAll|fetchHistory|HistoryCursor|syncId|mark|status|outbox/)
-    expect(implementation).toContain('.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })')
-    expect(runtimeContract).toContain('onSessionEvent')
+    // One projection boundary: the History MessageStore query carries the Chat record type and
+    // the controller abort signal inside the same argument object (formatter-stable fragment).
+    expect(implementation).toMatch(
+      /messageStore\.query\(\{\s*type: MESSAGE_RECORD_TYPE\.CHAT_MESSAGE,\s*signal: controller\.signal,?\s*\}\)/
+    )
+    // The Runtime contract is one-way: ordinary actions plus the pure current-state read; no
+    // Page remote callback surface exists for Runtime-to-Page state delivery.
+    expect(runtimeContract).toContain('getSnapshot')
+    expect(runtimeContract).not.toMatch(/onSessionEvent|onInbound|onWorldPresence|replayInbound/)
     expect(`${runtimeContract}\n${pagePort}`).not.toMatch(/onLocalSession|onSessionLeave/)
     expect(clock).not.toMatch(/setTimeout|clearTimeout/)
     expect(implementation).not.toMatch(/setTimeout:|clearTimeout:/)
   })
 
-  it('keeps production lease timers global instead of injectable', async () => {
-    const [clientLease, coordinator, background] = await Promise.all([
-      source('src/runtime/ClientLease.ts'),
-      source('src/runtime/Coordinator.ts'),
+  it('keeps production drain timing free of intervals', async () => {
+    const [documentClient, server, background] = await Promise.all([
+      source('src/runtime/DocumentClient.ts'),
+      source('src/runtime/Server.ts'),
       source('src/runtime/Background.ts')
     ])
 
-    expect(clientLease).not.toMatch(/\bsetInterval\??:|\bclearInterval\??:/)
-    expect(coordinator).not.toMatch(/\bsetInterval:|\bclearInterval:/)
+    expect(documentClient).not.toMatch(/\bsetInterval\??:|\bclearInterval\??:/)
+    expect(documentClient).not.toMatch(/\bsetTimeout\??:|\bclearTimeout\??:/)
+    expect(server).not.toMatch(/\bsetInterval:|\bclearInterval:/)
     expect(background).not.toMatch(/\bsetInterval:|\bclearInterval:/)
-    expect(`${clientLease}\n${coordinator}`).toContain('globalThis.setInterval')
-    expect(`${clientLease}\n${coordinator}`).toContain('globalThis.clearInterval')
   })
 
   it('never clears the canonical message database from startup or setup state', async () => {
@@ -86,7 +92,10 @@ describe('replaceable application boundaries', () => {
 
     expect(content.indexOf('createDocumentLifecycleOwner()')).toBeGreaterThan(-1)
     expect(content.indexOf('createDocumentLifecycleOwner()')).toBeLessThan(content.indexOf('createShadowRootUi(ctx'))
-    expect(content).toContain('initializeRuntime: initClient')
+    // The production readiness barrier: all three projection appliers are installed before the
+    // first drain pull, so initialization ready can only publish after every stage settles.
+    expect(content).toContain('initializeRuntime: () => initializeRuntimeImpl()')
+    expect(content.indexOf('activateApplicationDependencies()')).toBeLessThan(content.indexOf('return initClient()'))
     expect(content).toContain('detachRuntime: detachClient')
   })
 
@@ -243,7 +252,7 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain(
       'prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator)'
     )
-    expect(content).toContain('initializeRuntime: initClient')
+    expect(content).toContain('initializeRuntime: () => initializeRuntimeImpl()')
     expect(content).toContain('startInitializationLifecycle({')
     expect(content).toContain('dependencies: initializationDependencies')
     expect(content).toContain('activateApplicationDependencies')

@@ -5,9 +5,9 @@ import type { SendLifecycle } from '@/domain/externs/SendLifecycle'
 interface DocumentLifecycleDeps {
   store: RemeshStore
   sendLifecycle: SendLifecycle
-  /** Composition-provided lease operations supplied by the composition root (the owner only awaits completion). */
-  initLease: () => Promise<unknown>
-  detachLease: () => void
+  /** Composition-provided runtime init/detach operations supplied by the composition root (the owner only awaits completion). */
+  initRuntime: () => Promise<unknown>
+  detachRuntime: () => void
 }
 
 interface DocumentLifecycleOwner {
@@ -17,12 +17,12 @@ interface DocumentLifecycleOwner {
 
 /**
  * The one Content composition document-lifecycle owner. It coordinates page-scoped Runtime feedback,
- * active sends, ClientLease ownership, and restoration for terminal exit, BFCache suspension, and
+ * active sends, runtime attachment, and restoration for terminal exit, BFCache suspension, and
  * BFCache restoration. `beforeunload`/`pagehide`/`pageshow` feed this owner only; no Domain, component,
  * feedback adapter, or watchdog independently owns whether the document may attach or present state.
  *
  * Ordering per authority: on departure the owner first silences page feedback and removes the current
- * readiness presentation, then cancels page-owned work and releases the ClientLease exactly once, so
+ * readiness presentation, then cancels page-owned work and detaches the runtime exactly once, so
  * cleanup cannot create or update `webchat-runtime-readiness`. On persisted `pageshow` it starts exactly
  * one current attach/init and resumes feedback from the current Runtime snapshot. Terminal exits have no
  * restoration path. All transitions are idempotent.
@@ -40,7 +40,7 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
   }
   const cleanupOnce = () => {
     deps!.sendLifecycle.cancelActiveSends()
-    deps!.detachLease()
+    deps!.detachRuntime()
   }
   const invalidateRestore = () => {
     restoreGeneration += 1
@@ -69,7 +69,7 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
     // exactly one current attach/init. On completion (success or failure) feedback resumes aligned to the
     // current Runtime truth, unless a later suspend/terminal-exit/dispose invalidated this generation.
     documentState = 'active'
-    deps!.initLease().then(
+    deps!.initRuntime().then(
       () => {
         if (restoreGeneration !== generation || documentState !== 'active') return
         deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())

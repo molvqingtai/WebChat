@@ -155,14 +155,11 @@ beforeEach(() => {
   }))
   fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
   fixture.createChatRoomImpl.mockReturnValue({
-    value: fixture.chat,
-    epochSource: {
-      bindConnectionResultReporter: () => {},
-      bindStandaloneInvocation: () => {},
-      onHistoryFeedback: (listener: (event: { type: string; ownerId: string }) => void) => {
-        fixture.historyFeedbackListener = listener
-        return () => {}
-      }
+    bindConnectionResultReporter: () => {},
+    bindStandaloneInvocation: () => {},
+    onHistoryFeedback: (listener: (event: { type: string; ownerId: string }) => void) => {
+      fixture.historyFeedbackListener = listener
+      return () => {}
     }
   })
   fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })

@@ -13,8 +13,8 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
-import { ClientLease } from '@/runtime/ClientLease'
-import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
+import { DocumentClient } from '@/runtime/DocumentClient'
+import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 import { createDocumentLifecycleOwner } from './documentLifecycle'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
@@ -37,7 +37,7 @@ const flushMicrotasks = async () => {
 let databaseId = 0
 const activeStores = new Set<RemeshStore>()
 
-const createComposedFixture = (lease: ClientLease) => {
+const createComposedFixture = (lease: DocumentClient) => {
   const toast = {
     success: vi.fn(() => 'success'),
     error: vi.fn(() => RUNTIME_TOAST_ID),
@@ -109,7 +109,6 @@ describe('Content document-lifecycle owner composed parent control', () => {
   it('proves exact-once release/cancel, single readiness owner, and late-restore silence through the real owner', async () => {
     vi.useFakeTimers()
     const domain = 'https://example.test'
-    const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
       hostId: 'host-a',
       hostPhase: 'ready',
@@ -118,21 +117,20 @@ describe('Content document-lifecycle owner composed parent control', () => {
         {
           domain,
           phase: 'active',
-          pageIds: [pageId],
+          tabIds: [1],
+          inbound: [],
+          historyFeedback: [],
           chatRoomJoined: true,
           sessions: []
         }
       ],
-      world: { joined: true, peerId: 'peer-a', presences: [] }
+      world: { joined: true, peerId: 'peer-a', presences: [] },
+      failures: []
     }
-    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue({
-      phase: 'ready',
-      generation: 1,
-      snapshot: readySnapshot
-    })
-    const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
-      pageId,
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(readySnapshot)
+    const lease = new DocumentClient({
+      coordinator: { registerPage },
+      server: { getSnapshot: async () => readySnapshot } as never,
       domain
     })
     const detachSpy = vi.spyOn(lease, 'detach')
@@ -157,8 +155,8 @@ describe('Content document-lifecycle owner composed parent control', () => {
     owner.bind({
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
-      initLease: () => lease.init(),
-      detachLease: () => lease.detach()
+      initRuntime: () => lease.init(),
+      detachRuntime: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
     await vi.advanceTimersByTimeAsync(0)
@@ -239,7 +237,6 @@ describe('Content document-lifecycle owner composed parent control', () => {
   it('does not revive feedback or ownership when a held restore settles after terminal teardown', async () => {
     vi.useFakeTimers()
     const domain = 'https://example.test'
-    const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
       hostId: 'host-a',
       hostPhase: 'ready',
@@ -248,24 +245,27 @@ describe('Content document-lifecycle owner composed parent control', () => {
         {
           domain,
           phase: 'active',
-          pageIds: [pageId],
+          tabIds: [1],
+          inbound: [],
+          historyFeedback: [],
           chatRoomJoined: true,
           sessions: []
         }
       ],
-      world: { joined: true, peerId: 'peer-a', presences: [] }
+      world: { joined: true, peerId: 'peer-a', presences: [] },
+      failures: []
     }
-    let resolveHeld!: (value: RuntimePageRegistration) => void
-    const held = new Promise<RuntimePageRegistration>((resolve) => {
+    let resolveHeld!: (value: RuntimeSnapshot) => void
+    const held = new Promise<RuntimeSnapshot>((resolve) => {
       resolveHeld = resolve
     })
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot: readySnapshot })
+      .mockResolvedValueOnce(readySnapshot)
       .mockImplementationOnce(() => held)
-    const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
-      pageId,
+    const lease = new DocumentClient({
+      coordinator: { registerPage },
+      server: { getSnapshot: async () => readySnapshot } as never,
       domain
     })
     let readinessSubscriptions = 0
@@ -286,8 +286,8 @@ describe('Content document-lifecycle owner composed parent control', () => {
     owner.bind({
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
-      initLease: () => lease.init(),
-      detachLease: () => lease.detach()
+      initRuntime: () => lease.init(),
+      detachRuntime: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
     await vi.advanceTimersByTimeAsync(0)
@@ -308,7 +308,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     await flushMicrotasks()
     owner.dispose()
     fixture.store.discard()
-    resolveHeld({ phase: 'ready', generation: 2, snapshot: readySnapshot })
+    resolveHeld(readySnapshot)
     await vi.advanceTimersByTimeAsync(6000)
     await flushMicrotasks()
     expect(fixture.toast.loading).not.toHaveBeenCalled()

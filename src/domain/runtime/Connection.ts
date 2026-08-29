@@ -3,7 +3,7 @@ import { EMPTY, filter, map, merge, mergeMap, Observable, of, take, takeUntil } 
 import HistoryDomain from '@/domain/runtime/History'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
+import SessionDomain, { getChatRoomId, type SessionPreparationMode } from '@/domain/runtime/Session'
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import type { ChatSite, ChatUser } from '@/protocol'
@@ -21,7 +21,6 @@ interface JoinAttempt {
   mode: SessionPreparationMode
   domain: string
   generation: number
-  hostGeneration: number
   roomId?: string
   joinRequestId?: string
   /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
@@ -37,11 +36,19 @@ interface DomainGeneration {
 interface WorldRecoveryAttempt {
   requestId: string
   generation: number
-  hostGeneration: number
   joinRequestId: string
   /** True only for an AppButton manual World replacement: its failure stays out of page UI/Toast
    * while automatic recovery keeps its existing diagnostics. */
   manual?: boolean
+}
+
+/** Private record of the epoch that has consumed the shared publication gate. */
+interface DualEpochGate {
+  epoch: string
+  domain: string
+  attemptId: string
+  chatGeneration: number
+  worldGeneration: number
 }
 
 export interface ConnectionOperationSucceeded {
@@ -94,6 +101,20 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryAttemptState',
       default: null
     })
+    const DualEpochGateState = domain.state<DualEpochGate | null>({
+      name: 'Connection.DualEpochGateState',
+      default: null
+    })
+    /** Internal proof that all silent state moves finished in this synchronous store turn. */
+    const DualEpochInstallState = domain.state<DualEpochGate | null>({
+      name: 'Connection.DualEpochInstallState',
+      default: null
+    })
+    /** A private replacement cut has retired both physical owners and cleared current state. */
+    const DualEpochCutState = domain.state<DualEpochGate | null>({
+      name: 'Connection.DualEpochCutState',
+      default: null
+    })
     const AttemptsQuery = domain.query({ name: 'Connection.AttemptsQuery', impl: ({ get }) => get(AttemptsState()) })
     const PhaseQuery = domain.query({
       name: 'Connection.PhaseQuery',
@@ -104,23 +125,30 @@ const ConnectionDomain = Remesh.domain({
     })
     const SnapshotQuery = domain.query({
       name: 'Connection.SnapshotQuery',
-      impl: ({ get }): RuntimeSnapshot => {
+      impl: ({ get }): Omit<RuntimeSnapshot, 'failures'> => {
         const runtimes = get(sessionDomain.query.DomainsQuery())
         return {
           hostId: options.hostId,
-          hostPhase: get(lifecycleDomain.query.HostPhaseQuery()),
+          hostPhase: 'ready',
           peerId: get(wireDomain.query.PeerIdQuery(getWorldRoomId())),
           domains: get(lifecycleDomain.query.DomainLeasesQuery()).map((lease) => {
             const runtime = runtimes.find((item) => item.domain === lease.domain)
             return {
               domain: lease.domain,
               phase: lease.phase,
-              pageIds: lease.pageIds,
+              tabIds: lease.tabIds,
               chatRoomJoined: Boolean(runtime),
               localSession: runtime
-                ? { sessionId: runtime.sessionId, user: runtime.user, joinedAt: runtime.joinedAt }
+                ? {
+                    sessionId: runtime.sessionId,
+                    user: runtime.user,
+                    joinedAt: runtime.joinedAt,
+                    fresh: runtime.fresh
+                  }
                 : undefined,
-              sessions: runtime?.sessions ?? []
+              sessions: runtime?.sessions ?? [],
+              inbound: get(deliveryDomain.query.BufferedEventsQuery({ domain: lease.domain, after: 0 })),
+              historyFeedback: get(historyDomain.query.FeedbackOwnersQuery({ domain: lease.domain }))
             }
           }),
           world: {
@@ -157,8 +185,172 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryTimeoutArmedEvent'
     })
     const ErrorEvent = domain.event<RuntimeFailure>({ name: 'Connection.ErrorEvent' })
-    const WorldRecoveryAbortedEvent = domain.event<{ requestId: string; generation: number; hostGeneration: number }>({
+    const WorldRecoveryAbortedEvent = domain.event<{
+      requestId: string
+      generation: number
+      error: Error
+      manual: boolean
+    }>({
       name: 'Connection.WorldRecoveryAbortedEvent'
+    })
+    const WorldRecoveryCompletedEvent = domain.event<{ requestId: string; generation: number }>({
+      name: 'Connection.WorldRecoveryCompletedEvent'
+    })
+    /** Server-private common gate; emitted only after all three silent installs are complete. */
+    const DualEpochCommittedEvent = domain.event<{ epoch: string; domain: string }>({
+      name: 'Connection.DualEpochCommittedEvent'
+    })
+    const WorldRecoveryAttemptQuery = domain.query({
+      name: 'Connection.WorldRecoveryAttemptQuery',
+      impl: ({ get }) => get(WorldRecoveryAttemptState())
+    })
+    /** Server-private observability for the synchronous shared-gate interval. */
+    const DualEpochGateQuery = domain.query({
+      name: 'Connection.DualEpochGateQuery',
+      impl: ({ get }) => get(DualEpochGateState())
+    })
+    const DualEpochCutQuery = domain.query({
+      name: 'Connection.DualEpochCutQuery',
+      impl: ({ get }) => get(DualEpochCutState())
+    })
+
+    const BeginDualEpochReplacementCommand = domain.command({
+      name: 'Connection.BeginDualEpochReplacementCommand',
+      impl: ({ get }, payload: DualEpochGate) => {
+        if (
+          get(DualEpochCutState())?.epoch === payload.epoch ||
+          get(DualEpochGateState())?.epoch === payload.epoch ||
+          payload.chatGeneration !== get(wireDomain.query.RoomGenerationQuery(getChatRoomId(payload.domain))) + 1 ||
+          payload.worldGeneration !== get(wireDomain.query.RoomGenerationQuery(getWorldRoomId())) + 1
+        ) {
+          return null
+        }
+        // Server invokes this only after both physical routing cuts resolve. These state moves
+        // are silent, so no normal leave or empty current-state projection escapes during prepare.
+        return [
+          DualEpochGateState().new(null),
+          DualEpochInstallState().new(null),
+          DualEpochCutState().new(payload),
+          wireDomain.command.BeginEpochReplacementCommand({
+            rooms: [
+              { roomId: getChatRoomId(payload.domain), generation: payload.chatGeneration },
+              { roomId: getWorldRoomId(), generation: payload.worldGeneration }
+            ]
+          }),
+          // A replacement gets a fresh inbound sequence space. Retaining a prior buffered event
+          // would let an old negative ACK suppress a different record at sequence 1.
+          deliveryDomain.command.ReleaseDomainCommand(payload.domain),
+          sessionDomain.command.BeginEpochReplacementCommand({ domain: payload.domain }),
+          worldDomain.command.BeginEpochReplacementCommand({ epoch: payload.epoch })
+        ]
+      }
+    })
+
+    const CommitDualEpochCommand = domain.command({
+      name: 'Connection.CommitDualEpochCommand',
+      impl: ({ get }, payload: DualEpochGate) => {
+        if (get(DualEpochGateState())?.epoch === payload.epoch) return AbortDualEpochCommand(payload)
+        const session = get(sessionDomain.query.PreparedSessionQuery(payload.attemptId))
+        const world = get(
+          worldDomain.query.EpochStagedRegistrationQuery({
+            attemptId: payload.attemptId,
+            epoch: payload.epoch,
+            worldGeneration: payload.worldGeneration
+          })
+        )
+        const route = get(wireDomain.query.PreparedRouteQuery(payload.epoch))
+        if (
+          !session ||
+          session.runtime.domain !== payload.domain ||
+          session.stagedEpoch !== payload.epoch ||
+          session.stagedChatGeneration !== payload.chatGeneration ||
+          !world ||
+          !route ||
+          !route.ready ||
+          !get(wireDomain.query.IsPreparedRouteCurrentQuery(payload.epoch)) ||
+          !route.rooms.some(
+            (room) => room.roomId === session.runtime.roomId && room.generation === payload.chatGeneration
+          ) ||
+          !route.rooms.some((room) => room.roomId === getWorldRoomId() && room.generation === payload.worldGeneration)
+        ) {
+          return AbortDualEpochCommand(payload)
+        }
+        // Every silent install is a synchronous total state move guarded above. None emits an
+        // event, so the only observable terminal follows all three current slots.
+        return [
+          sessionDomain.command.SilentInstallEpochCommand({
+            attemptId: payload.attemptId,
+            epoch: payload.epoch,
+            chatGeneration: payload.chatGeneration
+          }),
+          worldDomain.command.SilentInstallEpochCommand({
+            attemptId: payload.attemptId,
+            epoch: payload.epoch,
+            worldGeneration: payload.worldGeneration
+          }),
+          wireDomain.command.SilentInstallPreparedRoomsCommand({ epoch: payload.epoch, rooms: route.rooms }),
+          DualEpochInstallState().new(payload),
+          PublishDualEpochCommand(payload)
+        ]
+      }
+    })
+
+    const PublishDualEpochCommand = domain.command({
+      name: 'Connection.PublishDualEpochCommand',
+      impl: ({ get }, payload: DualEpochGate) => {
+        const installed = get(DualEpochInstallState())
+        const session = get(sessionDomain.query.DomainQuery(payload.domain))
+        const world = get(worldDomain.query.RegistrationsQuery()).some((item) => item.domain === payload.domain)
+        const trusted =
+          Boolean(session && get(wireDomain.query.IsRoomTrustedQuery(session.roomId))) &&
+          get(wireDomain.query.IsRoomTrustedQuery(getWorldRoomId()))
+        if (
+          !installed ||
+          installed.epoch !== payload.epoch ||
+          installed.domain !== payload.domain ||
+          installed.attemptId !== payload.attemptId ||
+          installed.chatGeneration !== payload.chatGeneration ||
+          installed.worldGeneration !== payload.worldGeneration ||
+          !session ||
+          !world ||
+          !get(worldDomain.query.JoinedQuery()) ||
+          !trusted
+        ) {
+          return null
+        }
+        return [
+          DualEpochInstallState().new(null),
+          ...(get(DualEpochCutState())?.epoch === payload.epoch ? [DualEpochCutState().new(null)] : []),
+          DualEpochGateState().new(payload),
+          DualEpochCommittedEvent({ epoch: payload.epoch, domain: payload.domain })
+        ]
+      }
+    })
+
+    const AbortDualEpochCommand = domain.command({
+      name: 'Connection.AbortDualEpochCommand',
+      impl: ({ get }, payload: DualEpochGate) => {
+        const route = get(wireDomain.query.PreparedRouteQuery(payload.epoch))
+        const installing = get(DualEpochInstallState())
+        const cut = get(DualEpochCutState())
+        return [
+          ...(installing?.epoch === payload.epoch ? [DualEpochInstallState().new(null)] : []),
+          ...(cut?.epoch === payload.epoch ? [DualEpochCutState().new(null)] : []),
+          sessionDomain.command.AbortEpochCommand({
+            attemptId: payload.attemptId,
+            epoch: payload.epoch,
+            chatGeneration: payload.chatGeneration
+          }),
+          worldDomain.command.AbortEpochCommand({
+            attemptId: payload.attemptId,
+            epoch: payload.epoch,
+            worldGeneration: payload.worldGeneration
+          }),
+          ...(route
+            ? [wireDomain.command.AbortEpochPreparedRoomsCommand({ epoch: payload.epoch, rooms: route.rooms })]
+            : [])
+        ]
+      }
     })
 
     const startAttempt = (
@@ -191,7 +383,6 @@ const ConnectionDomain = Remesh.domain({
         mode: payload.mode,
         domain: payload.domain,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
         user: payload.user,
         site: payload.site
       }
@@ -428,11 +619,7 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { attemptId: string }) => {
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
-        if (
-          !attempt ||
-          attempt.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
-          !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))
-        ) {
+        if (!attempt || !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))) {
           return null
         }
         return [
@@ -477,26 +664,6 @@ const ConnectionDomain = Remesh.domain({
             ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
             : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
           AttemptFailedEvent({ ...attempt, error: payload.error })
-        ]
-      }
-    })
-
-    const AbortHostAttemptsCommand = domain.command({
-      name: 'Connection.AbortHostAttemptsCommand',
-      impl: ({ get }) => {
-        const attempts = get(AttemptsState())
-        if (attempts.length === 0) return null
-        const domains = [...new Set(attempts.map((attempt) => attempt.domain))]
-        return [
-          ...attempts.map((attempt) =>
-            AbortAttemptCommand({
-              attemptId: attempt.attemptId,
-              error: new Error('Runtime host destroyed during join')
-            })
-          ),
-          // Host loss invalidates every History owner attached to an in-flight attempt, including
-          // a committed recovery lane whose physical room generation is no longer usable.
-          ...domains.map((runtimeDomain) => historyDomain.command.ReleaseDomainCommand(runtimeDomain))
         ]
       }
     })
@@ -557,6 +724,10 @@ const ConnectionDomain = Remesh.domain({
     const RoomClosedCommand = domain.command({
       name: 'Connection.RoomClosedCommand',
       impl: ({ get }, payload: { roomId: string }) => {
+        // A closed prepared room belongs to the private dual epoch while its current owners are
+        // cut. Server aborts that epoch as one unit; ordinary recovery here would install a ROOM
+        // successor after the shared attempt already failed.
+        if (get(DualEpochCutState())) return null
         if (payload.roomId === getWorldRoomId()) {
           if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
           return startWorldRecovery(get)
@@ -595,7 +766,6 @@ const ConnectionDomain = Remesh.domain({
       const recovery: WorldRecoveryAttempt = {
         requestId,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
         joinRequestId: worldJoinRequestId(requestId),
         ...(manual ? { manual: true } : {})
       }
@@ -628,11 +798,7 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryDomainRecoveryCommand = domain.command({
       name: 'Connection.RetryDomainRecoveryCommand',
-      impl: (
-        { get },
-        payload: { domain: string; generation: number; hostGeneration: number; user?: ChatUser; site?: ChatSite }
-      ) => {
-        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+      impl: ({ get }, payload: { domain: string; generation: number; user?: ChatUser; site?: ChatSite }) => {
         if (!get(lifecycleDomain.query.DomainLeaseQuery(payload.domain))) return null
         if (get(AttemptsState()).some((item) => item.domain === payload.domain)) return null
         const current = get(GenerationsState()).find((item) => item.domain === payload.domain)?.generation ?? 0
@@ -652,8 +818,7 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryWorldRecoveryCommand = domain.command({
       name: 'Connection.RetryWorldRecoveryCommand',
-      impl: ({ get }, payload: { generation: number; hostGeneration: number }) => {
-        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+      impl: ({ get }, payload: { generation: number }) => {
         if (get(WorldRecoveryGenerationState()) !== payload.generation) return null
         if (get(WorldRecoveryAttemptState())) return null
         // Recovery proceeds from preserved World demand (active registrations/local presence), never
@@ -670,14 +835,17 @@ const ConnectionDomain = Remesh.domain({
         if (
           !recovery ||
           recovery.requestId !== payload.requestId ||
-          recovery.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
           // The completion gate is preserved World registration/demand and exact recovery identity:
           // a Domain reset's zero-committed-Domain interval never strands a settled World child.
           get(worldDomain.query.LocalPresenceQuery()) === null
         ) {
           return null
         }
-        return [WorldRecoveryAttemptState().new(null), worldDomain.command.CommitRecoveryCommand(payload.requestId)]
+        return [
+          WorldRecoveryAttemptState().new(null),
+          worldDomain.command.CommitRecoveryCommand(payload.requestId),
+          WorldRecoveryCompletedEvent({ requestId: recovery.requestId, generation: recovery.generation })
+        ]
       }
     })
 
@@ -703,7 +871,8 @@ const ConnectionDomain = Remesh.domain({
           WorldRecoveryAbortedEvent({
             requestId: recovery.requestId,
             generation: recovery.generation,
-            hostGeneration: recovery.hostGeneration
+            error: payload.error,
+            manual: Boolean(recovery.manual)
           })
         ]
       }
@@ -919,8 +1088,7 @@ const ConnectionDomain = Remesh.domain({
               fromEvent(wireDomain.event.PeerLeftEvent).pipe(
                 filter((event) => event.roomId === payload.roomId && event.sourcePeerId === payload.sourcePeerId)
               ),
-              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId)),
-              fromEvent(lifecycleDomain.event.HostDestroyedEvent)
+              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId))
             )
 
             const roomReady$: Observable<null> = trusted
@@ -954,10 +1122,6 @@ const ConnectionDomain = Remesh.domain({
     domain.effect({
       name: 'Connection.PeerLeaveEffect',
       impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerLeftEvent).pipe(map(PeerLeftCommand))
-    })
-    domain.effect({
-      name: 'Connection.HostDestroyedEffect',
-      impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.HostDestroyedEvent).pipe(map(AbortHostAttemptsCommand))
     })
     domain.effect({
       name: 'Connection.RoomCloseEffect',
@@ -1054,7 +1218,6 @@ const ConnectionDomain = Remesh.domain({
             RetryDomainRecoveryCommand({
               domain: attempt.domain,
               generation: attempt.generation,
-              hostGeneration: attempt.hostGeneration,
               user: attempt.user,
               site: attempt.site
             })
@@ -1073,6 +1236,7 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryRetryEffect',
       impl: ({ fromEvent }) =>
         fromEvent(WorldRecoveryAbortedEvent).pipe(
+          filter((payload) => !payload.manual),
           mergeMap(
             (payload) =>
               new Observable<typeof payload>((observer) => {
@@ -1083,21 +1247,29 @@ const ConnectionDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          map((payload) =>
-            RetryWorldRecoveryCommand({ generation: payload.generation, hostGeneration: payload.hostGeneration })
-          )
+          map((payload) => RetryWorldRecoveryCommand({ generation: payload.generation }))
         )
     })
 
     return {
-      query: { AttemptsQuery, PhaseQuery, SnapshotQuery },
+      query: {
+        AttemptsQuery,
+        PhaseQuery,
+        SnapshotQuery,
+        WorldRecoveryAttemptQuery,
+        DualEpochGateQuery,
+        DualEpochCutQuery
+      },
       command: {
         JoinDomainCommand,
         LeaveDomainCommand,
         ReconnectDomainCommand,
         RefreshWorldCommand,
         DestroyDomainConnectionCommand,
-        FailOperationCommand
+        FailOperationCommand,
+        BeginDualEpochReplacementCommand,
+        CommitDualEpochCommand,
+        AbortDualEpochCommand
       },
       event: {
         OperationSucceededEvent,
@@ -1109,7 +1281,10 @@ const ConnectionDomain = Remesh.domain({
         AttemptSupersededEvent,
         ConnectionJoinedEvent,
         ConnectionLeftEvent,
-        ErrorEvent
+        ErrorEvent,
+        WorldRecoveryAbortedEvent,
+        WorldRecoveryCompletedEvent,
+        DualEpochCommittedEvent
       }
     }
   }

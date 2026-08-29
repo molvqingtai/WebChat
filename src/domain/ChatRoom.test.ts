@@ -24,7 +24,7 @@ import {
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
-import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
+import type { RuntimeServer, RuntimeSession, RuntimeSnapshot } from '@/runtime/Contract'
 import { stringToHex } from '@/utils'
 
 const WIRE_SELF = { id: 'local-user', name: 'Local', avatar: '' }
@@ -239,9 +239,8 @@ const join = async (fixture: ReturnType<typeof createFixture>) => {
   fixture.emitSessions([SELF_SESSION])
 }
 
-type PendingConnectionStage = 'callback-registration' | 'replay' | 'replay-write'
-
-const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
+/** A held joinRoom RPC exercises the page connection-attempt timeout, then a fresh attempt. */
+const createPendingConnectionFixture = () => {
   vi.stubGlobal('document', {
     location: { origin: 'https://pending-connection.example' },
     title: '',
@@ -249,59 +248,40 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
   })
   const domain = 'https://pending-connection.example'
   const localUser = { id: SELF.id, name: SELF.name, avatar: SELF.avatar }
-  const local = { sessionId: 'local-session', user: localUser, joinedAt: 1 }
-  const remote = { sourcePeerId: 'remote-peer', sessionId: 'remote-session', user: REMOTE, joinedAt: 2 }
-  let hostId = 'host-1'
+  const local = { sessionId: 'local-session', user: localUser, joinedAt: 1, fresh: true }
   let joinCalls = 0
-  let sessionRegistrationCalls = 0
-  let replayCalls = 0
-  let readyListener: (() => void) | null = null
-  let sessionListener: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
   const entered = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   const errors: Error[] = []
   const connectedSnapshot = (): RuntimeSnapshot => ({
-    hostId,
+    hostId: 'host-1',
     hostPhase: 'ready',
     peerId: 'local-peer',
     domains: [
       {
         domain,
         phase: 'active',
-        pageIds: ['page-1'],
+        tabIds: [1],
         chatRoomJoined: true,
         localSession: local,
-        sessions: []
+        sessions: [],
+        inbound: [],
+        historyFeedback: []
       }
     ],
-    world: { joined: true, peerId: 'local-peer', presences: [] }
+    world: { joined: true, peerId: 'local-peer', presences: [] },
+    failures: []
   })
-  const replayRecord: TextMessageRecord = {
-    type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-    id: 'replayed-message',
-    message: {
-      type: MESSAGE_TYPE.TEXT,
-      id: 'replayed-message',
-      hlc: { timestamp: 1, counter: 0 },
-      userId: REMOTE.id,
-      body: 'replayed',
-      mentions: []
-    },
-    user: REMOTE,
-    receivedAt: 1
-  }
+  let holdFirstJoin = true
   const server: RuntimeServer = {
     attachPage: async () => connectedSnapshot(),
-    detachPage: async () => {},
     getSnapshot: async () => connectedSnapshot(),
     joinChatRoom: async () => {
       joinCalls += 1
-      await sessionListener?.({
-        type: 'snapshot',
-        domain,
-        snapshot: { localSession: local, sessions: [] },
-        provenance: 'join'
-      })
+      if (holdFirstJoin) {
+        entered.resolve()
+        await release.promise
+      }
       return connectedSnapshot()
     },
     leaveChatRoom: async () => {},
@@ -313,75 +293,14 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     },
     sendChatMessage: async ({ event }) => event,
     ackInbound: async () => {},
-    replayInbound: async () => {
-      replayCalls += 1
-      if (stage === 'replay' && replayCalls === 1) {
-        entered.resolve()
-        await release.promise
-      }
-      return stage === 'replay-write' ? [{ sequence: 1, domain, record: replayRecord, source: 'history' as const }] : []
-    },
     reconnectDomain: async () => {},
-    onInbound: async () => {},
-    onSessionEvent: async (_payload, listener) => {
-      sessionRegistrationCalls += 1
-      if (stage === 'callback-registration' && sessionRegistrationCalls === 1) {
-        entered.resolve()
-        await release.promise
-      }
-      sessionListener = listener
-    },
-    onWorldPresence: async () => {},
-    onError: async () => {},
     provideHistory: async () => {},
     resolveHistorySupply: async () => {},
-    rejectHistorySupply: async () => {},
-    onHistoryFeedback: async () => {}
+    rejectHistorySupply: async () => {}
   }
-  const database = createMemoryMessageDatabase(`pending-connection-${stage}-${databaseId++}`)
+  const database = createMemoryMessageDatabase(`pending-connection-${databaseId++}`)
   const messageStore = createMessageStore(database)
-  let replayWriteCalls = 0
-  let replayWriteAborted = false
-  if (stage === 'replay-write') {
-    const insert = messageStore.insert.bind(messageStore)
-    const controlled = messageStore as typeof messageStore & {
-      insert: (record: MessageRecord, options?: { signal?: AbortSignal }) => ReturnType<typeof messageStore.insert>
-    }
-    controlled.insert = async (record, options: { signal?: AbortSignal } = {}) => {
-      if (record.id === replayRecord.id && replayWriteCalls === 0) {
-        replayWriteCalls += 1
-        entered.resolve()
-        await new Promise<void>((resolve, reject) => {
-          const onAbort = () => {
-            replayWriteAborted = true
-            options?.signal?.removeEventListener('abort', onAbort)
-            reject(options?.signal?.reason ?? new DOMException('Replay write aborted', 'AbortError'))
-          }
-          options?.signal?.addEventListener('abort', onAbort, { once: true })
-          release.promise.then(() => {
-            options?.signal?.removeEventListener('abort', onAbort)
-            resolve()
-          }, reject)
-          if (options?.signal?.aborted) onAbort()
-        })
-      }
-      return insert(record)
-    }
-  }
-  const adapter = new RuntimeChatRoom({
-    server,
-    messageStore,
-    pageDomain: domain,
-    pageId: 'page-1',
-    getSnapshot: connectedSnapshot,
-    whenReady: (listener) => {
-      readyListener = listener
-      listener()
-      return () => {
-        if (readyListener === listener) readyListener = null
-      }
-    }
-  })
+  const adapter = new RuntimeChatRoom({ server, messageStore, pageDomain: domain })
   const lifecycleBundle = createConnectionLifecycle()
   adapter.bindConnectionResultReporter(lifecycleBundle.report)
   adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
@@ -423,30 +342,18 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
   return {
     adapter,
     entered: entered.promise,
-    release: () => release.resolve(),
+    release: () => {
+      holdFirstJoin = false
+      release.resolve()
+    },
     startJoin: () => store.send(room.command.JoinRoomCommand()),
     loading: () => store.query(room.query.ConnectionIsLoadingQuery()),
     finished: () => store.query(room.query.JoinIsFinishedQuery()),
     users: () => store.query(room.query.UserListQuery()),
     errors,
     joinCalls: () => joinCalls,
-    sessionRegistrationCalls: () => sessionRegistrationCalls,
-    replayWriteAborted: () => replayWriteAborted,
     localUser,
-    replaceHost: () => {
-      hostId = 'host-2'
-      readyListener?.()
-    },
-    emitRemote: async () => {
-      await sessionListener?.({
-        type: 'join',
-        domain,
-        snapshot: { localSession: local, sessions: [remote] },
-        session: remote,
-        provenance: 'live'
-      })
-    },
-    records: () => messageStore.query(),
+    applyProjection: () => adapter.applyChat(connectedSnapshot()),
     dispose: async () => {
       release.resolve()
       store.discard()
@@ -558,82 +465,32 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it.each(['callback-registration', 'replay', 'replay-write'] as const)(
-    'settles a timed-out %s attempt and admits a fresh page attempt',
-    async (stage) => {
-      vi.useFakeTimers()
-      const fixture = createPendingConnectionFixture(stage)
-      fixture.startJoin()
-      await fixture.entered
-      expect(fixture.users()).toEqual([])
-      expect(fixture.loading()).toBe(true)
-
-      try {
-        await vi.advanceTimersByTimeAsync(10001)
-        await vi.advanceTimersByTimeAsync(0)
-
-        expect(fixture.finished()).toBe(false)
-        expect(fixture.loading()).toBe(false)
-        expect(fixture.users()).toEqual([])
-        expect(fixture.joinCalls()).toBe(0)
-        expect(fixture.errors).toEqual([new Error('Connection timed out')])
-
-        fixture.startJoin()
-        await vi.waitFor(() => expect(fixture.finished()).toBe(true))
-        expect(fixture.loading()).toBe(false)
-        expect(fixture.users()).toEqual([fixture.localUser])
-        expect(fixture.joinCalls()).toBe(1)
-        if (stage === 'replay-write') {
-          expect(fixture.replayWriteAborted()).toBe(true)
-          await expect(fixture.records()).resolves.toEqual(
-            expect.arrayContaining([expect.objectContaining({ id: 'replayed-message' })])
-          )
-        }
-
-        fixture.release()
-        await vi.advanceTimersByTimeAsync(0)
-        if (stage === 'callback-registration') {
-          await vi.waitFor(() => expect(fixture.sessionRegistrationCalls()).toBeGreaterThanOrEqual(3))
-          await fixture.emitRemote()
-          expect(fixture.users()).toEqual([fixture.localUser, REMOTE])
-        }
-        expect(fixture.joinCalls()).toBe(1)
-      } finally {
-        fixture.release()
-        await vi.advanceTimersByTimeAsync(0)
-        await fixture.dispose()
-        vi.useRealTimers()
-      }
-    }
-  )
-
-  it('cancels the old page attempt on host replacement and settles only the fresh generation', async () => {
+  it('settles a timed-out held join attempt and admits a fresh page attempt', async () => {
     vi.useFakeTimers()
-    const fixture = createPendingConnectionFixture('callback-registration')
+    const fixture = createPendingConnectionFixture()
     fixture.startJoin()
     await fixture.entered
+    expect(fixture.users()).toEqual([])
+    expect(fixture.loading()).toBe(true)
 
     try {
-      fixture.replaceHost()
+      await vi.advanceTimersByTimeAsync(10001)
       await vi.advanceTimersByTimeAsync(0)
-      expect(fixture.loading()).toBe(false)
-      expect(fixture.finished()).toBe(false)
-      expect(fixture.users()).toEqual([])
-      expect(fixture.joinCalls()).toBe(0)
-      expect(fixture.errors).toEqual([])
 
+      expect(fixture.finished()).toBe(false)
+      expect(fixture.loading()).toBe(false)
+      expect(fixture.users()).toEqual([])
+      expect(fixture.joinCalls()).toBe(1)
+      expect(fixture.errors).toEqual([new Error('Page connection attempt timed out')])
+
+      // The fresh attempt is admitted immediately and completes the joined state.
+      fixture.release()
       fixture.startJoin()
       await vi.waitFor(() => expect(fixture.finished()).toBe(true))
       expect(fixture.loading()).toBe(false)
+      expect(fixture.joinCalls()).toBe(2)
+      fixture.applyProjection()
       expect(fixture.users()).toEqual([fixture.localUser])
-      expect(fixture.joinCalls()).toBe(1)
-
-      fixture.release()
-      await vi.advanceTimersByTimeAsync(0)
-      await vi.waitFor(() => expect(fixture.sessionRegistrationCalls()).toBeGreaterThanOrEqual(3))
-      await fixture.emitRemote()
-      expect(fixture.users()).toEqual([fixture.localUser, REMOTE])
-      expect(fixture.joinCalls()).toBe(1)
     } finally {
       fixture.release()
       await vi.advanceTimersByTimeAsync(0)
@@ -932,7 +789,7 @@ describe('ChatRoomDomain exact application port', () => {
     const local = { sessionId: 'local-session', user, joinedAt: 100 }
     const remote = { sourcePeerId: 'remote-peer', sessionId: 'remote-session-1', user, joinedAt: 200 }
     const replacement = { ...remote, sessionId: 'remote-session-2', joinedAt: 300 }
-    const runtimeSnapshot: RuntimeSnapshot = {
+    const runtimeSnapshot = (sessions: RuntimeSession[] = []): RuntimeSnapshot => ({
       hostId: 'same-user-host',
       hostPhase: 'ready',
       peerId: 'local-peer',
@@ -940,28 +797,21 @@ describe('ChatRoomDomain exact application port', () => {
         {
           domain,
           phase: 'active',
-          pageIds: ['page-1'],
+          tabIds: [1],
           chatRoomJoined: true,
-          localSession: local,
-          sessions: []
+          localSession: { ...local, fresh: true },
+          sessions,
+          inbound: [],
+          historyFeedback: []
         }
       ],
-      world: { joined: false, peerId: 'local-peer', presences: [] }
-    }
-    let sessionListener: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
-    const server = {
-      attachPage: async () => runtimeSnapshot,
-      detachPage: async () => {},
-      getSnapshot: async () => runtimeSnapshot,
-      joinChatRoom: async () => {
-        await sessionListener?.({
-          type: 'snapshot',
-          domain,
-          snapshot: { localSession: local, sessions: [] },
-          provenance: 'join'
-        })
-        return runtimeSnapshot
-      },
+      world: { joined: false, peerId: 'local-peer', presences: [] },
+      failures: []
+    })
+    const server: RuntimeServer = {
+      attachPage: async () => runtimeSnapshot(),
+      getSnapshot: async () => runtimeSnapshot(),
+      joinChatRoom: async () => runtimeSnapshot(),
       leaveChatRoom: async () => {},
       allocateTextMessage: async () => {
         throw new Error('not used')
@@ -971,32 +821,14 @@ describe('ChatRoomDomain exact application port', () => {
       },
       sendChatMessage: async ({ event }) => event,
       ackInbound: async () => {},
-      replayInbound: async () => [],
       reconnectDomain: async () => {},
-      onInbound: async () => {},
-      onSessionEvent: async (_payload, listener) => {
-        sessionListener = listener
-      },
-      onWorldPresence: async () => {},
-      onError: async () => {},
       provideHistory: async () => {},
       resolveHistorySupply: async () => {},
-      rejectHistorySupply: async () => {},
-      onHistoryFeedback: async () => {}
-    } satisfies RuntimeServer
+      rejectHistorySupply: async () => {}
+    }
     const database = createMemoryMessageDatabase(`same-user-domain-${databaseId++}`)
     const messageStore = createMessageStore(database)
-    const adapter = new RuntimeChatRoom({
-      server,
-      messageStore,
-      pageDomain: domain,
-      pageId: 'page-1',
-      getSnapshot: () => runtimeSnapshot,
-      whenReady: (listener) => {
-        listener()
-        return () => {}
-      }
-    })
+    const adapter = new RuntimeChatRoom({ server, messageStore, pageDomain: domain })
     const storage: Storage = {
       get: async <T extends StorageValue>() => SELF as T,
       set: async () => {},
@@ -1025,30 +857,11 @@ describe('ChatRoomDomain exact application port', () => {
     await vi.waitFor(() => expect(store.query(room.query.JoinIsFinishedQuery())).toBe(true))
     await vi.waitFor(async () => expect(await messageStore.query()).toHaveLength(1))
 
-    await sessionListener?.({
-      type: 'join',
-      domain,
-      snapshot: { localSession: local, sessions: [remote] },
-      session: remote,
-      provenance: 'live'
-    })
-    await sessionListener?.({
-      type: 'replace',
-      domain,
-      snapshot: { localSession: local, sessions: [replacement] },
-      previous: remote,
-      session: replacement,
-      occurredAt: 300,
-      provenance: 'live'
-    })
-    await sessionListener?.({
-      type: 'leave',
-      domain,
-      snapshot: { localSession: local, sessions: [] },
-      session: replacement,
-      occurredAt: 400,
-      provenance: 'live'
-    })
+    // A live remote join of the SAME user integrates into one membership; a replacement and a
+    // final departure project through successive current projections.
+    adapter.applyChat(runtimeSnapshot([remote]))
+    adapter.applyChat(runtimeSnapshot([replacement]))
+    adapter.applyChat(runtimeSnapshot([]))
     await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
 
     const notices = (await messageStore.query()).filter(
@@ -1173,17 +986,19 @@ describe('ChatRoomDomain exact application port', () => {
         {
           domain: pageDomain,
           phase: 'active',
-          pageIds: ['accepted-transport-page'],
+          tabIds: [1],
           chatRoomJoined: true,
           localSession: { sessionId: 'accepted-transport-session', user: WIRE_SELF, joinedAt: 1 },
-          sessions: []
+          sessions: [],
+          inbound: [],
+          historyFeedback: []
         }
       ],
-      world: { joined: false, peerId: 'accepted-transport-peer', presences: [] }
+      world: { joined: false, peerId: 'accepted-transport-peer', presences: [] },
+      failures: []
     }
-    const server = {
+    const server: RuntimeServer = {
       attachPage: async () => runtimeSnapshot,
-      detachPage: async () => {},
       getSnapshot: async () => runtimeSnapshot,
       joinChatRoom: async () => runtimeSnapshot,
       leaveChatRoom: async () => {},
@@ -1220,28 +1035,12 @@ describe('ChatRoomDomain exact application port', () => {
         return event
       },
       ackInbound: async () => {},
-      replayInbound: async () => [],
       reconnectDomain: async () => {},
-      onInbound: async () => {},
-      onSessionEvent: async () => {},
-      onWorldPresence: async () => {},
-      onError: async () => {},
       provideHistory: async () => {},
       resolveHistorySupply: async () => {},
-      rejectHistorySupply: async () => {},
-      onHistoryFeedback: async () => {}
-    } satisfies RuntimeServer
-    const adapter = new RuntimeChatRoom({
-      server,
-      messageStore: adapterStore,
-      pageDomain,
-      pageId: 'accepted-transport-page',
-      getSnapshot: () => runtimeSnapshot,
-      whenReady: (listener) => {
-        listener()
-        return () => {}
-      }
-    })
+      rejectHistorySupply: async () => {}
+    }
+    const adapter = new RuntimeChatRoom({ server, messageStore: adapterStore, pageDomain })
     const fixture = createFixture({ chat: adapter })
     await join(fixture)
     const projected: string[] = []
