@@ -21,7 +21,7 @@ const fixture = vi.hoisted(() => ({
   hostClicks: 0,
   viewTransitions: [] as ViewTransition[],
   markdown:
-    '![Wide](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22120%22%20height%3D%2260%22%3E%3Crect%20width%3D%22120%22%20height%3D%2260%22%20fill%3D%22red%22%2F%3E%3C%2Fsvg%3E)\n\n![Large](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221200%22%20height%3D%221200%22%3E%3Crect%20width%3D%221200%22%20height%3D%221200%22%20fill%3D%22green%22%2F%3E%3C%2Fsvg%3E)'
+    '![Wide](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22120%22%20height%3D%2260%22%3E%3Crect%20width%3D%22120%22%20height%3D%2260%22%20fill%3D%22red%22%2F%3E%3C%2Fsvg%3E)\n\n![Large](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221200%22%20height%3D%221200%22%3E%3Crect%20width%3D%221200%22%20height%3D%221200%22%20fill%3D%22green%22%2F%3E%3C%2Fsvg%3E)\n\n![Landscape](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221600%22%20height%3D%22800%22%3E%3Crect%20width%3D%221600%22%20height%3D%22800%22%20fill%3D%22blue%22%2F%3E%3C%2Fsvg%3E)\n\n![Portrait](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22800%22%20height%3D%221600%22%3E%3Crect%20width%3D%22800%22%20height%3D%221600%22%20fill%3D%22purple%22%2F%3E%3C%2Fsvg%3E)'
 }))
 
 const MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY = '--webchat-media-preview-transition-name'
@@ -474,6 +474,63 @@ describe('MediaPreview production browser boundary', () => {
     expect(toolbarRect.bottom).toBeLessThanOrEqual(window.innerHeight - 23)
   })
 
+  it('rotates landscape and portrait previews through 90 and 270 degrees with swapped fit and clamped pan', async () => {
+    await startContent()
+
+    const verifyQuarterTurns = async (name: string, rotatedIsPortrait: boolean) => {
+      const trigger = await page.getByRole('button', { name: `Preview ${name}` }).findElement()
+      await page.elementLocator(trigger).click()
+      await vi.waitFor(() => expect(previewImage()?.complete && previewImage()!.naturalWidth > 0).toBe(true))
+      await settleNativeViewTransitions()
+
+      const image = previewImage()!
+      for (let click = 0; click < 12; click += 1) {
+        await page.getByRole('button', { name: 'Zoom in' }).click()
+      }
+      await vi.waitFor(() => expect(previewScale()).toBe(4))
+
+      const rotate = page.getByRole('button', { name: 'Rotate clockwise' })
+      await rotate.click()
+      await vi.waitFor(() => expect(image.style.transform).toContain('rotate(90deg)'))
+      expect(previewScale()).toBe(4)
+
+      const interactionRect = previewInteractionArea().getBoundingClientRect()
+      const assertClamped = () => {
+        const rect = image.getBoundingClientRect()
+        expect(rect.left).toBeLessThanOrEqual(interactionRect.left + 0.5)
+        expect(rect.right).toBeGreaterThanOrEqual(interactionRect.right - 0.5)
+        expect(rect.top).toBeLessThanOrEqual(interactionRect.top + 0.5)
+        expect(rect.bottom).toBeGreaterThanOrEqual(interactionRect.bottom - 0.5)
+      }
+      const ninetyDegreeRect = image.getBoundingClientRect()
+      if (rotatedIsPortrait) expect(ninetyDegreeRect.width).toBeLessThan(ninetyDegreeRect.height)
+      else expect(ninetyDegreeRect.width).toBeGreaterThan(ninetyDegreeRect.height)
+      const center = {
+        x: interactionRect.left + interactionRect.width / 2,
+        y: interactionRect.top + interactionRect.height / 2
+      }
+      await physicalMouseDrag(center, { x: interactionRect.right + 400, y: interactionRect.bottom + 400 })
+      await vi.waitFor(assertClamped)
+
+      await rotate.click()
+      await rotate.click()
+      await vi.waitFor(() => expect(image.style.transform).toContain('rotate(270deg)'))
+      expect(previewScale()).toBe(4)
+      const twoSeventyDegreeRect = image.getBoundingClientRect()
+      if (rotatedIsPortrait) expect(twoSeventyDegreeRect.width).toBeLessThan(twoSeventyDegreeRect.height)
+      else expect(twoSeventyDegreeRect.width).toBeGreaterThan(twoSeventyDegreeRect.height)
+      await physicalMouseDrag(center, { x: interactionRect.left - 400, y: interactionRect.top - 400 })
+      await vi.waitFor(assertClamped)
+
+      await page.getByRole('button', { name: 'Close preview' }).click()
+      await vi.waitFor(() => expect(previewDialog()).toBeNull())
+      await settleNativeViewTransitions()
+    }
+
+    await verifyQuarterTurns('Landscape', true)
+    await verifyQuarterTurns('Portrait', false)
+  })
+
   it('contains composed preview clicks while preserving an outside host control click', async () => {
     const hostile = await startContent()
     const trigger = await page.getByRole('button', { name: 'Preview Large' }).findElement()
@@ -486,7 +543,7 @@ describe('MediaPreview production browser boundary', () => {
     await page.getByRole('button', { name: 'Zoom in' }).click()
     await page.getByRole('button', { name: 'Zoom out' }).click()
     await page.getByRole('button', { name: 'Zoom in' }).click()
-    await page.getByRole('button', { name: 'Reset zoom' }).click()
+    await page.getByRole('button', { name: 'Rotate clockwise' }).click()
     await page.getByRole('button', { name: 'Close preview' }).click()
     await vi.waitFor(() => expect(previewDialog()).toBeNull())
     await settleNativeViewTransitions()
@@ -556,7 +613,8 @@ describe('MediaPreview production browser boundary', () => {
     await vi.waitFor(() => expect(previewScale()).toBe(1.5))
     expect(window.scrollY).toBe(initialScroll)
 
-    await page.getByRole('button', { name: 'Reset zoom' }).click()
+    await userEvent.keyboard('0')
+    await vi.waitFor(() => expect(previewScale()).toBe(1))
     await physicalWheel({ x: 8, y: 8 }, -100)
     await vi.waitFor(() => expect(previewScale()).toBe(1.25))
     expect(window.scrollY).toBe(initialScroll)
