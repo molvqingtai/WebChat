@@ -31,8 +31,8 @@ const groupedRow = (
     last
   />
 )
-const harness = (historyReady: boolean, children: ReactElement[]) => (
-  <div style={{ display: 'grid', gridTemplateRows: '1fr', height: '240px', width: '360px' }}>
+const harness = (historyReady: boolean, children: ReactElement[], height = '240px') => (
+  <div style={{ display: 'grid', gridTemplateRows: '1fr', height, width: '360px' }}>
     <MessageList>{historyReady ? children : null}</MessageList>
   </div>
 )
@@ -620,5 +620,201 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
     )
     expect(followAction()?.getAttribute('data-state')).toBe('closed')
     expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+  })
+})
+
+describe('MessageList scrollback threshold and growth reconciliation (S1+S2 repair)', () => {
+  // Geometry basis: the harness viewport is 240px tall, so the lawful visibility gate is a
+  // bottom distance greater than 120px (0.5 * current clientHeight). The arrival count is
+  // retained internally at any distance and never overrides the gate.
+  const scrollToDistance = (element: HTMLElement, distance: number) => {
+    element.scrollTo({ top: element.scrollHeight - element.clientHeight - distance, behavior: 'auto' })
+  }
+
+  it('hides the action at a 0.4-viewport bottom distance and at the exact 0.5 boundary', async () => {
+    const initialRows = history(24)
+    await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    // Anchor on a real visible state first: every later hidden assertion then proves an
+    // actual state transition instead of passing before the scroll is observed.
+    scrollToDistance(scrollParent, 144) // 0.6 * 240
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('open'))
+
+    scrollToDistance(scrollParent, 120) // exactly 0.5: the contract hides at <= 0.5
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('closed'))
+
+    scrollToDistance(scrollParent, 96) // 0.4 * 240
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('closed'))
+    expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+  })
+
+  it('shows the action beyond a 0.5-viewport bottom distance', async () => {
+    const initialRows = history(24)
+    await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    scrollToDistance(scrollParent, 144) // 0.6 * 240
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('open'))
+    expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+  })
+
+  it('keeps counted arrivals hidden at <= 0.5 viewport and reveals the retained count beyond it', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    // 20px off the bottom: beyond the engine 8px edge so arrivals count, but below the gate.
+    scrollToDistance(scrollParent, 20)
+    await frame()
+    await frame()
+
+    await view.rerender(harness(true, [...initialRows, row('quiet-arrival', 72)]))
+    // 20 + 72 = 92px: still <= 0.5 * 240. The arrival counts but the action stays hidden.
+    await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('1 new message'))
+    await frame()
+    await frame()
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+
+    // Scrolling 60px further up crosses the gate: the same retained count becomes visible.
+    scrollParent.scrollTo({ top: scrollParent.scrollTop - 60, behavior: 'auto' })
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('open'))
+    expect(followAction()?.getAttribute('aria-label')).toBe('1 new message')
+  })
+
+  it('tracks the threshold across shell resize without any scroll', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    scrollToDistance(scrollParent, 100) // <= 120: hidden at a 240px client height
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('closed'))
+
+    // Shrink the shell to 160px: clientHeight drops, scrollTop is unchanged and no scroll
+    // event fires; the distance grows by 80px while the gate drops to 80px, so the same
+    // position crosses the threshold purely through resize.
+    await view.rerender(harness(true, initialRows, '160px'))
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('open'))
+
+    // Restoring 240px hides it again, still without any scroll.
+    await view.rerender(harness(true, initialRows, '240px'))
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('closed'))
+  })
+
+  it('reconciles a post-settle asynchronous row growth to the bottom with one auto command and follows the next tail', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    // Chromium's own scroll anchoring can follow bottom-anchored growth natively on this
+    // runner, which would mask the repair's observer mechanism (and cannot be the real
+    // surface's behavior, where the same class of growth provably strands above the
+    // bottom). Suppressing it isolates the follow layer as the only possible reconciler.
+    scrollParent.style.overflowAnchor = 'none'
+
+    // The settled bottom predates the growth: growing the last row after scrollend is the
+    // image-decode class of growth the follow layer previously had no signal for.
+    const calls = recordScrollCommands()
+    const grownRows = [...initialRows.slice(0, -1), row('23', 156)]
+    await view.rerender(harness(true, grownRows))
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true), { timeout: 5000 })
+    expect(calls.some((call) => call.behavior === 'auto')).toBe(true)
+    expect(calls.some((call) => call.behavior === 'smooth')).toBe(false)
+    expect(followAction()?.getAttribute('data-state')).toBe('closed')
+
+    // Continuity is healed rather than latched: the next tail follows instead of counting.
+    await view.rerender(harness(true, [...grownRows, row('after-growth', 72)]))
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector('[data-testid="message-after-growth"]')).not.toBeNull()
+        expect(atBottom(scrollParent)).toBe(true)
+      },
+      { timeout: 5000 }
+    )
+    expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+  })
+
+  it('never reclaims a manual off-bottom position on growth and counts the next tail', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    scrollParent.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -200 }))
+    scrollToDistance(scrollParent, 200)
+    await frame()
+    await frame()
+    const readingTop = scrollParent.scrollTop
+
+    // Same anchoring isolation as the companion reconciliation control: the no-reclaim
+    // contract must hold through the follow layer alone, not through browser anchoring.
+    scrollParent.style.overflowAnchor = 'none'
+
+    // Growth after a manual departure must leave the reading position untouched.
+    const grownRows = [...initialRows.slice(0, -1), row('23', 156)]
+    await view.rerender(harness(true, grownRows))
+    await frame()
+    await frame()
+    expect(scrollParent.scrollTop).toBe(readingTop)
+
+    // The next tail counts through the ordinary off-bottom path.
+    await view.rerender(harness(true, [...grownRows, row('manual-arrival', 72)]))
+    await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('1 new message'))
+    expect(scrollParent.scrollTop).toBe(readingTop)
+  })
+
+  it('issues exactly one deduped reconciliation per height generation and cannot self-loop', async () => {
+    const initialRows = history(24)
+    const view = await render(harness(true, initialRows))
+    const scrollParent = viewport()
+
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true))
+    await frame()
+    await frame()
+
+    scrollParent.style.overflowAnchor = 'none'
+
+    const calls = recordScrollCommands()
+    const grownRows = [...initialRows.slice(0, -1), row('23', 156)]
+    await view.rerender(harness(true, grownRows))
+    await vi.waitFor(() => expect(atBottom(scrollParent)).toBe(true), { timeout: 5000 })
+
+    // One auto end command for this height generation; the observer's own command must not
+    // retrigger it, and later frames must not duplicate it.
+    expect(calls).toHaveLength(1)
+    expect(calls[0].behavior).toBe('auto')
+    await frame()
+    await frame()
+    await frame()
+    expect(calls).toHaveLength(1)
+
+    // A same-geometry rerender is not a new generation: still no further command.
+    await view.rerender(harness(true, [...grownRows]))
+    await frame()
+    await frame()
+    expect(calls).toHaveLength(1)
   })
 })

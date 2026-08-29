@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FC, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type FC, type ReactElement } from 'react'
 import { ArrowDownIcon } from 'lucide-react'
 import NumberFlow from '@number-flow/react'
 
@@ -54,11 +54,29 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
   const authorizationRef = useRef<FollowAuthorization | null>(null)
   const actionRef = useRef<HTMLButtonElement>(null)
   const [newMessageCount, setNewMessageCount] = useState(0)
+  // S1 visibility gate (Owner acceptance repair): the action is shown iff the exact bottom
+  // distance exceeds 0.5 * current viewport.clientHeight. The engine's 8px edge threshold
+  // keeps driving follow semantics; the arrival count is retained internally at any
+  // distance and never overrides this gate.
+  const [beyondScrollThreshold, setBeyondScrollThreshold] = useState(false)
 
-  const viewportElement = () =>
-    actionRef.current
-      ?.closest('[data-slot="message-scroller"]')
-      ?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]') ?? null
+  const viewportElement = useCallback(
+    () =>
+      actionRef.current
+        ?.closest('[data-slot="message-scroller"]')
+        ?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]') ?? null,
+    []
+  )
+
+  // S1 gate: exact bottom distance vs 0.5 * current viewport.clientHeight. Recomputed on
+  // every commit (this effect's call), on native scroll/scrollend, and on shell/content
+  // resize (the single ResizeObserver below).
+  const recomputeScrollGate = useCallback(() => {
+    const viewport = viewportElement()
+    if (!viewport) return
+    const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+    setBeyondScrollThreshold(distance > 0.5 * viewport.clientHeight)
+  }, [viewportElement])
 
   useEffect(() => {
     atEndRef.current = atEnd
@@ -66,12 +84,17 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
   }, [atEnd])
 
   // Native listeners: settlement (`scrollend`), mid-travel retargeting on strictly advanced
-  // geometry (scroll events), and real manual-intent cancellation. No timers, frame loops,
-  // debounce, polling, or Resize/Mutation observers are involved.
+  // geometry (scroll events), and real manual-intent cancellation. Exactly one app-side
+  // ResizeObserver refreshes the distance gate on shell/content resize and reconciles
+  // strict post-settle growth (below). No timers, frame loops, debounce, or polling are
+  // involved.
   useEffect(() => {
     const root = actionRef.current?.closest<HTMLElement>('[data-slot="message-scroller"]')
     const viewport = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const contentElement = root?.querySelector<HTMLElement>('[data-slot="message-scroller-content"]')
     if (!viewport || !root) return
+
+    recomputeScrollGate()
 
     const cancelAuthorization = () => {
       authorizationRef.current = null
@@ -99,7 +122,10 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     }
     const onScrollEnd = () => {
       const authorization = authorizationRef.current
-      if (!authorization) return
+      if (!authorization) {
+        recomputeScrollGate()
+        return
+      }
       const settledAtBottom = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1
       // Retire when physically bottom or when geometry no longer advances; otherwise issue the
       // one deduped reconciliation command to the current max.
@@ -108,25 +134,70 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
         authorizationRef.current = { ...authorization, lastCommandedHeight: viewport.scrollHeight }
         scrollToEnd({ behavior: 'smooth' })
       }
+      recomputeScrollGate()
+    }
+
+    const onScroll = () => {
+      retargetIfAdvanced()
+      recomputeScrollGate()
     }
 
     viewport.addEventListener('wheel', cancelAuthorization, { passive: true })
     viewport.addEventListener('touchmove', cancelAuthorization, { passive: true })
     viewport.addEventListener('keydown', onKeyDown)
-    viewport.addEventListener('scroll', retargetIfAdvanced, { passive: true })
+    viewport.addEventListener('scroll', onScroll, { passive: true })
     viewport.addEventListener('scrollend', onScrollEnd)
     root.addEventListener('pointerdown', onPointerDown)
+
+    // Exactly one app-side ResizeObserver (S2). Besides refreshing the gate, it reconciles
+    // a strict post-settle scrollHeight growth with one deduped auto end command, but only
+    // while bottom-follow continuity is physically intact: the position must sit at the
+    // previous bottom (manual off-bottom reading is therefore never reclaimed, and a
+    // cancelled follow that settled short is left alone), no current authorization may own
+    // retargeting, and the growth must actually have moved the bottom away. The command
+    // changes only scrollTop, so the callback cannot self-loop, and the dedupe ref prevents
+    // a second command for the same height/tail generation.
+    let lastObservedHeight = viewport.scrollHeight
+    let lastReconciledHeight: number | null = null
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            recomputeScrollGate()
+            const height = viewport.scrollHeight
+            if (height === lastObservedHeight) return
+            const wasAtBottom = viewport.scrollTop + viewport.clientHeight >= lastObservedHeight - 1
+            const grew = height > lastObservedHeight
+            lastObservedHeight = height
+            if (
+              grew &&
+              authorizationRef.current === null &&
+              wasAtBottom &&
+              viewport.scrollTop + viewport.clientHeight < height - 1 &&
+              lastReconciledHeight !== height
+            ) {
+              lastReconciledHeight = height
+              scrollToEnd({ behavior: 'auto' })
+            }
+          })
+    if (resizeObserver && contentElement) {
+      resizeObserver.observe(viewport)
+      resizeObserver.observe(contentElement)
+    }
+
     return () => {
       viewport.removeEventListener('wheel', cancelAuthorization)
       viewport.removeEventListener('touchmove', cancelAuthorization)
       viewport.removeEventListener('keydown', onKeyDown)
-      viewport.removeEventListener('scroll', retargetIfAdvanced)
+      viewport.removeEventListener('scroll', onScroll)
       viewport.removeEventListener('scrollend', onScrollEnd)
       root.removeEventListener('pointerdown', onPointerDown)
+      resizeObserver?.disconnect()
     }
-  }, [scrollToEnd])
+  }, [scrollToEnd, recomputeScrollGate])
 
   useEffect(() => {
+    recomputeScrollGate()
     const previousTailKey = previousTailKeyRef.current
     const previousCount = previousCountRef.current
     previousTailKeyRef.current = itemKeys.at(-1) ?? null
@@ -155,9 +226,9 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     } else {
       setNewMessageCount((count) => count + added)
     }
-  }, [itemKeys, scrollToEnd])
+  }, [itemKeys, scrollToEnd, recomputeScrollGate, viewportElement])
 
-  const actionVisible = newMessageCount > 0 || !atEnd
+  const actionVisible = beyondScrollThreshold
   const label =
     newMessageCount > 0
       ? `${newMessageCount > 99 ? '99+' : newMessageCount} new message${newMessageCount === 1 ? '' : 's'}`
