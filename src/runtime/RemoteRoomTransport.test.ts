@@ -546,4 +546,36 @@ describe('RemoteRoomTransport', () => {
     expect(closes).toEqual(['room-a'])
     await expect(transport.send('room-a', 'late')).rejects.toThrow('no current handle')
   })
+
+  it('commits no projection from a rejected rebind and the next explicit rebind enters a fresh accepting generation', async () => {
+    const fixture = createService()
+    const transport = new RemoteRoomTransport(fixture.service)
+    const messages: string[] = []
+    const closes: string[] = []
+    transport.onMessage((_roomId, _sourcePeerId, payload) => messages.push(payload))
+    transport.onRoomClose((roomId) => closes.push(roomId))
+
+    await transport.rebind()
+    transport.activateIngress()
+    await transport.join('room-a')
+
+    // The failed attempt rejects before any replacement reservation or completion exists:
+    // the facade retains its previous projection and admits no ingress from it.
+    vi.mocked(fixture.service.rebind).mockRejectedValueOnce(new Error('Transport Room recovery is incomplete'))
+    await expect(transport.rebind()).rejects.toThrow('Transport Room recovery is incomplete')
+    expect(transport.peerIdOf('room-a')).toBe('peer:room-a')
+    expect(fixture.service.join).toHaveBeenCalledTimes(1)
+
+    // The next explicit attempt does not reuse the failure: it commits a fresh projection and
+    // reaches the normal accepting state.
+    fixture.rooms.clear()
+    fixture.rooms.set('room-b', { roomId: 'room-b', handle: 'handle-b', peerId: 'peer:room-b' })
+    await transport.rebind()
+    transport.activateIngress()
+
+    expect(closes).toEqual(['room-a'])
+    expect(transport.peerIdOf('room-b')).toBe('peer:room-b')
+    fixture.messageCallbacks.at(-1)!('room-b', 'handle-b', 'peer-a', 'ready')
+    expect(messages).toEqual(['ready'])
+  })
 })
