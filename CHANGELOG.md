@@ -1,3 +1,13 @@
+# [2.8.0](https://github.com/molvqingtai/WebChat/compare/v2.7.2...v2.8.0) (2026-08-29)
+
+### Bug Fixes
+
+- **runtime:** retire incomplete rooms on recovery guard rejection ([61126aa](https://github.com/molvqingtai/WebChat/commit/61126aaf41b8a2fbb218b8ea19132c15b58242a9))
+
+### Features
+
+- **media-preview:** rotate preview images clockwise ([c58c902](https://github.com/molvqingtai/WebChat/commit/c58c9029e3587fde95d1f86e6945083154ecafa3))
+
 ## [2.7.2](https://github.com/molvqingtai/WebChat/compare/v2.7.1...v2.7.2) (2026-08-29)
 
 ### Bug Fixes
