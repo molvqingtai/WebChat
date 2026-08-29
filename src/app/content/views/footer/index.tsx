@@ -16,8 +16,6 @@ import { Presence } from '@radix-ui/react-presence'
 import { Portal } from '@radix-ui/react-portal'
 import useTriggerAway from '@/hooks/useTriggerAway'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { VirtuosoHandle } from 'react-virtuoso'
-import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
 import { blobToBase64, cn, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -43,14 +41,13 @@ const Footer: FC = () => {
   const { x, y, selectionStart, selectionEnd, setRef } = useCursorPosition()
 
   const [autoCompleteListShow, setAutoCompleteListShow] = useState(false)
-  const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
   const autoCompleteListRef = useRef<HTMLDivElement>(null)
   const { setRef: setAutoCompleteListRef } = useTriggerAway<HTMLDivElement>(['click'], () =>
     setAutoCompleteListShow(false)
   )
   const shareAutoCompleteListRef = useShareRef<HTMLDivElement>(setAutoCompleteListRef, autoCompleteListRef)
   const isComposing = useRef(false)
-  const virtuosoRef = useRef<VirtuosoHandle>(null)
+  const autoCompleteContentRef = useRef<HTMLDivElement>(null)
   const [inputLoading, setInputLoading] = useState(false)
 
   const shareRef = useShareRef<HTMLTextAreaElement | null>(inputRef, setRef)
@@ -173,6 +170,10 @@ const Footer: FC = () => {
     handleSend()
   }
 
+  const scrollAutoCompleteOption = (index: number) => {
+    autoCompleteContentRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({ block: 'nearest' })
+  }
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (autoCompleteListShow && autoCompleteList.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -182,13 +183,13 @@ const Footer: FC = () => {
         if (e.key === 'ArrowDown') {
           const index = (prevIndex + 1) % length
           setSelectedUserIndex(index)
-          virtuosoRef.current?.scrollIntoView({ index })
+          scrollAutoCompleteOption(index)
           e.preventDefault()
         }
         if (e.key === 'ArrowUp') {
           const index = (prevIndex - 1 + length) % length
           setSelectedUserIndex(index)
-          virtuosoRef.current?.scrollIntoView({ index })
+          scrollAutoCompleteOption(index)
           e.preventDefault()
         }
       }
@@ -227,7 +228,7 @@ const Footer: FC = () => {
           const keyword = target.value.slice(atIndex + 1, selectionEnd)
           setSearchNameKeyword(keyword)
           setSelectedUserIndex(0)
-          virtuosoRef.current?.scrollIntoView({ index: 0 })
+          scrollAutoCompleteOption(0)
         }
       } else {
         setAutoCompleteListShow(false)
@@ -349,21 +350,17 @@ const Footer: FC = () => {
           className="z-infinity bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed w-36 -translate-y-full overflow-hidden rounded-lg border shadow-md duration-300"
           style={{ left: `min(${x}px, 100vw - 160px)`, top: `${y}px` }}
         >
-          <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setScrollParentRef}>
-            <Virtuoso
-              ref={virtuosoRef}
-              data={autoCompleteList}
-              defaultItemHeight={28}
-              context={{ currentItemIndex: selectedUserIndex }}
-              customScrollParent={scrollParentRef!}
-              itemContent={(index, user) => (
+          <ScrollArea className="max-h-[204px] min-h-9 p-1">
+            <div ref={autoCompleteContentRef}>
+              {autoCompleteList.map((user, index) => (
                 <button
                   type="button"
                   key={user.id}
+                  data-index={index}
                   onClick={() => handleInjectAtSyntax(user.name)}
                   onMouseEnter={() => setSelectedUserIndex(index)}
                   className={cn(
-                    'flex w-full cursor-pointer select-none items-center gap-x-2 rounded-md px-2 py-1.5 text-left outline-none',
+                    'flex w-full cursor-pointer items-center gap-x-2 rounded-md px-2 py-1.5 text-left outline-none select-none [contain-intrinsic-size:auto_16px] [content-visibility:auto]',
                     {
                       'bg-accent text-accent-foreground': index === selectedUserIndex
                     }
@@ -375,8 +372,8 @@ const Footer: FC = () => {
                   </Avatar>
                   <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.name}</div>
                 </button>
-              )}
-            ></Virtuoso>
+              ))}
+            </div>
           </ScrollArea>
         </Portal>
       </Presence>

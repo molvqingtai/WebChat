@@ -991,7 +991,7 @@ Every uncontrolled record boundary SHALL use the existing strict Valibot schemas
 
 After the complete latest application projection is canonically sorted by event `(hlc,id)`, the UI SHALL group each maximal adjacent run of SystemNotice messages. A singleton SHALL render unchanged. A run of two or more SHALL initially render the latest notice and an icon expand/collapse control without a numeric count; expansion and collapse SHALL reveal or hide the earlier notices in canonical order through a height/opacity transition, while reduced-motion preference SHALL remove the transition without changing content. Any non-notice message SHALL split groups. The transform SHALL not alter, delete, merge, or persist canonical records, and lifecycle terminology SHALL not appear in the UI.
 
-Each grouped row SHALL derive one stable UI identity from its first canonical notice's persistent ID. Extending the same run SHALL preserve that identity. Before React and Virtuoso receive a row, text SHALL project as `message:<id>`, singleton notice as `single-notice:<id>`, and grouped notice as `notice-group:<first-notice-id>`. These row-type namespaces SHALL remain structurally disjoint for every wire-valid opaque ID, including IDs that begin with another row type's namespace. Every row SHALL pass that same projected identity to Virtuoso as the item key. Raw ID alone, array position, first/last presentation flags, and expand/collapse state SHALL NOT participate in row identity.
+Each grouped row SHALL derive one stable UI identity from its first canonical notice's persistent ID. Extending the same run SHALL preserve that identity. Before React and the message list receive a row, text SHALL project as `message:<id>`, singleton notice as `single-notice:<id>`, and grouped notice as `notice-group:<first-notice-id>`. These row-type namespaces SHALL remain structurally disjoint for every wire-valid opaque ID, including IDs that begin with another row type's namespace. Every row SHALL pass that same projected identity to the message list as its real-DOM row key. Raw ID alone, array position, first/last presentation flags, and expand/collapse state SHALL NOT participate in row identity.
 
 Streaming history MAY insert Chat messages before, after, or between existing SystemNotice messages according to canonical event time. The UI SHALL recompute grouping from the new sorted projection so late history can create, split, or reposition a group without changing observer-local notice ownership or synchronizing notices through peer history.
 
@@ -1005,10 +1005,10 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 - **WHEN** streaming history inserts a canonically ordered Chat message between notices that were previously adjacent
 - **THEN** the next UI projection SHALL split the prior group while every canonical notice and Chat record remains unchanged
 
-#### Scenario: Virtualized grouped-row identity remains stable
+#### Scenario: Real-DOM grouped-row identity remains stable
 
 - **WHEN** a two-notice group renders, its expand/collapse state changes, another notice extends the same run, or late history splits that run
-- **THEN** Virtuoso SHALL receive a defined persistent key for every rendered row; expansion and extension SHALL not remount the original group, and split rows SHALL have distinct non-index identities
+- **THEN** every rendered row SHALL receive a defined persistent DOM key; expansion and extension SHALL not remount the original group, and split rows SHALL have distinct non-index identities
 
 #### Scenario: Count-free animated notice disclosure
 
@@ -1018,7 +1018,7 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 #### Scenario: Opaque IDs cannot impersonate another row type
 
 - **WHEN** text or notice IDs begin with `message:`, `single-notice:`, or `notice-group:` and late history creates or splits an adjacent-notice group
-- **THEN** every React and Virtuoso identity SHALL retain its actual row-type namespace, remain unique across the projection, preserve the original group through expansion or extension, and never transfer DOM, measurement, or scroll identity to another row type
+- **THEN** every React and message-list DOM identity SHALL retain its actual row-type namespace, remain unique across the projection, preserve the original group through expansion or extension, and never transfer DOM, measurement, or scroll identity to another row type
 
 ### Requirement: Domain-scoped manual reconnect
 

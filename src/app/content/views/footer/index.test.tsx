@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Footer from './index'
 
 vi.mock('remesh-react', () => ({
@@ -51,6 +51,88 @@ const submitShape = () => ({ body: 'hello', mentions: [] })
 const pressEnter = (shiftKey = false) => {
   fireEvent.keyDown(textarea(), { key: 'Enter', code: 'Enter', shiftKey })
 }
+
+describe('Footer @ autocomplete keyboard', () => {
+  const autoCompleteUsers = [
+    { id: 'user-a', name: 'alice', avatar: '' },
+    { id: 'user-b', name: 'bob', avatar: '' },
+    { id: 'user-c', name: 'carol', avatar: '' }
+  ]
+  const options = () => [...document.querySelectorAll<HTMLElement>('[data-index]')]
+  const selectedClass = (element: HTMLElement) => element.className.includes('bg-accent')
+
+  let originalScrollIntoView: typeof Element.prototype.scrollIntoView | undefined
+  let scrollIntoViewSpy: ReturnType<typeof vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>>
+
+  beforeEach(() => {
+    queryFixtures['MessageInput.ValueQuery'] = '@'
+    queryFixtures['Room.UserListQuery'] = autoCompleteUsers
+    originalScrollIntoView = Element.prototype.scrollIntoView
+    scrollIntoViewSpy = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>()
+    Element.prototype.scrollIntoView = scrollIntoViewSpy
+    vi.stubGlobal('requestIdleCallback', (callback: () => void) => callback())
+  })
+
+  afterEach(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView!
+    vi.unstubAllGlobals()
+    queryFixtures['MessageInput.ValueQuery'] = 'hello'
+    queryFixtures['Room.UserListQuery'] = []
+  })
+
+  const openAutoComplete = async () => {
+    renderFooter()
+    const input = textarea() as HTMLTextAreaElement
+    input.value = '@'
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: '@' }))
+    await vi.waitFor(() => expect(options()).toHaveLength(3))
+    expect(selectedClass(options()[0])).toBe(true)
+    return input
+  }
+
+  it('opens the option list on @ and cycles selection with ArrowDown/ArrowUp, scrolling the active option into view', async () => {
+    const input = await openAutoComplete()
+
+    fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown' })
+    expect(selectedClass(options()[1])).toBe(true)
+    expect(scrollIntoViewSpy).toHaveBeenLastCalledWith({ block: 'nearest' })
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)
+
+    // ArrowUp wraps from index 1 through 0 to the last option.
+    fireEvent.keyDown(input, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(selectedClass(options()[0])).toBe(true)
+    fireEvent.keyDown(input, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(selectedClass(options()[2])).toBe(true)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(3)
+    expect(scrollIntoViewSpy).toHaveBeenLastCalledWith({ block: 'nearest' })
+
+    // Every call targeted the currently selected option element.
+    for (const call of scrollIntoViewSpy.mock.calls) {
+      expect(call).toEqual([{ block: 'nearest' }])
+    }
+  })
+
+  it('injects the selected user on Enter instead of submitting, then closes the list', async () => {
+    const input = await openAutoComplete()
+
+    fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+    await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledWith(expect.stringContaining('@bob')))
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    await vi.waitFor(() => expect(options()).toHaveLength(0))
+  })
+
+  it('closes the list on Escape without submitting or scrolling', async () => {
+    const input = await openAutoComplete()
+
+    fireEvent.keyDown(input, { key: 'Escape', code: 'Escape' })
+
+    await vi.waitFor(() => expect(options()).toHaveLength(0))
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled()
+  })
+})
 
 describe('Footer step-4 submit gate', () => {
   it('disables the send button and no-ops Enter while CanSubmitTextQuery is false, keeping the draft', () => {

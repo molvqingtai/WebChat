@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@shadcn/react@0.3.0': 37c12634f18864940a840d08baa8c48b7f42f51220f97e9635536b98e87994f6
+
 importers:
 
   .:
@@ -59,6 +62,9 @@ importers:
       '@rtco/client':
         specifier: 0.3.7
         version: 0.3.7(supports-color@7.2.0)
+      '@shadcn/react':
+        specifier: 0.3.0
+        version: 0.3.0(patch_hash=37c12634f18864940a840d08baa8c48b7f42f51220f97e9635536b98e87994f6)(@types/react@19.2.17)(react@19.2.7)
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.3)
@@ -125,9 +131,6 @@ importers:
       react-use:
         specifier: ^17.6.1
         version: 17.6.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      react-virtuoso:
-        specifier: ^4.18.11
-        version: 4.18.11(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       remark-breaks:
         specifier: ^4.0.0
         version: 4.0.0
@@ -1769,6 +1772,17 @@ packages:
     engines: {node: '>=20.8.1'}
     peerDependencies:
       semantic-release: '>=20.1.0'
+
+  '@shadcn/react@0.3.0':
+    resolution: {integrity: sha512-iKN0NuYe850VDHlxEfvppFrpa7CMV3zArTHusXlaSmeFeQhohGbIqclv6WwPTs/44I8EkXQpcuRt6sXEVKkWqQ==}
+    peerDependencies:
+      '@types/react': '>=19'
+      react: '>=19'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      react:
+        optional: true
 
   '@simple-libs/child-process-utils@2.0.0':
     resolution: {integrity: sha512-dvNoRKLijXnD0XoJAz94pbNuB5GQgDr55UhpSPhffDkTT0Cmcqh9jSCOtwfT2d4H6MI9E7c4SgtMuJXZ6F3c6A==}
@@ -5001,12 +5015,6 @@ packages:
       react: '*'
       react-dom: '*'
 
-  react-virtuoso@4.18.11:
-    resolution: {integrity: sha512-Qeeq9vqa5seCxACvzbQTUeq3s2/Bu+VlwOMF0jfy3E/ZKHLiXWwJpXBhv2rckqYkvm1XRVFLCBMCmqCU8JNEJg==}
-    peerDependencies:
-      react: '>=16 || >=17 || >= 18 || >= 19'
-      react-dom: '>=16 || >=17 || >= 18 || >=19'
-
   react@19.2.7:
     resolution: {integrity: sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ==}
     engines: {node: '>=0.10.0'}
@@ -7554,6 +7562,11 @@ snapshots:
       semantic-release: 25.0.7(supports-color@7.2.0)(typescript@7.0.2)
     transitivePeerDependencies:
       - supports-color
+
+  '@shadcn/react@0.3.0(patch_hash=37c12634f18864940a840d08baa8c48b7f42f51220f97e9635536b98e87994f6)(@types/react@19.2.17)(react@19.2.7)':
+    optionalDependencies:
+      '@types/react': 19.2.17
+      react: 19.2.7
 
   '@simple-libs/child-process-utils@2.0.0':
     dependencies:
@@ -10979,11 +10992,6 @@ snapshots:
       throttle-debounce: 3.0.1
       ts-easing: 0.2.0
       tslib: 2.8.1
-
-  react-virtuoso@4.18.11(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
-    dependencies:
-      react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
 
   react@19.2.7: {}
 
