@@ -51,7 +51,7 @@ WebChat 建立在以下优秀的开源项目之上：
 - **[WXT](https://wxt.dev/)** 提供了跨浏览器扩展框架与构建工具。
 - **[Comctx](https://github.com/molvqingtai/comctx)** 提供了扩展各 JavaScript 上下文之间的 RPC 通信能力。
 - **[Artico](https://github.com/matallui/artico)** 提供默认的 WebRTC 房间传输。
-- **[Trystero](https://github.com/dmotz/trystero)** 仍是受支持的 WebRTC 房间传输，并使用其默认的 Nostr 策略。
+- **[Trystero](https://github.com/dmotz/trystero)** 提供可选的 WebRTC 房间传输，并使用其默认的 Nostr 策略。
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** 生成了 WebChat 独具特色的随机头像。
 
 ## 许可证
