@@ -83,7 +83,7 @@
     "imgcap": "^1.1.0",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",
-    "nanoid": "^6.0.0",
+    "nanoid": "^6.0.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.81.0",
