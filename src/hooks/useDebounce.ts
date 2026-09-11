@@ -11,7 +11,7 @@ const useDebounce = <T extends (...args: any[]) => any>(callback: T, delay: numb
 
   return useCallback(
     (...args: Parameters<T>) => {
-      timerRef.current && clearTimeout(timerRef.current)
+      if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
         callback(...args)
       }, delay)
