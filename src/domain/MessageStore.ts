@@ -59,6 +59,7 @@ type MessageInsertOptions = Readonly<{ signal?: AbortSignal }>
 const validateMessageQuery = (input: MessageQuery | undefined): MessageQuery => {
   if (input === undefined) return {}
   if (
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller-supplied query object
     typeof input !== 'object' ||
     input === null ||
     Array.isArray(input) ||
@@ -135,14 +136,20 @@ export const isInvalidMessageRecordError = (error: unknown): error is InvalidMes
 /**
  * Structural (order-insensitive) deep equality over plain data comparing every own key.
  */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- structural comparison over decoded plain data
 const plainDataEqual = (left: unknown, right: unknown): boolean => {
   if (left === right) return true
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural comparison over decoded plain data
   if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) return false
   if (Array.isArray(left) || Array.isArray(right)) {
     if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
     return left.every((item, index) => plainDataEqual(item, right[index]))
   }
+  // SAFETY: the typeof checks above established that both sides are non-null objects.
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- own-key comparison over decoded plain data
   const leftRecord = left as Record<string, unknown>
+  // SAFETY: the typeof checks above established that both sides are non-null objects.
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- own-key comparison over decoded plain data
   const rightRecord = right as Record<string, unknown>
   const leftKeys = Object.keys(leftRecord)
   const rightKeys = Object.keys(rightRecord)
@@ -155,7 +162,9 @@ const plainDataEqual = (left: unknown, right: unknown): boolean => {
  * is excluded at the ROOT only; every nested own key is compared structurally and
  * order-independently, so any nested difference is a conflict.
  */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- structural comparison over decoded plain data
 const replayEqualExcludingRootReceivedAt = (left: unknown, right: unknown): boolean => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural comparison over decoded plain data
   if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
     return left === right
   }
@@ -163,7 +172,11 @@ const replayEqualExcludingRootReceivedAt = (left: unknown, right: unknown): bool
     if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
     return left.every((item, index) => plainDataEqual(item, right[index]))
   }
+  // SAFETY: the typeof checks above established that both sides are non-null objects.
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- own-key comparison over decoded plain data
   const leftRecord = left as Record<string, unknown>
+  // SAFETY: the typeof checks above established that both sides are non-null objects.
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- own-key comparison over decoded plain data
   const rightRecord = right as Record<string, unknown>
   const leftKeys = Object.keys(leftRecord).filter((key) => key !== 'receivedAt')
   const rightKeys = Object.keys(rightRecord).filter((key) => key !== 'receivedAt')
@@ -195,6 +208,7 @@ const safeDecodeMessageRecord = (
   }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- hashing input: the canonical union is serialized immediately
 const canonicalContent = (record: MessageRecord): unknown =>
   record.type === MESSAGE_RECORD_TYPE.CHAT_MESSAGE
     ? { type: record.type, id: record.id, message: record.message, user: record.user }
@@ -242,8 +256,11 @@ const retainInvalidRecordDiagnostics = async (
       let total = existing.length
       const keys = new Set(existing.map(({ key }) => key))
       const eventIds = existing.flatMap(({ value }) => {
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a stored conflict record
         if (typeof value !== 'object' || value === null) return []
+        // SAFETY: the check above established that `value` is a non-null object.
         const eventId = (value as { eventId?: unknown }).eventId
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a stored conflict record
         return typeof eventId === 'string' ? [eventId] : []
       })
       const counts = eventIds.reduce<Map<string, number>>((acc, eventId) => {
@@ -324,6 +341,7 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
     const { type, signal } = validateMessageQuery(input)
     signal?.throwIfAborted()
     const items = await database.read(['records'], (transaction) => transaction.scan('records'), signal)
+    // SAFETY: the accumulators start empty and are typed to the decoded record shapes pushed below.
     const { records, invalidRecords } = items.reduce(
       (acc, item) => {
         signal?.throwIfAborted()
