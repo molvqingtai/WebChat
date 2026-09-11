@@ -18,8 +18,10 @@ const generateRandomAvatar = async (targetSize: number, outputType: ImageType = 
     image.src = URL.createObjectURL(svgBlob)
   })
   const miniAvatarBlob = await imgcap(imageBlob, { targetSize, outputType })
+  // SAFETY: FileReader.readAsDataURL always produces a string result, and onload only fires on success.
   const miniAvatarBase64 = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
+    // SAFETY: FileReader.readAsDataURL always produces a string result, and onload only fires on success.
     reader.onload = (e) => resolve(e.target?.result as string)
     reader.onerror = () => reject(new Error('Failed to convert Blob to Base64'))
     reader.readAsDataURL(miniAvatarBlob)

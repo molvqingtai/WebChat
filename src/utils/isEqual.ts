@@ -1,4 +1,4 @@
-const isEqual = (a: object, b: object) => {
+const isEqual = <Value>(a: Value, b: Value) => {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
