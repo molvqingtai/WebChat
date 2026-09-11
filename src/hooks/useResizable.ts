@@ -38,7 +38,7 @@ const useResizable = (options: ResizableOptions) => {
         latestMousePosition.current = { x: screenX, y: screenY }
 
         // Cancel previous frame to ensure only one update per frame
-        rafRef.current && cancelAnimationFrame(rafRef.current)
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
 
         rafRef.current = requestAnimationFrame(() => {
           const screenX = latestMousePosition.current.x
@@ -78,7 +78,7 @@ const useResizable = (options: ResizableOptions) => {
     isMove.current = false
     document.documentElement.style.cursor = ''
     document.documentElement.style.userSelect = ''
-    rafRef.current && cancelAnimationFrame(rafRef.current)
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
   }, [])
 
   const handleStart = useCallback(

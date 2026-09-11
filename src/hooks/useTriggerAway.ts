@@ -12,10 +12,15 @@ const useTriggerAway = <T extends Element = Element, E extends Event = Event>(
 ) => {
   const handleRef = useRef<T | null>(null)
 
-  const handler = (event: SafeAny) => {
-    const rootNode = handleRef.current?.getRootNode()
-    !handleRef.current?.contains(event.target) && event.target.shadowRoot !== rootNode && callback(event)
-  }
+  const handler = useCallback(
+    (event: SafeAny) => {
+      const rootNode = handleRef.current?.getRootNode()
+      if (!handleRef.current?.contains(event.target) && event.target.shadowRoot !== rootNode) {
+        callback(event)
+      }
+    },
+    [callback]
+  )
 
   /**
    * When events are captured outside the component, events that occur in shadow DOM will target the host element
@@ -33,7 +38,7 @@ const useTriggerAway = <T extends Element = Element, E extends Event = Event>(
         events.forEach(() =>
           events.forEach((eventName) => {
             document.removeEventListener(eventName, handler)
-            isInShadow && rootNode.removeEventListener(eventName, handler)
+            if (isInShadow) rootNode.removeEventListener(eventName, handler)
           })
         )
       }
@@ -42,12 +47,12 @@ const useTriggerAway = <T extends Element = Element, E extends Event = Event>(
         const isInShadow = rootNode instanceof ShadowRoot
         events.forEach((eventName) => {
           document.addEventListener(eventName, handler)
-          isInShadow && rootNode.addEventListener(eventName, handler)
+          if (isInShadow) rootNode.addEventListener(eventName, handler)
         })
       }
       handleRef.current = node
     },
-    [handler]
+    [events, handler]
   )
 
   return { setRef }
