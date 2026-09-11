@@ -1,3 +1,9 @@
+## [2.8.1](https://github.com/molvqingtai/WebChat/compare/v2.8.0...v2.8.1) (2026-09-11)
+
+### Bug Fixes
+
+- **lint:** exclude vendored anti-slop plugin from oxfmt ([96e418c](https://github.com/molvqingtai/WebChat/commit/96e418c4771103d2f31f25716043b077d81a7ccb))
+
 # [2.8.0](https://github.com/molvqingtai/WebChat/compare/v2.7.2...v2.8.0) (2026-08-29)
 
 ### Bug Fixes
