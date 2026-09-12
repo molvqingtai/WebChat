@@ -224,10 +224,13 @@ const errorMessage = (error: unknown): string => {
   return message.length <= MAX_VALUE_STRING_LENGTH ? message : 'Error message exceeded the evidence limit'
 }
 
+// oxlint-disable-next-line anti-slop/no-runtime-typeof -- this predicate defines the string domain for untrusted evidence values
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
 
 const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof establishes the primitive domain
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof establishes the finite number domain
   if (typeof value === 'number' && Number.isFinite(value)) return value
 
   if (Array.isArray(value)) {
@@ -238,6 +241,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
     return value.map((entry) => assertJson(entry, childSeen))
   }
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof separates the object domain from the returned primitives
   if (typeof value === 'object') {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     const childSeen = new Set([...seen, value])
