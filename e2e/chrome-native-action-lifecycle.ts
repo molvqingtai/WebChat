@@ -1108,6 +1108,33 @@ export const diagnoseChromeNativeActionLifecycle = async (
   const pendingEvents: Array<{ readonly event: ChromeLifecycleEvent; readonly atMs: number }> = []
   let packagedManifest: PackagedManifest
 
+  /** Throws unless the startup inventory holds valid, uniquely identified targets. */
+  const assertStartupInventoryValid = (targets: readonly ChromeLifecycleTarget[]): void => {
+    if (targets.some((target) => !validateTarget(target))) {
+      throw new Error('Chrome startup target inventory is invalid')
+    }
+    const targetIds = targets.map(({ targetId }) => targetId)
+    if (new Set(targetIds).size !== targetIds.length) {
+      throw new Error('Chrome startup target identities must be unique')
+    }
+  }
+
+  /** Throws unless target creation returned a fresh, usable target identity. */
+  const assertCreatedTargetIdentityUsable = (created: { readonly targetId: string }): void => {
+    if (
+      !nonEmpty(created.targetId) ||
+      created.targetId.length > MAX_VALUE_STRING_LENGTH ||
+      startupTargets.some(({ targetId }) => targetId === created.targetId) ||
+      workerRecords.has(created.targetId)
+    ) {
+      throw new Error('Target.createTarget returned an invalid or pre-existing target identity')
+    }
+  }
+
+  /** Whether the startup inventory holds exactly one about:blank page. */
+  const isUsableStartupPageSet = (pages: readonly ChromeLifecycleTarget[]): boolean =>
+    pages.length === 1 && pages[0]?.url === 'about:blank'
+
   try {
     if (contextValues(context).some((value) => !nonEmpty(value) || value.length > MAX_VALUE_STRING_LENGTH)) {
       throw new Error('Chrome lifecycle context identities must not be empty')
@@ -1189,13 +1216,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     startupTargets = await adapter.listStartupTargets(workerDiscoveryDeadlineMs)
     discoveryFence('Chrome startup inventory')
     startupInventoryAtMs = timeline.now()
-    if (startupTargets.some((target) => !validateTarget(target))) {
-      throw new Error('Chrome startup target inventory is invalid')
-    }
-    const targetIds = startupTargets.map(({ targetId }) => targetId)
-    if (new Set(targetIds).size !== targetIds.length) {
-      throw new Error('Chrome startup target identities must be unique')
-    }
+    assertStartupInventoryValid(startupTargets)
     timeline.record('startup-inventory', {
       pageCount: startupTargets.filter(({ type }) => type === 'page').length,
       targetCount: startupTargets.length,
@@ -1212,7 +1233,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   }
 
   const startupPages = startupTargets.filter(({ type }) => type === 'page')
-  if (startupPages.length !== 1 || startupPages[0]?.url !== 'about:blank') {
+  if (!isUsableStartupPageSet(startupPages)) {
     return finish(
       context,
       timeline,
@@ -1858,14 +1879,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   let state: BoundState
   try {
     const created = await adapter.createTarget(CHROME_NATIVE_ACTION_ACCEPTED_URL, lifecycleDeadlineMs)
-    if (
-      !nonEmpty(created.targetId) ||
-      created.targetId.length > MAX_VALUE_STRING_LENGTH ||
-      startupTargets.some(({ targetId }) => targetId === created.targetId) ||
-      workerRecords.has(created.targetId)
-    ) {
-      throw new Error('Target.createTarget returned an invalid or pre-existing target identity')
-    }
+    assertCreatedTargetIdentityUsable(created)
     state = { targetId: created.targetId, targetDestroyed: false }
     const createFence = deadlineFenceAfter('Target.createTarget')
     if (createFence.failure) state.deadlineFailure = createFence.failure
