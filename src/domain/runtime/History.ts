@@ -2208,7 +2208,8 @@ const HistoryDomain = Remesh.domain({
             return from(selection()).pipe(catchError(() => of(finishEarly())))
           })
         )
-        // SAFETY: the effect terminal stream is intentionally viewed as Observable<never>.
+        // SAFETY: compatibility assertion preserving the existing Remesh effect return type; it does
+        // not prove the stream emits no value.
         return terminal$ as Observable<never>
       }
     })
@@ -2403,7 +2404,8 @@ const HistoryDomain = Remesh.domain({
             return from(selection()).pipe(catchError(() => of(cancelOutcome())))
           }, MAX_PROVIDER_SUPPLY_CONCURRENCY)
         )
-        // SAFETY: the effect terminal stream is intentionally viewed as Observable<never>.
+        // SAFETY: compatibility assertion preserving the existing Remesh effect return type; it does
+        // not prove the stream emits no value.
         return terminal$ as Observable<never>
       }
     })
