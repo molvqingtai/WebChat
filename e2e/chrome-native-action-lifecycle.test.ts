@@ -312,8 +312,8 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
     this.trace.push(`wait-event:${deadlineMs}`)
     this.waitDeadlines.push(deadlineMs)
     this.applyPhaseEffects('wait-event')
-    // Queued, not applied: these run after this observation resolves and before the awaiting
-    // caller resumes, which is the dead zone a phase-helper extraction introduces.
+    // Queued, not applied: the effects run after this observation resolves but before the awaiting
+    // caller resumes; measured, they land between this wait and the next discovery operation.
     if (this.gapEffects) {
       const queued = this.gapEffects
       this.gapEffects = undefined
@@ -972,10 +972,10 @@ describe('Chrome native action lifecycle diagnostic', () => {
   })
 
   it('keeps the pre-target terminal decision stable when the observation gap delivers worker evidence', async () => {
-    // gapEffects run on a queued microtask from inside the awaited observation, so they land after
-    // that observation resolves and before its awaiting caller resumes: the dead zone the
-    // observePreTargetPhase extraction introduced. The delivered foreign worker therefore arrives
-    // with no target created yet and must still be observed before the terminal decision.
+    // gapEffects run on a queued microtask from inside the awaited observation, so the delivered
+    // foreign worker arrives with no target created yet; measured, the callback lands between this
+    // wait and the next discovery operation, and the delivered evidence must still be recorded
+    // before the terminal decision.
     const adapter = prepareAdapter([{ advanceMs: 10_000 }])
     adapter.startupTargets = [blankTarget, foreignWorkerTarget]
     adapter.gapEffects = [{ type: 'target-changed', target: foreignWorkerTarget }]
@@ -1781,7 +1781,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     // The queued microtask is scheduled when the worker identity read runs, so it runs before the
     // awaiting continuation of that read: the advance it applies therefore precedes the binding
     // record and the creation request. This pins that ordering, which is all this scheduling can
-    // show; it does not place the callback in a phase-helper return gap.
+    // show; it does not place the callback after the binding record.
     const adapter = prepareAdapter()
     adapter.gapAfterPhase = 'read-worker:worker-session'
     adapter.gapEffects = [{ advanceMs: 500 }]
