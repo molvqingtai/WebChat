@@ -1115,6 +1115,16 @@ export const diagnoseChromeNativeActionLifecycle = async (
   const pendingEvents: Array<{ readonly event: ChromeLifecycleEvent; readonly atMs: number }> = []
   let packagedManifest: PackagedManifest
 
+  /** Throws unless the lifecycle context carries bounded identities and a full candidate object ID. */
+  const assertContextIdentitiesUsable = (values: ChromeLifecycleContext): void => {
+    if (contextValues(values).some((value) => !nonEmpty(value) || value.length > MAX_VALUE_STRING_LENGTH)) {
+      throw new Error('Chrome lifecycle context identities must not be empty')
+    }
+    if (!/^[a-f0-9]{40}$/.test(values.candidateExact)) {
+      throw new Error('Chrome lifecycle candidate exact must be a full Git object ID')
+    }
+  }
+
   /** Whether the bound target can still be addressed for a final DOM sample. */
   const isFinalSampleAddressable = (): boolean =>
     Boolean(state.pageSessionId && state.pageObservationReady && state.mainFrameId && !state.targetDestroyed)
@@ -1147,12 +1157,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     pages.length === 1 && pages[0]?.url === 'about:blank'
 
   try {
-    if (contextValues(context).some((value) => !nonEmpty(value) || value.length > MAX_VALUE_STRING_LENGTH)) {
-      throw new Error('Chrome lifecycle context identities must not be empty')
-    }
-    if (!/^[a-f0-9]{40}$/.test(context.candidateExact)) {
-      throw new Error('Chrome lifecycle candidate exact must be a full Git object ID')
-    }
+    assertContextIdentitiesUsable(context)
     packagedManifest = asPackagedManifest(context.packagedManifest)
     timeline.record('packaged-manifest-authority', {
       manifestDigest: packagedManifest.digest,
