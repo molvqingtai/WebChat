@@ -195,6 +195,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     if (result !== 'active') this.reportResult?.(token, result)
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- failures cross an arbitrary error boundary
   private emitError(error: unknown) {
     let failure: Error
     try {
@@ -461,6 +462,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const ownershipCurrent = () => documentAlive() && this.activeHistorySupplies.get(request.supplyId) === controller
     // Safe normalization: any property access on an unknown rejection happens inside one
     // controlled try; a fallible custom Error/proxy can never escape this boundary.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
     const reasonOf = (value: unknown): string => {
       try {
         return value instanceof Error ? value.message : 'History supply failed'
