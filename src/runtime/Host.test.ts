@@ -4,6 +4,7 @@ import { BackgroundInjectAdapter, MessageListenerRegistry } from '@/service/adap
 import { HostOwner, type HostHandle } from '@/runtime/HostOwner'
 
 const createMessaging = () => {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
   const listeners = new Set<(...args: unknown[]) => unknown>()
   const sendMessage = vi.fn()
   return {
@@ -11,7 +12,9 @@ const createMessaging = () => {
       id: 'test-extension',
       sendMessage,
       onMessage: {
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
         addListener: (listener: (...args: unknown[]) => unknown) => listeners.add(listener),
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
         removeListener: (listener: (...args: unknown[]) => unknown) => listeners.delete(listener)
       }
     },
@@ -27,6 +30,7 @@ describe('Runtime production host boundaries', () => {
     const adapter = new BackgroundInjectAdapter(runtime)
     expect(globalThis.document).toBeUndefined()
 
+    // SAFETY: the payload only needs the meta field this scenario inspects.
     adapter.sendMessage({ meta: { tab: { url: 'content-only' } } } as never, [])
 
     expect(sendMessage).toHaveBeenCalledWith('test-extension', { meta: {} })
@@ -53,6 +57,7 @@ describe('Runtime production host boundaries', () => {
       active.servers += 1
       let disposed = false
       return {
+        // SAFETY: the test transport never calls the server surface.
         server: {} as RuntimeServer,
         dispose: () => {
           if (disposed) return

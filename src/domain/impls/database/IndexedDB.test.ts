@@ -22,6 +22,7 @@ const trackWebChatDatabases = async () => {
 }
 
 const failedRequest = (error: DOMException): IDBOpenDBRequest => {
+  // SAFETY: the test builds an EventTarget stand-in for the failing open request.
   const request = new EventTarget() as IDBOpenDBRequest
   Object.defineProperty(request, 'error', { get: () => error })
   queueMicrotask(() => request.dispatchEvent(new Event('error')))
@@ -312,6 +313,7 @@ describe('IndexedDB Message database version ownership', () => {
 
     const secondResult = await second.then(
       () => ({ status: 'resolved' as const }),
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is recorded as-is
       (error: unknown) => ({ status: 'rejected' as const, error })
     )
     const reopened = firstRealm.createIndexedDBMessageDatabase()
@@ -400,6 +402,8 @@ describe('IndexedDB Message database version ownership', () => {
       'setTimeout',
       vi.fn((callback: () => void, ms?: number) => {
         timers.push({ callback, ms })
+        // SAFETY: the timer stub only needs to hand back an opaque handle to the caller.
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- opaque timer handle stub
         return 0 as unknown as ReturnType<typeof globalThis.setTimeout>
       })
     )
