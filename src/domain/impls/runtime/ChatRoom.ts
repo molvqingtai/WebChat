@@ -302,7 +302,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.appliedFeedbackOwnerIds = ownerIds
   }
 
-  /** Retained Runtime failures are idempotent current facts: present each unseen eventId once. */
+  /**
+   * Retained Runtime failures are idempotent current facts: present each unseen eventId once, and
+   * reconcile the dedup window to the projection's own bounded current set (never unbounded).
+   */
   private applyRetainedFailures(projection: RuntimeSnapshot) {
     const currentFailureIds = new Set(projection.failures.map((failure) => failure.eventId))
     for (const eventId of this.seenErrorEventIds) {
