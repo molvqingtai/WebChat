@@ -236,17 +236,19 @@ const resolveQueryKeyType = <Schema extends StoreSchema>(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- raw `index` field; validated against definition.indexes below
   index: unknown
 ): 'string' | 'number' | 'string-or-number' => {
-  if (index === undefined) return definition.key
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the raw query options
-  if (typeof index !== 'string' || !Object.prototype.hasOwnProperty.call(definition.indexes, index)) {
+  if (
+    index !== undefined &&
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the raw query options
+    (typeof index !== 'string' || !Object.prototype.hasOwnProperty.call(definition.indexes, index))
+  ) {
     throw new TypeError(`Unknown database index: ${String(index)}`)
   }
-  // SAFETY: the index name was checked against definition.indexes above; the mapped per-index key
-  // type is erased by the dynamic lookup, so the shared key contract is the correct common view.
-  const indexDefinitionTable = definition.indexes as unknown
-  // SAFETY: indexDefinitionTable holds one of the store's IndexDefinitions; the shared key contract is its common view.
-  const indexDefinition = (indexDefinitionTable as Record<string, IndexDefinition<DatabaseKey>>)[index]
-  return indexDefinition.key
+  // SAFETY: definition.indexes holds the store's IndexDefinitions; the dynamic lookup erases the
+  // per-index key type, so the shared key contract is the correct common view.
+  return index
+    ? // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- the guard above established the store's own index table
+      (definition.indexes as unknown as Record<string, IndexDefinition<DatabaseKey>>)[index as string].key
+    : definition.key
 }
 
 const resolveQueryDirection = (input: RawRecord, includeScan: boolean): 'asc' | 'desc' => {
