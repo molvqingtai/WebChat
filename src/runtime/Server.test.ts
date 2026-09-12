@@ -691,6 +691,7 @@ const deferred = <T>() => {
   return { promise, resolve, reject }
 }
 
+// SAFETY: the recorded payloads come from the code under test and are parsed only to read their messages
 const sentToPeer = (fake: ReturnType<typeof createFakeTransport>, roomId: string, peerId: string) =>
   fake.sent
     .filter((message) => {
@@ -698,7 +699,6 @@ const sentToPeer = (fake: ReturnType<typeof createFakeTransport>, roomId: string
       const recipients = typeof message.to === 'string' ? [message.to] : message.to
       return message.roomId === roomId && recipients?.includes(peerId)
     })
-    // SAFETY: recorded payloads come from the code under test; they are parsed only to read the wire messages
     .map((message) => JSON.parse(message.payload) as TestWireMessage)
 
 const session = (user = REMOTE_USER) => ({
@@ -865,6 +865,7 @@ describe('RuntimeServer lifecycle', () => {
       expect(
         fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
           if (sentRoomId !== roomId) return false
+          // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
           const message = JSON.parse(payload) as ChatRoomMessage
           return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
         })
@@ -872,6 +873,7 @@ describe('RuntimeServer lifecycle', () => {
     )
     const lateChatAttempts = fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
       if (sentRoomId !== roomId) return false
+      // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
       const message = JSON.parse(payload) as ChatRoomMessage
       return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
     })
@@ -985,6 +987,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as { lastJoinedAt?: number; observers?: unknown[] }
         if (
           holdClearSave &&
@@ -1084,6 +1087,7 @@ describe('RuntimeServer lifecycle', () => {
       expect(
         fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
           if (sentRoomId !== roomId) return false
+          // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
           const message = JSON.parse(payload) as ChatRoomMessage
           return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
         })
@@ -1103,6 +1107,7 @@ describe('RuntimeServer lifecycle', () => {
       expect(
         fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
           if (sentRoomId !== roomId) return false
+          // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
           const message = JSON.parse(payload) as ChatRoomMessage
           return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
         })
@@ -1961,6 +1966,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
         // The refresh reset persists the cleared-observer record (retained local seed, no remote
         // observations); a healthy join's commit save carries the same shape, so only reject once
@@ -2020,6 +2026,7 @@ describe('RuntimeServer lifecycle', () => {
     emitRemoteWorldPresence(fake)
     await settle()
 
+    // SAFETY: the fake store recorded the item this test writes, so it carries this shape
     const presenceIdBefore = (Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId
     const before = await readServerSnapshot(server)
     const beforeLocal = before.domains.find((item) => item.domain === DOMAIN)!.localSession!
@@ -2037,6 +2044,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(afterLocal.sessionId).not.toBe(beforeLocal.sessionId)
     expect(afterLocal.joinedAt).toBe(beforeLocal.joinedAt)
     expect(afterLocal.user).toEqual(beforeLocal.user)
+    // SAFETY: the fake store recorded the item this test writes, so it carries this shape
     expect((Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId).toBe(presenceIdBefore)
     // The page lease stays attached.
     expect(after.domains.find((item) => item.domain === DOMAIN)!.tabIds).toContain(1)
@@ -2315,6 +2323,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2398,6 +2407,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2457,6 +2467,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2570,6 +2581,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2629,6 +2641,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2787,6 +2800,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
         if (
           rejectClearSave &&
@@ -3524,6 +3538,7 @@ describe('RuntimeServer lifecycle', () => {
     const codec: WireCodec = {
       encode: async (value) => JSON.stringify(value),
       decode: async (payload) => {
+        // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
         const value = JSON.parse(payload as string) as { sessionId?: string }
         if (value.sessionId === 'old-world-session') {
           oldDecodeStarted = true
@@ -3863,6 +3878,7 @@ describe('RuntimeServer lifecycle', () => {
       coordinator: {
         registerPage: (payload) => server.attachPage({ ...payload, caller: localCaller })
       },
+      // SAFETY: the snapshot object carries the recorded shape this test asserts on
       server: {
         getSnapshot: (payload) => server.getSnapshot({ ...payload, caller: localCaller })
       } as RuntimeServer,
@@ -3877,6 +3893,7 @@ describe('RuntimeServer lifecycle', () => {
       })
     })
     listeners.add((message) => {
+      // SAFETY: the message is a captured payload; the optional tag is read only to filter
       if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
     })
 
@@ -4005,7 +4022,7 @@ describe('RuntimeServer lifecycle', () => {
     await expect(
       server.joinChatRoom({
         domain: DOMAIN,
-        // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately builds an invalid user record to test the join validation
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- deliberately builds an invalid user record to test the join validation
         user: { ...USER_INFO, name: 1 } as unknown as ChatUser,
         site: SITE
       })
@@ -4481,6 +4498,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
+        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
         const record = Object.values(items)[0] as { local?: unknown } | undefined
         // The release cleanup save carries no local record; active-record saves always do.
         // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the presence record is test data; the typeof confirms it is an object before the 'local' in record check distinguishes a cleanup save from an active-record save
@@ -4542,6 +4560,7 @@ describe('RuntimeServer lifecycle', () => {
     let failFollowUpEncode = false
     const codec: WireCodec = {
       encode: async (value) => {
+        // SAFETY: the value comes from the codec under test; only its sites field is read
         const message = value as { sites?: { origin: string }[] }
         if (failFollowUpEncode && message.sites?.some((site) => site.origin === OTHER_DOMAIN)) {
           throw new Error('follow-up encode failed')
@@ -5212,7 +5231,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, user: refreshedUser })
     fake.receive(roomId, 'peer-a', { ...accepted, user: { ...refreshedUser, id: 'forged-user' } })
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: accepted.joinedAt + 1 })
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- the test injects this inbound simulated message, including its deliberately malformed field
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- the test injects this inbound simulated message, including its deliberately malformed field
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
@@ -5253,7 +5272,7 @@ describe('RuntimeServer trusted delivery', () => {
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
     ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) =>
-      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- the test injects each inbound simulated message, including the deliberately malformed fields
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- the test injects each inbound simulated message, including the deliberately malformed fields
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
     )
     fake.receive(roomId, 'peer-a', text('valid-after-rejections'))
@@ -5452,7 +5471,7 @@ describe('RuntimeServer send reliability', () => {
     const { fake, server } = await setup()
     const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'valid', mentions: [] })
     const attemptsBefore = fake.sendAttempts.length
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately builds an invalid message to test the send validation
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- deliberately builds an invalid message to test the send validation
     const invalid = { ...record.message, body: 1 } as unknown as ChatMessage
 
     await expect(server.sendChatMessage({ domain: DOMAIN, event: invalid })).rejects.toThrow('Invalid message.')
@@ -5568,6 +5587,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
       retireRoomsForPreparation: async () => {},
       send: async (roomId, payload) => {
         if (roomId !== getWorldRoomId()) return
+        // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
         const message = JSON.parse(payload) as WorldRoomMessage
         const settle = deferred<void>()
         attempts.push({ message, settle })
@@ -5921,13 +5941,12 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['provider-only-initial']))
     await vi.waitFor(() => {
       expect(
-        fake
-          .messages(roomId)
-          .filter(
-            (message) =>
-              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH &&
-              (message as { syncId: string }).syncId === 'provider-only-initial'
-          )
+        fake.messages(roomId).filter(
+          (message) =>
+            message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH &&
+            // SAFETY: only this field is read from the message produced by the code under test or the test double
+            (message as { syncId: string }).syncId === 'provider-only-initial'
+        )
       ).toHaveLength(1)
     })
     await settle()
@@ -5960,6 +5979,7 @@ describe('RuntimeServer history', () => {
       expect(found).toBeDefined()
       return found
     })
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     // The declarative schema does not validate History user references: a message whose userId
@@ -5992,6 +6012,7 @@ describe('RuntimeServer history', () => {
     await store.insert(mismatched)
     await registerHistoryProvider(server, { domain: DOMAIN, caller: { tab: { id: 1, url: '' } } }, async () => {
       const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      // SAFETY: the store returns the record type this test registered, so the query result carries it
       return { records: records as TextMessageRecord[], done: true }
     })
     fake.receive(roomId, 'peer-a', session())
@@ -5999,6 +6020,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', request('sync-mismatch', 0, [], true))
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'sync-mismatch')).toBe(true)
     })
     const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
@@ -6019,8 +6041,11 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
+    // SAFETY: the request message carries the fields this test wrote, so the field reads are safe
     expect((requestMsg as { messageIds: string[] }).messageIds).toEqual([])
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     expect((requestMsg as { done: boolean }).done).toBe(true)
 
     fake.receive(roomId, 'peer-a', {
@@ -6043,6 +6068,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
@@ -6082,6 +6108,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
@@ -6104,6 +6131,7 @@ describe('RuntimeServer history', () => {
     await store.insert(textRecord('local-2', NOW - 1))
     await registerHistoryProvider(server, { domain: DOMAIN, caller: { tab: { id: 1, url: '' } } }, async () => {
       const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      // SAFETY: the store returns the record type this test registered, so the query result carries it
       return { records: records as TextMessageRecord[], done: true }
     })
 
@@ -6133,6 +6161,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
@@ -6201,6 +6230,7 @@ describe('RuntimeServer history', () => {
     // Every page stays strictly below 256KiB after the codec's own size boundary.
     pages.forEach((page) => expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(256 * 1024))
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
     expect(new Set(covered).size).toBe(manyIds.length)
   })
@@ -6213,6 +6243,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
@@ -6260,6 +6291,7 @@ describe('RuntimeServer history', () => {
     await store.insert(textRecord('keep-2', NOW - 1))
     await registerHistoryProvider(server, { domain: DOMAIN, caller: { tab: { id: 1, url: '' } } }, async () => {
       const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      // SAFETY: the store returns the record type this test registered, so the query result carries it
       return { records: records as TextMessageRecord[], done: true }
     })
     fake.peerJoin(roomId, 'peer-a')
@@ -6267,6 +6299,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
@@ -6280,8 +6313,10 @@ describe('RuntimeServer history', () => {
       expect(sent.length).toBeGreaterThan(0)
     })
     const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const ids = sent.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
     expect(ids.sort()).toEqual(['keep-1', 'keep-2'])
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     expect(sent.every((m) => (m as { messages: unknown[] }).messages.length > 0 || sent.length === 1)).toBe(true)
   })
 
@@ -6314,11 +6349,12 @@ describe('RuntimeServer history', () => {
     await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const firstSync = (
-      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) as {
-        syncId: string
-      }
-    ).syncId
+    const firstSync = // SAFETY: the recorded pull message carries the fields this test asserts on
+      (
+        fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) as {
+          syncId: string
+        }
+      ).syncId
     // A replacement syncId while the first inventory is still supplying occupies a dormant successor.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
@@ -6403,6 +6439,7 @@ describe('RuntimeServer history', () => {
     await store.insert(textRecord('mp-2', NOW - 1))
     await registerHistoryProvider(server, { domain: DOMAIN, caller: { tab: { id: 1, url: '' } } }, async () => {
       const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      // SAFETY: the store returns the record type this test registered, so the query result carries it
       return { records: records as TextMessageRecord[], done: true }
     })
     fake.receive(roomId, 'peer-a', session())
@@ -6429,6 +6466,7 @@ describe('RuntimeServer history', () => {
       expect(responses.length).toBeGreaterThan(0)
     })
     const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const ids = responses.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
     // Only the record absent from the inventory is returned.
     expect(ids).toEqual(['mp-2'])
@@ -6442,6 +6480,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
@@ -6492,6 +6531,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
@@ -7820,6 +7860,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'new-b')).toBe(true)
     })
   })
@@ -8153,6 +8194,7 @@ describe('RuntimeServer history', () => {
     // The successful page-b supply produces the response for the same attempt.
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'to-a')).toBe(true)
     })
   })
@@ -8461,6 +8503,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['conn-a']))
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'conn-a')).toBe(true)
     })
     // Replays of the same id and a different id are inert on the same connection.
@@ -8632,6 +8675,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // The local requester's own syncId is visible in its outgoing inventory request.
     const inventoryRequest = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const requesterSyncId = (inventoryRequest as { syncId: string }).syncId
     // The peer uses the SAME string for its own provider request: it completes and fences the
     // PROVIDER direction only.
@@ -8671,6 +8715,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // The connection runs its one synchronization in both directions.
     const firstInventory = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+    // SAFETY: only this field is read from the message produced by the code under test or the test double
     const firstRequesterSyncId = (firstInventory[0] as { syncId: string }).syncId
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
@@ -8682,6 +8727,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['prov-a']))
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'prov-a')).toBe(true)
     })
     // The requester completes: its terminal binding is retained on this connection.
@@ -8730,6 +8776,7 @@ describe('RuntimeServer history', () => {
     // The fresh requester uses a NEW syncId and sends its inventory again.
     await vi.waitFor(() => {
       const requests = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(requests.some((m) => (m as { syncId: string }).syncId !== firstRequesterSyncId)).toBe(true)
     })
     // The fresh provider synchronization completes with its own id.
@@ -8743,6 +8790,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['prov-a', 'prov-b']))
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'prov-b')).toBe(true)
     })
   })
@@ -8803,7 +8851,9 @@ describe('RuntimeServer history', () => {
     gates.get('sat-0')?.()
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'sat-0')).toBe(true)
+      // SAFETY: the sent messages carry the syncId this test wrote, so the field read is safe
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'sat-32')).toBe(false)
     })
   })
@@ -8860,7 +8910,9 @@ describe('RuntimeServer history', () => {
     gates.get('big-0')?.()
     await vi.waitFor(() => {
       const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      // SAFETY: only this field is read from the message produced by the code under test or the test double
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'big-0')).toBe(true)
+      // SAFETY: the sent messages carry the syncId this test wrote, so the field read is safe
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'big-1')).toBe(false)
     })
   })
@@ -8893,11 +8945,12 @@ describe('RuntimeServer history', () => {
       expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
     })
     // Completing the first domain's requester must not finish the second domain's attempt.
-    const firstSync = (
-      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) as {
-        syncId: string
-      }
-    ).syncId
+    const firstSync = // SAFETY: the recorded pull message carries the fields this test asserts on
+      (
+        fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) as {
+          syncId: string
+        }
+      ).syncId
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: firstSync,
