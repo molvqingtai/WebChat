@@ -84,6 +84,7 @@ const transitionName = (element: HTMLElement) => element.style.getPropertyValue(
 
 const deferred = () => {
   let resolve!: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<void>((settle, fail) => {
     resolve = settle
@@ -99,6 +100,7 @@ const viewTransition = (
 ): ViewTransition => ({
   finished,
   ready,
+  // SAFETY: the stubbed view-transition object provides the type set the component reads.
   types: new Set<string>() as ViewTransitionTypeSet,
   updateCallbackDone,
   skipTransition: vi.fn()
@@ -255,7 +257,9 @@ describe('MediaPreview ownership and settlement', () => {
     openFirst()
     const image = () => previewImage('First')
     const dialog = screen.getByRole('dialog', { name: 'Image preview' })
+    // SAFETY: the queried preview controls are rendered <button> elements.
     const zoomOut = screen.getByRole('button', { name: 'Zoom out' }) as HTMLButtonElement
+    // SAFETY: the queried preview controls are rendered <button> elements.
     const zoomIn = screen.getByRole('button', { name: 'Zoom in' }) as HTMLButtonElement
 
     expect(zoomOut.disabled).toBe(false)
