@@ -146,7 +146,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
           return tab
         },
         query: async () => [...tabs.values()],
-        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the test injects an arbitrary inbound simulated message, including malformed payloads
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the double receives an arbitrary payload from the code under test
         sendMessage: async (tabId: number, message: unknown) => {
           sentMessages.push({ tabId, message })
           return undefined
@@ -621,7 +621,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     activeHistorySends: () => activeHistorySends,
     maxActiveHistorySends: () => maxActiveHistorySends,
     disposeCount: () => disposeCount,
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the double receives an arbitrary payload from the code under test
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the test injects an arbitrary inbound simulated message, including malformed payloads
     receive: (roomId: string, sourcePeerId: string, message: unknown) => {
       if (!joined.has(roomId)) return
       // A wire message implies physical room membership without a fresh join announcement.
