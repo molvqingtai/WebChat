@@ -868,6 +868,69 @@ describe('HistoryDomain inventory page replay', () => {
       })
     )
 
+  const sendInventoryFrom = (
+    store: Fixture['store'],
+    history: Fixture['history'],
+    sourcePeerId: string,
+    syncId: string,
+    page: number,
+    messageIds: string[],
+    done = false
+  ) =>
+    store.send(
+      history.command.HandleHistoryMessagesPullCommand({
+        roomId: ROOM_ID,
+        sourcePeerId,
+        message: inventoryPage(syncId, page, messageIds, done)
+      })
+    )
+
+  it('does not consume an internal token when an identical page is replayed', async () => {
+    const replayFixture = await setup()
+    const controlFixture = await setup()
+    // A: accept page 0, then replay the identical page. B: accept page 0 only.
+    sendInventory(replayFixture.store, replayFixture.history, 'token-a', 0, ['m1'])
+    sendInventory(controlFixture.store, controlFixture.history, 'token-a', 0, ['m1'])
+    await vi.waitFor(() =>
+      expect(replayFixture.store.query(replayFixture.history.query.ProviderAttemptsQuery())).toHaveLength(1)
+    )
+    await vi.waitFor(() =>
+      expect(controlFixture.store.query(controlFixture.history.query.ProviderAttemptsQuery())).toHaveLength(1)
+    )
+    sendInventory(replayFixture.store, replayFixture.history, 'token-a', 0, ['m1'])
+
+    // Both fixtures admit the same new legal provider identity (a second source peer has its own
+    // binding). A replay that consumed an internal token shifts this identity's syncToken.
+    const fixtures = [replayFixture, controlFixture] as const
+    for (const fixture of fixtures) sendInventoryFrom(fixture.store, fixture.history, 'peer-b', 'token-b', 0, ['m2'])
+    const syncTokenOf = (fixture: (typeof fixtures)[number]) =>
+      fixture.store.query(fixture.history.query.ProviderAttemptsQuery()).find((item) => item.syncId === 'token-b')
+        ?.syncToken
+    await vi.waitFor(() => expect(syncTokenOf(replayFixture)).toBeDefined())
+    await vi.waitFor(() => expect(syncTokenOf(controlFixture)).toBeDefined())
+    expect(syncTokenOf(replayFixture)).toEqual(syncTokenOf(controlFixture))
+  })
+
+  it('does not cancel an accepted attempt when an identical replay reaches the byte boundary', async () => {
+    const { store, history } = await setup()
+    // A page between 4KiB and 8KiB is admitted (<= MAX_PROVIDER_SUPPLY_QUEUE_BYTES) but its own
+    // replay would exceed the budget on the pre-fix path (cumulative old + incoming), which is the
+    // deterministic boundary this test needs.
+    const largeIds = Array.from({ length: 120 }, (_, index) => `message-${index}-${'x'.repeat(30)}`)
+    sendInventory(store, history, 'boundary-a', 0, largeIds)
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
+    const attempts = structuredClone(store.query(history.query.ProviderAttemptsQuery()))
+    const jobs = structuredClone(store.query(history.query.ProviderSupplyJobsQuery()))
+
+    // The identical replay must terminate with no output: the attempt stays, and neither the
+    // attempt nor the job record changes (the pre-fix path returned Drop + Cancel here).
+    sendInventory(store, history, 'boundary-a', 0, largeIds)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
+    expect(store.query(history.query.ProviderSupplyJobsQuery())).toEqual(jobs)
+  })
+
   it('treats an identical accepted page replay as inert', async () => {
     const { store, history } = await setup()
     sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
