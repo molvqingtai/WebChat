@@ -1806,6 +1806,24 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return { targetId: state.targetId, sessionId: event.sessionId, targetType: 'page' }
   }
 
+  /** Applies the accepted target's owned main-frame navigation to the continuity state. */
+  const observeAcceptedFrameNavigated = (event: Extract<ChromeLifecycleEvent, { type: 'frame-navigated' }>): void => {
+    if (event.parentFrameId !== undefined) return
+    if (!state.pageSessionId || event.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL || !nonEmpty(event.navigationId)) {
+      state.targetFailure = 'The accepted target did not bind its planned main-frame navigation'
+      return
+    }
+    if (
+      (state.mainFrameId !== undefined && state.mainFrameId !== event.frameId) ||
+      (state.navigationId !== undefined && state.navigationId !== event.navigationId)
+    ) {
+      state.targetFailure = 'The bound main frame or navigation was replaced'
+      return
+    }
+    state.mainFrameId = event.frameId
+    state.navigationId = event.navigationId
+  }
+
   const processEvent = async (event: ChromeLifecycleEvent, eventAtMs: number): Promise<void> => {
     if (observeWorkerEvent(event, eventAtMs)) {
       await probePendingWorkers(lifecycleDeadlineMs)
@@ -1897,20 +1915,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     if (event.type === 'frame-navigated') {
-      if (event.parentFrameId !== undefined) return
-      if (!state.pageSessionId || event.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL || !nonEmpty(event.navigationId)) {
-        state.targetFailure = 'The accepted target did not bind its planned main-frame navigation'
-        return
-      }
-      if (
-        (state.mainFrameId !== undefined && state.mainFrameId !== event.frameId) ||
-        (state.navigationId !== undefined && state.navigationId !== event.navigationId)
-      ) {
-        state.targetFailure = 'The bound main frame or navigation was replaced'
-        return
-      }
-      state.mainFrameId = event.frameId
-      state.navigationId = event.navigationId
+      observeAcceptedFrameNavigated(event)
       return
     }
 
