@@ -1108,6 +1108,10 @@ export const diagnoseChromeNativeActionLifecycle = async (
   const pendingEvents: Array<{ readonly event: ChromeLifecycleEvent; readonly atMs: number }> = []
   let packagedManifest: PackagedManifest
 
+  /** Whether the bound target can still be addressed for a final DOM sample. */
+  const isFinalSampleAddressable = (): boolean =>
+    Boolean(state.pageSessionId && state.pageObservationReady && state.mainFrameId && !state.targetDestroyed)
+
   /** Throws unless the startup inventory holds valid, uniquely identified targets. */
   const assertStartupInventoryValid = (targets: readonly ChromeLifecycleTarget[]): void => {
     if (targets.some((target) => !validateTarget(target))) {
@@ -2262,8 +2266,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   }
 
   if (!finalDom) {
-    const addressable = state.pageSessionId && state.pageObservationReady && state.mainFrameId && !state.targetDestroyed
-    if (addressable) {
+    if (isFinalSampleAddressable()) {
       const sample = await sampleDom()
       if (sample) finalDom = sample
     } else {
