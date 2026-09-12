@@ -1920,6 +1920,11 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
+    observeAcceptedTargetContentEvent(event)
+  }
+
+  /** Applies the post-guard content events (frame/context/console/exception) for the accepted target. */
+  const observeAcceptedTargetContentEvent = (event: ChromeLifecycleEvent): void => {
     if (event.type === 'frame-navigated') {
       observeAcceptedFrameNavigated(event)
       return
@@ -1942,7 +1947,6 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
     if (event.type === 'exception') {
       observeIsolatedExceptionEvent(event)
-      return
     }
   }
 
