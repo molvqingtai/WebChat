@@ -1571,85 +1571,78 @@ export const diagnoseChromeNativeActionLifecycle = async (
     observeStartupContinuity(startupContinuity, event)
   }
 
-  /** Runs the pre-target discovery loop until a worker is bound, a failure is recorded, or discovery ends. */
-  const observePreTargetPhase = async (): Promise<BoundWorker | undefined> => {
-    let boundWorker: BoundWorker | undefined
-    while (!boundWorker && !workerFailure && !startupContinuity.failure) {
-      while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
-        const pending = pendingEvents.shift()!
-        processPreTargetEvent(pending.event, pending.atMs)
-      }
-      await probePendingWorkers(workerDiscoveryDeadlineMs)
-      if (pendingEvents.length > 0) continue
-      if (timeline.overflow || timeline.clockFailure) {
-        failWorker(timeline.overflow ?? timeline.clockFailure!)
-        break
-      }
-
-      const exactWorkers = activeExactWorkers()
-      if (exactWorkers.length > 1) {
-        failWorker('More than one exact packaged Service Worker exists at the decision fence')
-        break
-      }
-      if (exactWorkers.length === 1 && unresolvedWorkers().length === 0) {
-        const discoveryCompletedAtMs = timeline.now()
-        if (timeline.clockFailure || discoveryCompletedAtMs >= workerDiscoveryDeadlineMs) {
-          failWorker(
-            timeline.clockFailure ??
-              'The final worker discovery decision reached or exceeded the worker discovery deadline'
-          )
-          break
-        }
-        const record = exactWorkers[0]!
-        const classification = record.classification!
-        if (!record.sessionId) {
-          failWorker('The exact packaged Service Worker has no attached session')
-          break
-        }
-        boundWorker = {
-          targetId: record.target.targetId,
-          sessionId: record.sessionId,
-          targetUrl: record.target.url,
-          runtimeId: classification.runtimeId,
-          workerEntry: classification.workerEntry,
-          packagedWorkerEntry: packagedManifest.workerEntry,
-          packagedManifestDigest: packagedManifest.digest,
-          runtimeManifestDigest: classification.runtimeManifestDigest,
-          discoveryStartedAtMs: workerDiscoveryStartedAtMs,
-          discoveryCompletedAtMs,
-          discoveryDeadlineMs: workerDiscoveryDeadlineMs
-        }
-        timeline.record('worker-bound', boundWorker, discoveryCompletedAtMs)
-        break
-      }
-
-      const beforeWait = timeline.now()
-      if (timeline.clockFailure || beforeWait >= workerDiscoveryDeadlineMs) break
-      let delivered: boolean
-      try {
-        delivered = await adapter.waitForEvent(workerDiscoveryDeadlineMs)
-      } catch (error) {
-        failWorker(`Worker discovery observation failed: ${errorMessage(error)}`)
-        break
-      }
-      const afterWait = timeline.now()
-      if (delivered && pendingEvents.length === 0) {
-        failWorker('Worker discovery adapter reported an event without delivering it to the sink')
-        break
-      }
-      if (timeline.clockFailure || afterWait > workerDiscoveryDeadlineMs) {
-        failWorker(timeline.clockFailure ?? 'Worker discovery evidence arrived after the absolute deadline')
-        break
-      }
-      if (!delivered && afterWait === beforeWait) {
-        failWorker('Worker discovery adapter made no monotonic progress')
-        break
-      }
+  while (!worker && !workerFailure && !startupContinuity.failure) {
+    while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
+      const pending = pendingEvents.shift()!
+      processPreTargetEvent(pending.event, pending.atMs)
     }
-    return boundWorker
-  }
+    await probePendingWorkers(workerDiscoveryDeadlineMs)
+    if (pendingEvents.length > 0) continue
+    if (timeline.overflow || timeline.clockFailure) {
+      failWorker(timeline.overflow ?? timeline.clockFailure!)
+      break
+    }
 
-  worker = await observePreTargetPhase()
+    const exactWorkers = activeExactWorkers()
+    if (exactWorkers.length > 1) {
+      failWorker('More than one exact packaged Service Worker exists at the decision fence')
+      break
+    }
+    if (exactWorkers.length === 1 && unresolvedWorkers().length === 0) {
+      const discoveryCompletedAtMs = timeline.now()
+      if (timeline.clockFailure || discoveryCompletedAtMs >= workerDiscoveryDeadlineMs) {
+        failWorker(
+          timeline.clockFailure ??
+            'The final worker discovery decision reached or exceeded the worker discovery deadline'
+        )
+        break
+      }
+      const record = exactWorkers[0]!
+      const classification = record.classification!
+      if (!record.sessionId) {
+        failWorker('The exact packaged Service Worker has no attached session')
+        break
+      }
+      worker = {
+        targetId: record.target.targetId,
+        sessionId: record.sessionId,
+        targetUrl: record.target.url,
+        runtimeId: classification.runtimeId,
+        workerEntry: classification.workerEntry,
+        packagedWorkerEntry: packagedManifest.workerEntry,
+        packagedManifestDigest: packagedManifest.digest,
+        runtimeManifestDigest: classification.runtimeManifestDigest,
+        discoveryStartedAtMs: workerDiscoveryStartedAtMs,
+        discoveryCompletedAtMs,
+        discoveryDeadlineMs: workerDiscoveryDeadlineMs
+      }
+      timeline.record('worker-bound', worker, discoveryCompletedAtMs)
+      break
+    }
+
+    const beforeWait = timeline.now()
+    if (timeline.clockFailure || beforeWait >= workerDiscoveryDeadlineMs) break
+    let delivered: boolean
+    try {
+      delivered = await adapter.waitForEvent(workerDiscoveryDeadlineMs)
+    } catch (error) {
+      failWorker(`Worker discovery observation failed: ${errorMessage(error)}`)
+      break
+    }
+    const afterWait = timeline.now()
+    if (delivered && pendingEvents.length === 0) {
+      failWorker('Worker discovery adapter reported an event without delivering it to the sink')
+      break
+    }
+    if (timeline.clockFailure || afterWait > workerDiscoveryDeadlineMs) {
+      failWorker(timeline.clockFailure ?? 'Worker discovery evidence arrived after the absolute deadline')
+      break
+    }
+    if (!delivered && afterWait === beforeWait) {
+      failWorker('Worker discovery adapter made no monotonic progress')
+      break
+    }
+  }
 
   if (!worker && !workerFailure && !startupContinuity.failure) {
     const unresolved = unresolvedWorkers()

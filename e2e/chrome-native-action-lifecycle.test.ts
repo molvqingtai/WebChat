@@ -1831,10 +1831,11 @@ describe('gap depth probe', () => {
     expect(rows.length).toBe(13)
   })
 
-  it('keeps the caller reads after a callback queued in the phase-helper return gap', async () => {
-    // Depth 3 is the point where the queued callback runs after worker-bound is recorded and before
-    // the caller reads the clock: the return gap the extraction introduced. Asserting it here also
-    // pins the hop count, so a further boundary change fails the test instead of passing silently.
+  it('keeps the caller reads and the creation request ahead of a callback queued from the worker read', async () => {
+    // Depth 3 is the regression guard for the pre-target phase connection: with the phase kept
+    // inline, a callback queued from the worker identity read lands after the binding record, and
+    // the caller has already read the clock and requested target creation by the time it runs. The
+    // recorded values are the pre-extraction ones; a phase-helper extraction made them differ.
     const adapter = prepareAdapter()
     adapter.gapAfterPhase = 'read-worker:worker-session'
     adapter.gapDepth = 3
@@ -1843,12 +1844,12 @@ describe('gap depth probe', () => {
     const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
 
     expect(result.timeline.find(({ type }) => type === 'worker-bound')?.atMs).toBe(1000)
-    expect(result.lifecycleStartedAtMs).toBe(1500)
-    expect(result.lifecycleDeadlineMs).toBe(1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+    expect(result.lifecycleStartedAtMs).toBe(1000)
+    expect(result.lifecycleDeadlineMs).toBe(1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
     expect(adapter.operationDeadlines.find(({ operation }) => operation === 'create-target')?.deadlineMs).toBe(
-      1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
+      1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
     )
-    expect(adapter.trace.indexOf('gap')).toBeLessThan(
+    expect(adapter.trace.indexOf('gap')).toBeGreaterThan(
       adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`)
     )
     expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
