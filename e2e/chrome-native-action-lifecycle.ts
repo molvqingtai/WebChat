@@ -1754,6 +1754,27 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Applies a created/changed event to the bound-target continuity state. */
+  const observeBoundTargetIdentity = (
+    event: Extract<ChromeLifecycleEvent, { type: 'target-created' | 'target-changed' }>
+  ): void => {
+    if (event.target.targetId === state.targetId) {
+      if (event.target.type !== 'page' || event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL) {
+        state.targetFailure = 'The bound target changed type or URL'
+      }
+      return
+    }
+    if (event.target.type === 'page') {
+      if (event.target.targetId === startupPages[0]!.targetId) {
+        if (event.target.url !== 'about:blank') {
+          state.targetFailure = 'The startup about:blank page was navigated or reused during the bound lifecycle'
+        }
+      } else {
+        state.targetFailure = 'A replacement or second page target appeared during the bound lifecycle'
+      }
+    }
+  }
+
   const processEvent = async (event: ChromeLifecycleEvent, eventAtMs: number): Promise<void> => {
     if (observeWorkerEvent(event, eventAtMs)) {
       await probePendingWorkers(lifecycleDeadlineMs)
@@ -1774,21 +1795,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
 
     if (event.type === 'target-created' || event.type === 'target-changed') {
-      if (event.target.targetId === state.targetId) {
-        if (event.target.type !== 'page' || event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL) {
-          state.targetFailure = 'The bound target changed type or URL'
-        }
-        return
-      }
-      if (event.target.type === 'page') {
-        if (event.target.targetId === startupPages[0]!.targetId) {
-          if (event.target.url !== 'about:blank') {
-            state.targetFailure = 'The startup about:blank page was navigated or reused during the bound lifecycle'
-          }
-        } else {
-          state.targetFailure = 'A replacement or second page target appeared during the bound lifecycle'
-        }
-      }
+      observeBoundTargetIdentity(event)
       return
     }
 
