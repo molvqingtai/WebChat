@@ -213,7 +213,7 @@ export interface ChromeNativeActionLifecycleResult {
   readonly lifecycleDeadlineMs: number | null
   readonly evidenceDigest: string
   readonly timeline: readonly ChromeLifecycleTimelineEntry[]
-  readonly finalDom: ChromeLifecycleDomSample | { readonly unavailable: string }
+  readonly finalDom: ChromeLifecycleDomSample | UnavailableDom
   readonly actionAuthorization: ChromeNativeActionAuthorization | null
 }
 
@@ -364,6 +364,10 @@ const manifestDiffValue = (path: string, value: ComparableManifestValue): Manife
   }
   return value
 }
+
+type UnavailableDom = { readonly unavailable: string }
+type TerminalDecision = { readonly outcome: ChromeNativeActionLifecycleOutcome; readonly reason: string }
+type DeadlineFence = { readonly atMs: number; readonly failure?: string }
 
 type ManifestDiffReport = {
   readonly entries: readonly ManifestDiffEntry[]
@@ -1126,7 +1130,7 @@ const finish = (
   timeline: Timeline,
   outcome: ChromeNativeActionLifecycleOutcome,
   reason: string,
-  finalDom: ChromeLifecycleDomSample | { readonly unavailable: string },
+  finalDom: ChromeLifecycleDomSample | UnavailableDom,
   worker?: BoundWorker,
   state?: BoundState,
   lifecycleStartedAtMs: number | null = null,
@@ -1212,7 +1216,7 @@ const finish = (
   })
 }
 
-const unavailableDom = (reason: string): { readonly unavailable: string } => ({ unavailable: reason })
+const unavailableDom = (reason: string): UnavailableDom => ({ unavailable: reason })
 
 // oxlint-disable-next-line eslint/complexity -- keeps the discovery and bound observation loops' await order and phase clock reads inline; the async phase extraction was shown by the depth=3 case to change the createTarget deadline
 export const diagnoseChromeNativeActionLifecycle = async (
@@ -1778,9 +1782,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
   /** The terminal outcome and reason for the accepted-target lifecycle, in priority order. */
   const resolveTerminalDecision = (
-    finalDom: ChromeLifecycleDomSample | { readonly unavailable: string },
+    finalDom: ChromeLifecycleDomSample | UnavailableDom,
     finalDomMissing: boolean
-  ): { readonly outcome: ChromeNativeActionLifecycleOutcome; readonly reason: string } => {
+  ): TerminalDecision => {
     if (state.extensionFailure) return { outcome: 'extension-setup-failed', reason: state.extensionFailure }
     if (state.targetFailure) return { outcome: 'target-lifecycle-failed', reason: state.targetFailure }
     if (!state.pageSessionId || !state.mainFrameId || !state.navigationId) {
@@ -1998,7 +2002,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     lifecycleDeadlineMs
   })
 
-  const deadlineFenceAfter = (operation: string): { readonly atMs: number; readonly failure?: string } => {
+  const deadlineFenceAfter = (operation: string): DeadlineFence => {
     const atMs = timeline.now()
     if (timeline.clockFailure) return { atMs, failure: timeline.clockFailure }
     if (atMs >= lifecycleDeadlineMs) {
@@ -2304,7 +2308,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
-  let finalDom: ChromeLifecycleDomSample | { readonly unavailable: string } | undefined
+  let finalDom: ChromeLifecycleDomSample | UnavailableDom | undefined
   let finalDomMissing = false
 
   const sampleDom = async (): Promise<ChromeLifecycleDomSample | undefined> => {
