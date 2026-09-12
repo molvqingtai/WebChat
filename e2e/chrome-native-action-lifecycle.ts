@@ -685,80 +685,22 @@ const observeStartupContinuity = (
   }
 
   if (event.type === 'target-created' || event.type === 'target-changed') {
-    if (event.target.targetId === acceptedTargetId) return
-    if (event.target.targetId === continuity.pageTarget.targetId) {
-      if (event.target.type !== 'page' || event.target.url !== 'about:blank') {
-        fail('The startup about:blank page changed identity or URL')
-      } else if (event.type === 'target-created') {
-        if (continuity.pageCreateObserved) fail('The startup about:blank page was created more than once')
-        continuity.pageCreateObserved = true
-      }
-      return
-    }
-    if (event.target.type === 'page') {
-      fail('A replacement or second page target appeared during startup continuity')
-    }
+    observeStartupPageIdentity(continuity, event, acceptedTargetId, fail)
     return
   }
 
   if (event.type === 'target-attached') {
-    if (event.target.targetId === acceptedTargetId) return
-    if (event.target.targetId === continuity.pageTarget.targetId) {
-      if (
-        event.target.type !== 'page' ||
-        event.target.url !== 'about:blank' ||
-        event.sessionId !== continuity.pageSession.sessionId ||
-        continuity.pageAttachObserved
-      ) {
-        fail('The startup about:blank page attached with an extra or divergent session')
-      }
-      continuity.pageAttachObserved = true
-      return
-    }
-    if (event.target.type === 'page') {
-      fail('A replacement page session attached during startup continuity')
-    }
+    observeStartupPageAttached(continuity, event, acceptedTargetId, fail)
     return
   }
 
-  if (event.type === 'target-destroyed') {
-    if (event.targetId === acceptedTargetId) return
-    if (event.targetId === continuity.pageTarget.targetId) {
-      fail('The startup about:blank page was destroyed')
-    }
-    return
-  }
-
-  if (event.type === 'target-detached') {
-    if (event.targetId === acceptedTargetId) return
-    if (event.targetId === continuity.pageTarget.targetId) {
-      fail('The startup about:blank page session detached')
-    }
+  if (event.type === 'target-destroyed' || event.type === 'target-detached') {
+    observeStartupPageInactive(continuity, event, acceptedTargetId, fail)
     return
   }
 
   if (event.type === 'frame-navigated') {
-    if (event.targetId === acceptedTargetId) return
-    if (event.targetId !== continuity.pageTarget.targetId) return
-    if (
-      event.sessionId !== continuity.pageSession.sessionId ||
-      event.parentFrameId !== undefined ||
-      event.url !== 'about:blank' ||
-      !nonEmpty(event.frameId) ||
-      !nonEmpty(event.navigationId)
-    ) {
-      fail('The startup about:blank main frame redirected or changed session')
-      return
-    }
-    if (
-      (continuity.pageFrameId !== undefined && continuity.pageFrameId !== event.frameId) ||
-      (continuity.pageNavigationId !== undefined && continuity.pageNavigationId !== event.navigationId)
-    ) {
-      fail('The startup about:blank main-frame identity was replaced')
-      return
-    }
-    continuity.pageFrameId = event.frameId
-    continuity.pageNavigationId = event.navigationId
+    observeStartupPageFrameNavigated(continuity, event, acceptedTargetId, fail)
     return
   }
 
@@ -772,6 +714,100 @@ const observeStartupContinuity = (
       fail('Startup page observation failed')
     }
   }
+}
+
+/** Startup continuity for the about:blank page's created/changed identity events. */
+const observeStartupPageIdentity = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'target-created' | 'target-changed' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.target.targetId === acceptedTargetId) return
+  if (event.target.targetId === continuity.pageTarget.targetId) {
+    if (event.target.type !== 'page' || event.target.url !== 'about:blank') {
+      fail('The startup about:blank page changed identity or URL')
+    } else if (event.type === 'target-created') {
+      if (continuity.pageCreateObserved) fail('The startup about:blank page was created more than once')
+      continuity.pageCreateObserved = true
+    }
+    return
+  }
+  if (event.target.type === 'page') {
+    fail('A replacement or second page target appeared during startup continuity')
+  }
+}
+
+/** Startup continuity for the about:blank page's attach event. */
+const observeStartupPageAttached = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'target-attached' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.target.targetId === acceptedTargetId) return
+  if (event.target.targetId === continuity.pageTarget.targetId) {
+    if (
+      event.target.type !== 'page' ||
+      event.target.url !== 'about:blank' ||
+      event.sessionId !== continuity.pageSession.sessionId ||
+      continuity.pageAttachObserved
+    ) {
+      fail('The startup about:blank page attached with an extra or divergent session')
+    }
+    continuity.pageAttachObserved = true
+    return
+  }
+  if (event.target.type === 'page') {
+    fail('A replacement page session attached during startup continuity')
+  }
+}
+
+/** Startup continuity for the about:blank page's destroyed/detached events. */
+const observeStartupPageInactive = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'target-destroyed' | 'target-detached' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.targetId === acceptedTargetId) return
+  if (event.targetId === continuity.pageTarget.targetId) {
+    fail(
+      event.type === 'target-destroyed'
+        ? 'The startup about:blank page was destroyed'
+        : 'The startup about:blank page session detached'
+    )
+  }
+}
+
+/** Startup continuity for the about:blank main-frame navigation event. */
+const observeStartupPageFrameNavigated = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'frame-navigated' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.targetId === acceptedTargetId) return
+  if (event.targetId !== continuity.pageTarget.targetId) return
+  if (
+    event.sessionId !== continuity.pageSession.sessionId ||
+    event.parentFrameId !== undefined ||
+    event.url !== 'about:blank' ||
+    !nonEmpty(event.frameId) ||
+    !nonEmpty(event.navigationId)
+  ) {
+    fail('The startup about:blank main frame redirected or changed session')
+    return
+  }
+  if (
+    (continuity.pageFrameId !== undefined && continuity.pageFrameId !== event.frameId) ||
+    (continuity.pageNavigationId !== undefined && continuity.pageNavigationId !== event.navigationId)
+  ) {
+    fail('The startup about:blank main-frame identity was replaced')
+    return
+  }
+  continuity.pageFrameId = event.frameId
+  continuity.pageNavigationId = event.navigationId
 }
 
 const contextValues = (context: ChromeLifecycleContext): readonly string[] => [
