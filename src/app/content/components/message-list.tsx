@@ -80,8 +80,9 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
 
   useEffect(() => {
     atEndRef.current = atEnd
-    // The pending count is retired exactly when the bottom is reached; deriving it during render
-    // instead changed the acceptance behaviour, so the effect is kept by product decision.
+    // The pending count retires when the bottom is reached. Whether it could be derived during
+    // render is unproven (the acceptance suite is timing-flaky here), so it is kept as an effect by
+    // product decision.
     // oxlint-disable-next-line react-hooks/set-state-in-effect -- retires the count on bottom reach
     if (atEnd) setNewMessageCount(0)
   }, [atEnd])

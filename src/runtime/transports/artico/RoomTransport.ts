@@ -167,6 +167,74 @@ export const createRoomTransport = (): RoomTransport => {
     return owner
   }
 
+  interface RetirementOutcome {
+    failed: boolean
+    failure: unknown
+    roomFailed: boolean
+    roomFailure: unknown
+    peerFailed: boolean
+    peerFailure: unknown
+  }
+
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the failure path rethrows an arbitrary error
+  const rememberRetirementFailure = (outcome: RetirementOutcome, error: unknown) => {
+    if (outcome.failed) return
+    outcome.failed = true
+    outcome.failure = error
+  }
+
+  const retireOwnedRoom = (owner: PeerOwner, outcome: RetirementOutcome) => {
+    if (owner.roomRetired) return
+    const room = owner.room
+    if (!room) {
+      owner.roomRetired = true
+      return
+    }
+    try {
+      room.leave()
+      owner.roomRetired = true
+    } catch (error) {
+      outcome.roomFailed = true
+      outcome.roomFailure = error
+      rememberRetirementFailure(outcome, error)
+    }
+  }
+
+  const retireOwnedPeer = (owner: PeerOwner, outcome: RetirementOutcome) => {
+    if (owner.peerRetired) return
+    try {
+      owner.peer.close()
+      owner.peerRetired = true
+    } catch (error) {
+      outcome.peerFailed = true
+      outcome.peerFailure = error
+      rememberRetirementFailure(outcome, error)
+    }
+  }
+
+  const reportRetirementFailure = (owner: PeerOwner, outcome: RetirementOutcome, diagnosticOnly: boolean) => {
+    if (outcome.roomFailed) {
+      if (diagnosticOnly) {
+        console.error(outcome.roomFailure)
+      } else {
+        // SAFETY: the room failure path only propagates thrown errors as Error.
+        errorListeners.forEach((listener) => listener(outcome.roomFailure as Error, owner.roomId))
+      }
+    }
+    // A close failure after the room has already retired remains a provider diagnostic, as before;
+    // the retained owner still prevents a second peer from being created.
+    if (outcome.peerFailed) console.error(outcome.peerFailure)
+  }
+
+  const cancelPendingWork = (owner: PeerOwner) => {
+    if (owner.restartTimer) {
+      globalThis.clearTimeout(owner.restartTimer)
+      owner.restartTimer = null
+    }
+    owner.pendingJoin?.reject(new Error(`Room "${owner.roomId}" join cancelled`))
+    owner.pendingJoin = undefined
+  }
+
   const dropOwner = (owner: PeerOwner, diagnosticOnly = false, strict = false) => {
     if (owner.disposed) return
     if (owner.retiring) {
@@ -174,65 +242,22 @@ export const createRoomTransport = (): RoomTransport => {
       return
     }
     owner.retiring = true
-    if (owner.restartTimer) {
-      globalThis.clearTimeout(owner.restartTimer)
-      owner.restartTimer = null
+    cancelPendingWork(owner)
+    const outcome: RetirementOutcome = {
+      failed: false,
+      failure: undefined,
+      roomFailed: false,
+      roomFailure: undefined,
+      peerFailed: false,
+      peerFailure: undefined
     }
-    owner.pendingJoin?.reject(new Error(`Room "${owner.roomId}" join cancelled`))
-    owner.pendingJoin = undefined
-    let failed = false
-    let failure: unknown
-    let roomFailed = false
-    let roomFailure: unknown
-    let peerFailed = false
-    let peerFailure: unknown
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the failure path rethrows an arbitrary error
-    const rememberFailure = (error: unknown) => {
-      if (failed) return
-      failed = true
-      failure = error
-    }
-    if (!owner.roomRetired) {
-      const room = owner.room
-      if (!room) owner.roomRetired = true
-      else {
-        try {
-          room.leave()
-          owner.roomRetired = true
-        } catch (error) {
-          roomFailed = true
-          roomFailure = error
-          rememberFailure(error)
-        }
-      }
-    }
-    if (!owner.peerRetired) {
-      try {
-        owner.peer.close()
-        owner.peerRetired = true
-      } catch (error) {
-        peerFailed = true
-        peerFailure = error
-        rememberFailure(error)
-      }
-    }
-    if (failed) {
+    retireOwnedRoom(owner, outcome)
+    retireOwnedPeer(owner, outcome)
+    if (outcome.failed) {
       owner.retiring = false
-      owner.retirementError = failure
-      if (!strict) {
-        if (roomFailed) {
-          if (diagnosticOnly) {
-            console.error(roomFailure)
-          } else {
-            // SAFETY: the room failure path only propagates thrown errors as Error.
-            errorListeners.forEach((listener) => listener(roomFailure as Error, owner.roomId))
-          }
-        }
-        // A close failure after the room has already retired remains a provider diagnostic, as
-        // before; the retained owner still prevents a second peer from being created.
-        if (peerFailed) console.error(peerFailure)
-      }
-      if (strict) throw failure
+      owner.retirementError = outcome.failure
+      if (!strict) reportRetirementFailure(owner, outcome, diagnosticOnly)
+      if (strict) throw outcome.failure
       return
     }
     owner.retirementError = undefined
