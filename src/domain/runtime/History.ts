@@ -574,9 +574,7 @@ const HistoryDomain = Remesh.domain({
         ...get(RequesterSupplyJobsState()),
         ...get(PendingWireSendsState()),
         ...get(FeedbackOwnersState())
-      ]
-        .filter((item) => item.domain === runtimeDomain)
-        .map((item) => item.sourcePeerId)
+      ].flatMap((item) => (item.domain === runtimeDomain ? [item.sourcePeerId] : []))
       const bindingPeerIds = [...get(HistorySyncBindingsState()).keys()].flatMap((key) => {
         const [sourcePeerId, domainName, direction] = key.split('\u0000')
         return sourcePeerId && domainName === runtimeDomain && (direction === 'provider' || direction === 'requester')
@@ -853,6 +851,7 @@ const HistoryDomain = Remesh.domain({
         const pending = get(PendingWireSendsState())
         const found = pending.find((item) => item.requestId === requestId && item.type === 'inventory')
         if (!found) return null
+        // SAFETY: the pending send was selected by its inventory type above.
         const current = found as PendingInventorySend
         const requesters = get(RequesterAttemptsState())
         const attempt = requesters.find((item) => matchesSync(item, current))
