@@ -304,14 +304,13 @@ export class CdpClient {
   handlers = new Set<(message: CdpMessage) => void>()
 
   constructor(url: string, options: CdpClientOptions = {}) {
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness cast of the global WebSocket
     // SAFETY: the harness casts the global WebSocket to the structural constructor it drives.
     // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness cast of the global WebSocket
     const WebSocketImpl = options.WebSocketImpl ?? (WebSocket as unknown as WebSocketConstructor)
     this.requestTimeoutMs = options.requestTimeoutMs ?? 5000
     this.socket = new WebSocketImpl(url)
     this.socket.addEventListener('message', ({ data }) => {
-      // SAFETY: the socket carries CDP JSON frames, decoded here into the protocol message shape.
+      // SAFETY: compatibility assertion keeping the existing CDP message type; the decoded fields are not validated here.
       const message = JSON.parse(String(data)) as CdpMessage
       if (message.id) {
         const waiter = this.pending.get(message.id)
