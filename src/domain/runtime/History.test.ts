@@ -878,6 +878,9 @@ describe('HistoryDomain inventory page replay', () => {
     expect(jobs.length).toBeGreaterThan(0)
 
     // Replaying the exact page must terminate with no output: no counting, bytes, token or job change.
+    // TokenState is not exposed by a query and store.send does not surface the command output, so the
+    // observable proof is that neither the attempts (counts, syncToken, inventory bytes) nor the
+    // provider jobs change; the only token allocation site is inside the accepted-page commit path.
     sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
     await new Promise((resolve) => setTimeout(resolve, 0))
 
