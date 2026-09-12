@@ -146,6 +146,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
           return tab
         },
         query: async () => [...tabs.values()],
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the double receives an arbitrary payload from the code under test
         sendMessage: async (tabId: number, message: unknown) => {
           sentMessages.push({ tabId, message })
           return undefined
@@ -225,7 +226,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
 
     // The comctx-exported method requires a caller-bearing request at runtime and at the type level.
     // SAFETY: the cast lets this test call the exported method without a caller payload, which is exactly the rejection under test.
-    // oxlint-disable-next-line anti-slop/no-unknown-returns -- the test bypasses the typed export to assert the caller-payload rejection
+    // oxlint-disable-next-line anti-slop/no-unknown-returns, anti-slop/no-unknown-parameters -- the test bypasses the typed export to assert the caller-payload rejection
     await expect((fixture.server.getSnapshot as (payload?: unknown) => Promise<unknown>)()).rejects.toThrow(
       'Caller-bearing snapshot request is required'
     )
@@ -620,6 +621,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     activeHistorySends: () => activeHistorySends,
     maxActiveHistorySends: () => maxActiveHistorySends,
     disposeCount: () => disposeCount,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the double receives an arbitrary payload from the code under test
     receive: (roomId: string, sourcePeerId: string, message: unknown) => {
       if (!joined.has(roomId)) return
       // A wire message implies physical room membership without a fresh join announcement.
@@ -3828,6 +3830,7 @@ describe('RuntimeServer lifecycle', () => {
 
   it('applies the latest two-owner state on DocumentClient first pull after an AppButton replacement', async () => {
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- listeners in the double receive an arbitrary payload from the code under test
     const listeners = new Set<(message: unknown) => void>()
     const tabs = new Map<number, { id: number; url: string }>([
       [1, { id: 1, url: `${DOMAIN}/` }],
@@ -4427,6 +4430,7 @@ describe('RuntimeServer lifecycle', () => {
     let rejectedB: unknown
     const joinB = server
       .joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
       .catch((error: unknown) => {
         rejectedB = error
         return null
@@ -4556,6 +4560,7 @@ describe('RuntimeServer lifecycle', () => {
     let rejectedB: unknown
     const joinB = server
       .joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
       .catch((error: unknown) => {
         rejectedB = error
         return null
