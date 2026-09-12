@@ -1371,6 +1371,54 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return atMs >= deadlineMs ? `${operation} reached or exceeded its absolute deadline` : undefined
   }
 
+  /** Validates the evaluated worker identity and records the bounded classification evidence. */
+  const classifyWorkerEvidence = (
+    record: WorkerRecord,
+    session: ChromeLifecycleSession,
+    identity: ChromeLifecycleWorkerIdentity
+  ): void => {
+    if (typeof identity.runtimeId !== 'string' || identity.runtimeId.length > MAX_VALUE_STRING_LENGTH) {
+      throw new EvidenceLimitError('Evaluated chrome.runtime.id is not a bounded string')
+    }
+    const runtimeManifest = assertJson(identity.manifest)
+    if (runtimeManifest === null || Array.isArray(runtimeManifest) || typeof runtimeManifest !== 'object') {
+      throw new EvidenceLimitError('Evaluated worker manifest is not a JSON object')
+    }
+    const runtimeCanonical = JSON.stringify(runtimeManifest)
+    const runtimeManifestDigest = digest(runtimeCanonical)
+    const difference = manifestDiff(packagedManifest.value, runtimeManifest)
+    const urlIdentity = workerUrlIdentity(record.target)
+    const workerEntry = urlIdentity?.entry ?? ''
+    const exact =
+      urlIdentity !== null &&
+      urlIdentity.exactShape &&
+      nonEmpty(identity.runtimeId) &&
+      urlIdentity.host === identity.runtimeId &&
+      workerEntry === packagedManifest.workerEntry &&
+      runtimeManifestDigest === packagedManifest.digest
+    const evidence = {
+      appearanceOrder: record.appearanceOrder,
+      diff: difference.entries,
+      diffOverflow: difference.overflow,
+      entryMatches: workerEntry === packagedManifest.workerEntry,
+      exact,
+      manifestProjection: manifestProjection(runtimeManifest),
+      packagedManifestDigest: packagedManifest.digest,
+      runtimeId: identity.runtimeId,
+      runtimeIdMatchesHost: urlIdentity !== null && urlIdentity.host === identity.runtimeId,
+      runtimeManifestDigest,
+      sessionId: session.sessionId,
+      targetId: record.target.targetId,
+      targetUrl: record.target.url,
+      workerEntry
+    }
+    assertBoundedEvidence(evidence)
+    record.classification = { runtimeId: identity.runtimeId, workerEntry, runtimeManifestDigest, exact }
+    record.needsProbe = false
+    record.unresolvedReason = undefined
+    timeline.record('worker-classified', evidence)
+  }
+
   const probeWorker = async (record: WorkerRecord, deadlineMs: number): Promise<void> => {
     if (!record.active || !record.needsProbe || workerFailure) return
     const beforeProbe = workerFence(deadlineMs, 'Worker classification')
@@ -1423,46 +1471,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
         record.unresolvedReason = 'Worker identity evaluation reached or exceeded its absolute deadline'
         return
       }
-      if (typeof identity.runtimeId !== 'string' || identity.runtimeId.length > MAX_VALUE_STRING_LENGTH) {
-        throw new EvidenceLimitError('Evaluated chrome.runtime.id is not a bounded string')
-      }
-      const runtimeManifest = assertJson(identity.manifest)
-      if (runtimeManifest === null || Array.isArray(runtimeManifest) || typeof runtimeManifest !== 'object') {
-        throw new EvidenceLimitError('Evaluated worker manifest is not a JSON object')
-      }
-      const runtimeCanonical = JSON.stringify(runtimeManifest)
-      const runtimeManifestDigest = digest(runtimeCanonical)
-      const difference = manifestDiff(packagedManifest.value, runtimeManifest)
-      const urlIdentity = workerUrlIdentity(record.target)
-      const workerEntry = urlIdentity?.entry ?? ''
-      const exact =
-        urlIdentity !== null &&
-        urlIdentity.exactShape &&
-        nonEmpty(identity.runtimeId) &&
-        urlIdentity.host === identity.runtimeId &&
-        workerEntry === packagedManifest.workerEntry &&
-        runtimeManifestDigest === packagedManifest.digest
-      const evidence = {
-        appearanceOrder: record.appearanceOrder,
-        diff: difference.entries,
-        diffOverflow: difference.overflow,
-        entryMatches: workerEntry === packagedManifest.workerEntry,
-        exact,
-        manifestProjection: manifestProjection(runtimeManifest),
-        packagedManifestDigest: packagedManifest.digest,
-        runtimeId: identity.runtimeId,
-        runtimeIdMatchesHost: urlIdentity !== null && urlIdentity.host === identity.runtimeId,
-        runtimeManifestDigest,
-        sessionId: session.sessionId,
-        targetId: record.target.targetId,
-        targetUrl: record.target.url,
-        workerEntry
-      }
-      assertBoundedEvidence(evidence)
-      record.classification = { runtimeId: identity.runtimeId, workerEntry, runtimeManifestDigest, exact }
-      record.needsProbe = false
-      record.unresolvedReason = undefined
-      timeline.record('worker-classified', evidence)
+      classifyWorkerEvidence(record, session, identity)
     } catch (error) {
       record.classification = undefined
       record.needsProbe = false
