@@ -45,6 +45,7 @@ let databaseId = 0
 
 const deferred = () => {
   let resolve!: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
   let reject!: (reason?: unknown) => void
   const promise = new Promise<void>((next, fail) => {
     resolve = next
@@ -70,12 +71,14 @@ const createFixture = (
   const recordWatchNotifications = new Set<() => void>()
   if (options.delayRecordWatch) {
     const watch = database.watch.bind(database)
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     database.watch = ((stores, listener) =>
       watch(stores, () => recordWatchNotifications.add(listener))) as typeof database.watch
   }
   const messageStore = createMessageStore(database)
   const configuredUser = options.user === undefined ? SELF : options.user
   const storage: Storage = {
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     get: async <T extends StorageValue>() => configuredUser as T,
     set: async () => {},
     watch: async () => async () => {}
@@ -118,6 +121,8 @@ const createFixture = (
   const chat: ChatRoom = options.chat ?? {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     sendMessage: vi.fn(async (command: SendMessageCommand) => {
       if (command.type === 'reaction') {
         const message = {
@@ -305,6 +310,7 @@ const createPendingConnectionFixture = () => {
   adapter.bindConnectionResultReporter(lifecycleBundle.report)
   adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
   const storage: Storage = {
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     get: async <T extends StorageValue>() => SELF as T,
     set: async () => {},
     watch: async () => async () => {}
@@ -554,10 +560,15 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture) // joinRoom call 1 (baseline)
     const staleOp = deferred()
     const newerOp = deferred()
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const staleTask = staleOp.promise as unknown as Promise<void>
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const newerTask = newerOp.promise as unknown as Promise<void>
     fixture.bindLifecycleTask(staleTask, 'cancelled')
     fixture.bindLifecycleTask(newerTask, 'cancelled')
+    // SAFETY: the queued join outcomes are the lifecycle tasks this scenario binds above.
     vi.mocked(fixture.chat.joinRoom)
       .mockReturnValueOnce(staleTask as never) // call 2 (older op)
       .mockReturnValueOnce(newerTask as never) // call 3 (newer op, supersedes)
@@ -583,11 +594,17 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture) // joinRoom call 1 (baseline)
     const leaveDeferred = deferred()
     const joinDeferred = deferred()
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const leaveTask = leaveDeferred.promise as unknown as Promise<void>
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const joinTask = joinDeferred.promise as unknown as Promise<void>
     fixture.bindLifecycleTask(leaveTask, 'failed')
     fixture.bindLifecycleTask(joinTask, 'failed')
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(leaveTask as never)
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joinTask as never)
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
@@ -830,6 +847,7 @@ describe('ChatRoomDomain exact application port', () => {
     const messageStore = createMessageStore(database)
     const adapter = new RuntimeChatRoom({ server, messageStore, pageDomain: domain })
     const storage: Storage = {
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       get: async <T extends StorageValue>() => SELF as T,
       set: async () => {},
       watch: async () => async () => {}
@@ -1431,11 +1449,14 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('held by teardown'))
@@ -1460,12 +1481,15 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const providerError = new Error('provider transport failed')
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('provider fails'))
@@ -1487,12 +1511,15 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const providerError = new Error('provider transport failed')
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('remote leaves'))
@@ -1515,11 +1542,14 @@ describe('ChatRoomDomain exact application port', () => {
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
     const providerError = new Error('provider transport failed')
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('reconnect held'))
@@ -1546,6 +1576,8 @@ describe('ChatRoomDomain exact application port', () => {
       resolveSend = resolve
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       heldSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('reconnect success'))
