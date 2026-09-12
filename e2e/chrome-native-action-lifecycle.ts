@@ -253,6 +253,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
         (acc, key) => {
           // SAFETY: value is a non-null object here (null and arrays returned above), so its own
           // enumerable keys form a record whose entries the assertJson recursion validates.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the member values are re-validated by the assertJson recursion, so their domain is not yet established as JsonValue
           acc[key] = assertJson((value as Record<string, unknown>)[key], childSeen)
           return acc
         },
@@ -472,6 +473,7 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
     (acc, key) => {
       // SAFETY: value is a non-null object here (null and arrays returned above), so its own
       // enumerable keys form a record whose entries normalizeEvidence validates.
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the member values are normalized by the normalizeEvidence recursion, so their domain is not yet established as JsonValue
       acc[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, childSeen)
       return acc
     },
@@ -569,12 +571,8 @@ class Timeline {
       return
     }
 
-    this.entries.push({
-      sequence: this.entries.length + 1,
-      atMs: atMs ?? this.now(),
-      type,
-      ...(normalized === undefined ? {} : { detail: normalized })
-    })
+    const base = { sequence: this.entries.length + 1, atMs: atMs ?? this.now(), type }
+    this.entries.push(normalized === undefined ? base : { ...base, detail: normalized })
   }
 
   admitExternalEvent(): boolean {
