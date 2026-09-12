@@ -1769,10 +1769,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(Object.isFrozen(result)).toBe(true)
   })
 
-  it('keeps the bound-target lifecycle stable when the discovery gap advances the clock', async () => {
-    // The queued microtask is scheduled from the worker identity read itself, so it lands after the
-    // exact worker is bound and the phase helper has resolved, yet before the caller resumes. The
-    // clock advance it applies must be what the caller then reads and hands to target creation.
+  it('records the binding and the creation request after a clock advance scheduled from the worker read', async () => {
+    // The queued microtask is scheduled when the worker identity read runs, so it runs before the
+    // awaiting continuation of that read: the advance it applies therefore precedes the binding
+    // record and the creation request. This pins that ordering, which is all this scheduling can
+    // show; it does not place the callback in a phase-helper return gap.
     const adapter = prepareAdapter()
     adapter.gapAfterPhase = 'read-worker:worker-session'
     adapter.gapEffects = [{ advanceMs: 500 }]
@@ -1782,7 +1783,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const gapIndex = adapter.trace.indexOf('gap')
     expect(gapIndex).toBeGreaterThan(adapter.trace.lastIndexOf('read-worker:worker-session'))
     expect(gapIndex).toBeLessThan(adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`))
-    expect(result.timeline.some(({ type }) => type === 'worker-bound')).toBe(true)
+
+    const binding = result.timeline.find(({ type }) => type === 'worker-bound')
+    const creation = result.timeline.find(({ type }) => type === 'target-create-requested')
+    expect(binding?.atMs).toBe(1500)
+    expect(creation?.atMs).toBe(1500)
 
     expect(result.lifecycleStartedAtMs).toBe(1500)
     expect(result.lifecycleDeadlineMs).toBe(1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
