@@ -3,7 +3,7 @@ import { NativeWireCodec, WireCodecError } from '@/protocol'
 
 const compressWithoutDecodedLimit = async (text: string): Promise<string> => {
   const bytes = new TextEncoder().encode(text)
-  // SAFETY: the slice of a Uint8Array's backing store is always an ArrayBuffer.
+  // SAFETY: the Blob slice keeps the existing ArrayBuffer typing; the runtime buffer kind is not asserted here.
   const stream = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer])
     .stream()
     .pipeThrough(new CompressionStream('deflate'))

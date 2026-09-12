@@ -21,7 +21,7 @@ export class WireCodecError extends Error {
   }
 }
 
-// SAFETY: the slice of a Uint8Array's backing store is always an ArrayBuffer.
+// SAFETY: compatibility assertion preserving the existing ArrayBuffer return typing; the runtime buffer kind is not validated here.
 const asArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
   bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 
