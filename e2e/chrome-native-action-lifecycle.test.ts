@@ -155,6 +155,7 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
   readonly operationDeadlines: Array<{ readonly operation: string; readonly deadlineMs: number }> = []
   readonly phaseEffects = new Map<string, AdapterEffect[]>()
   gapEffects: AdapterEffect[] | undefined
+  gapDepth = 0
   gapAfterPhase: string | undefined
   readonly observedSessions: Array<{
     session: ChromeLifecycleSession
@@ -384,13 +385,20 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
       const queued = this.gapEffects
       this.gapEffects = undefined
       this.gapAfterPhase = undefined
-      queueMicrotask(() => {
-        this.trace.push('gap')
-        queued.forEach((effect) => {
-          if ('advanceMs' in effect) this.nowMs += effect.advanceMs
-          else this.requireSink()(effect)
+      const enqueue = (depth: number) => {
+        queueMicrotask(() => {
+          if (depth > 0) {
+            enqueue(depth - 1)
+            return
+          }
+          this.trace.push('gap')
+          queued.forEach((effect) => {
+            if ('advanceMs' in effect) this.nowMs += effect.advanceMs
+            else this.requireSink()(effect)
+          })
         })
-      })
+      }
+      enqueue(this.gapDepth)
     }
   }
 }
@@ -1795,6 +1803,54 @@ describe('Chrome native action lifecycle diagnostic', () => {
       1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
     )
     expect(result.outcome).toBe('mounted')
+    expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
+  })
+})
+
+describe('gap depth probe', () => {
+  it('documents the landing order of the queued probe for consecutive depths (recorded evidence)', async () => {
+    const rows: unknown[] = []
+    for (let depth = 0; depth <= 12; depth += 1) {
+      const adapter = prepareAdapter()
+      adapter.gapAfterPhase = 'read-worker:worker-session'
+      adapter.gapDepth = depth
+      adapter.gapEffects = [{ advanceMs: 500 }]
+      const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+      const binding = result.timeline.find(({ type }) => type === 'worker-bound')
+      rows.push({
+        depth,
+        gapIndex: adapter.trace.indexOf('gap'),
+        createIndex: adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`),
+        bindingAtMs: binding?.atMs,
+        started: result.lifecycleStartedAtMs,
+        outcome: result.outcome,
+        created: adapter.createdUrls.length
+      })
+    }
+    console.log('DEPTHSCAN ' + JSON.stringify(rows))
+    expect(rows.length).toBe(13)
+  })
+
+  it('keeps the caller reads after a callback queued in the phase-helper return gap', async () => {
+    // Depth 3 is the point where the queued callback runs after worker-bound is recorded and before
+    // the caller reads the clock: the return gap the extraction introduced. Asserting it here also
+    // pins the hop count, so a further boundary change fails the test instead of passing silently.
+    const adapter = prepareAdapter()
+    adapter.gapAfterPhase = 'read-worker:worker-session'
+    adapter.gapDepth = 3
+    adapter.gapEffects = [{ advanceMs: 500 }]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    expect(result.timeline.find(({ type }) => type === 'worker-bound')?.atMs).toBe(1000)
+    expect(result.lifecycleStartedAtMs).toBe(1500)
+    expect(result.lifecycleDeadlineMs).toBe(1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+    expect(adapter.operationDeadlines.find(({ operation }) => operation === 'create-target')?.deadlineMs).toBe(
+      1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
+    )
+    expect(adapter.trace.indexOf('gap')).toBeLessThan(
+      adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`)
+    )
     expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
   })
 })
