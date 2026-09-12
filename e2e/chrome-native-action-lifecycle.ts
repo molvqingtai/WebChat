@@ -1784,6 +1784,14 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return false
   }
 
+  /** Drains the queued pre-target events through the worker and continuity observers. */
+  const drainPreTargetEvents = (): void => {
+    while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
+      const pending = pendingEvents.shift()!
+      processPreTargetEvent(pending.event, pending.atMs)
+    }
+  }
+
   /** Records the failure for a discovery phase that ended without a bound exact worker. */
   const recordUnresolvedDiscoveryFailure = (): void => {
     if (worker || workerFailure || startupContinuity.failure) return
@@ -1808,10 +1816,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     !timeline.clockFailure && beforeWait < workerDiscoveryDeadlineMs
 
   while (!worker && !workerFailure && !startupContinuity.failure) {
-    while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
-      const pending = pendingEvents.shift()!
-      processPreTargetEvent(pending.event, pending.atMs)
-    }
+    drainPreTargetEvents()
     await probePendingWorkers(workerDiscoveryDeadlineMs)
     if (pendingEvents.length > 0) continue
     if (!resolveDiscoveryOverflowFailure()) break
