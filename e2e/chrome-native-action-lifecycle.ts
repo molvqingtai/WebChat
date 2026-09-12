@@ -1893,12 +1893,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     if (event.type === 'target-detached') {
-      if (event.targetId === state.targetId) {
-        state.targetFailure =
-          event.sessionId === state.pageSessionId
-            ? 'The accepted target session detached'
-            : 'The accepted target emitted a divergent detached session'
-      }
+      observeBoundTargetDetached(event)
       return
     }
 
@@ -1920,24 +1915,12 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     if (event.type === 'execution-context-created') {
-      const exactContext =
-        state.mainFrameId !== undefined &&
-        event.frameId === state.mainFrameId &&
-        event.world === 'isolated' &&
-        event.origin === extensionOrigin(worker.runtimeId)
-      if (!exactContext) return
-      if (state.isolatedContextId !== undefined && state.isolatedContextId !== event.contextId) {
-        state.unexpectedFailure = 'Multiple exact page-bound isolated contexts appeared'
-        return
-      }
-      state.isolatedContextId = event.contextId
+      observeIsolatedContextCreated(event)
       return
     }
 
     if (event.type === 'execution-context-destroyed') {
-      if (event.contextId === state.isolatedContextId) {
-        state.unexpectedFailure = 'The exact page-bound isolated context was destroyed'
-      }
+      observeIsolatedContextDestroyed(event)
       return
     }
 
@@ -1969,6 +1952,41 @@ export const diagnoseChromeNativeActionLifecycle = async (
       state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
     } else {
       state.unexpectedFailure = 'The exact isolated context reported an unexpected exception'
+    }
+  }
+
+  /** Applies a detached event to the accepted target continuity state. */
+  const observeBoundTargetDetached = (event: Extract<ChromeLifecycleEvent, { type: 'target-detached' }>): void => {
+    if (event.targetId !== state.targetId) return
+    state.targetFailure =
+      event.sessionId === state.pageSessionId
+        ? 'The accepted target session detached'
+        : 'The accepted target emitted a divergent detached session'
+  }
+
+  /** Applies an execution-context creation event for the exact page-bound isolated world. */
+  const observeIsolatedContextCreated = (
+    event: Extract<ChromeLifecycleEvent, { type: 'execution-context-created' }>
+  ): void => {
+    const exactContext =
+      state.mainFrameId !== undefined &&
+      event.frameId === state.mainFrameId &&
+      event.world === 'isolated' &&
+      event.origin === extensionOrigin(worker.runtimeId)
+    if (!exactContext) return
+    if (state.isolatedContextId !== undefined && state.isolatedContextId !== event.contextId) {
+      state.unexpectedFailure = 'Multiple exact page-bound isolated contexts appeared'
+      return
+    }
+    state.isolatedContextId = event.contextId
+  }
+
+  /** Applies an execution-context destruction event for the exact isolated context. */
+  const observeIsolatedContextDestroyed = (
+    event: Extract<ChromeLifecycleEvent, { type: 'execution-context-destroyed' }>
+  ): void => {
+    if (event.contextId === state.isolatedContextId) {
+      state.unexpectedFailure = 'The exact page-bound isolated context was destroyed'
     }
   }
 
