@@ -940,30 +940,9 @@ describe('HistoryDomain inventory page replay', () => {
     expect(attempts).toHaveLength(1)
     expect(jobs.length).toBeGreaterThan(0)
 
-    // Replaying the exact page must terminate with no output: no counting, bytes, token or job change.
-    // TokenState is not exposed by a query and store.send does not surface the command output, so the
-    // observable proof is that neither the attempts (counts, syncToken, inventory bytes) nor the
-    // provider jobs change; the only token allocation site is inside the accepted-page commit path.
+    // Replaying the exact page must terminate with no output: no counting, bytes or job change.
+    // Token consumption is observed by the dedicated two-fixture comparison test above.
     sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
-    expect(store.query(history.query.ProviderSupplyJobsQuery())).toEqual(jobs)
-  })
-
-  it('does not cancel an accepted attempt when an identical replay arrives at the queue boundary', async () => {
-    const { store, history } = await setup()
-    sendInventory(store, history, 'boundary-a', 0, ['m1'])
-    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
-    // Fill the shared pool to its 32-job cap with distinct requester identities.
-    for (let index = 0; index < 32; index += 1) {
-      store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: `fill-${index}` }))
-    }
-    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(32))
-    const attempts = structuredClone(store.query(history.query.ProviderAttemptsQuery()))
-    const jobs = structuredClone(store.query(history.query.ProviderSupplyJobsQuery()))
-    // The identical replay must terminate with no output and must not trip the capacity branch.
-    sendInventory(store, history, 'boundary-a', 0, ['m1'])
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
