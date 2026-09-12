@@ -7,6 +7,7 @@ export const registerActionClick = (browser: ActionBrowser, openOptionsPage: () 
   const namespace = browser[namespaceName]
 
   if (!namespace) throw new Error(`browser.${namespaceName} is unavailable`)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- capability probe of the browser action namespace
   if (!namespace.onClicked || typeof namespace.onClicked.addListener !== 'function') {
     throw new Error(`browser.${namespaceName}.onClicked.addListener is unavailable`)
   }

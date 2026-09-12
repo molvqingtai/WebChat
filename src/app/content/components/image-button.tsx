@@ -14,6 +14,7 @@ const ImageButton = ({ onSelect, disabled }: ImageButtonProps) => {
     input.addEventListener(
       'change',
       async (e: Event) => {
+        // SAFETY: the change listener is attached to an <input type="file"> element.
         onSelect?.((e.target as HTMLInputElement).files![0])
       },
       { once: true }

@@ -47,6 +47,7 @@ const AvatarSelect = ({
         onSuccess?.(base64)
         onChange?.(base64)
       } catch (error) {
+        // SAFETY: the avatar pipeline failure path only propagates thrown errors as Error.
         onError?.(error as Error)
       }
     }

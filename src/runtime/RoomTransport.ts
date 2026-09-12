@@ -73,7 +73,7 @@ export interface RoomTransport {
    * failures reject the operation.
    */
   send: (roomId: string, payload: string, to?: string | string[]) => Promise<void>
-  onMessage: (callback: (roomId: string, sourcePeerId: string, rawPayload: string) => unknown) => () => void
+  onMessage: (callback: (roomId: string, sourcePeerId: string, rawPayload: string) => void) => () => void
   onPeerJoin: (callback: (roomId: string, peerId: string) => void) => () => void
   onPeerLeave: (callback: (roomId: string, peerId: string) => void) => () => void
   onRoomClose: (callback: (roomId: string) => void) => () => void
