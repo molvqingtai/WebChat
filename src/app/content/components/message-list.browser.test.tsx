@@ -47,14 +47,19 @@ type ScrollCall = { behavior?: ScrollBehavior; top?: number }
 const recordScrollCommands = () => {
   const calls: ScrollCall[] = []
   const original = Element.prototype.scrollTo
+  // SAFETY: the replacement keeps the native scrollTo signature it intercepts.
   Element.prototype.scrollTo = function (this: Element, ...args: [ScrollToOptions] | [number, number]) {
     const first = args[0]
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the scrollTo argument union
     calls.push(typeof first === 'object' ? { ...first } : { top: first })
     // Smooth commands still prove intent through the recording; apply them instantly so the
     // geometry assertions stay deterministic.
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the scrollTo argument union
     if (typeof first === 'object') {
+      // oxlint-disable-next-line anti-slop/no-reflect-apply -- fowarding the intercepted native call
       return Reflect.apply(original, this, [{ ...first, behavior: 'auto' }])
     }
+    // oxlint-disable-next-line anti-slop/no-reflect-apply -- forwarding the intercepted native call
     return Reflect.apply(original, this, args)
   } as typeof Element.prototype.scrollTo
   return calls
