@@ -909,4 +909,49 @@ describe('DocumentClient one-way current-state drain', () => {
     await flush()
     expect(readQueue).toHaveLength(0)
   })
+
+  it('a manual refresh starts a fresh registration while a stale read is still in flight, and a late old read never overwrites the new snapshot', async () => {
+    const { client, coordinator, server, registerQueue, readQueue } = setup()
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve(snapshot('first'))
+    await expect(init).resolves.toMatchObject({ hostPhase: 'ready' })
+
+    // A hint stalls the current-state read, leaving the drain in flight; this RPC has no timeout.
+    client.invalidate()
+    await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
+
+    // A manual refresh supersedes the hung drain and starts a fresh registration instead of
+    // waiting for the stale read to finish.
+    client.refresh()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+
+    // The superseded read settles late with a stale marker and must be fenced out.
+    readQueue.shift()!.resolve(snapshot('stale'))
+    registerQueue.shift()!.resolve(snapshot('fresh'))
+    await flush()
+    expect(client.snapshot().failures[0]?.eventId).toBe('fresh')
+  })
+
+  it('a manual refresh after a failure re-registers instead of returning the stale snapshot', async () => {
+    const { client, coordinator, server, registerQueue, readQueue } = setup()
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve(snapshot(''))
+    await expect(init).resolves.toMatchObject({ hostPhase: 'ready' })
+
+    // The next current-state read fails, publishing unavailable.
+    client.invalidate()
+    await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
+    readQueue.shift()!.reject(new Error('read failed'))
+    await flush()
+
+    // A manual refresh starts a fresh registration instead of returning the stale snapshot.
+    client.refresh()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    registerQueue.shift()!.resolve(snapshot('recovered'))
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenCalledTimes(2)
+    expect(client.snapshot().failures[0]?.eventId).toBe('recovered')
+  })
 })

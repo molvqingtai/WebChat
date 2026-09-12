@@ -249,6 +249,25 @@ export class DocumentClient {
     return waiter
   }
 
+  /**
+   * Starts a fresh register-and-read recovery regardless of the current drain state. Unlike the
+   * deduping init, it supersedes any in-flight drain (including a hung one, whose RPC has no
+   * timeout) and forces a re-registration instead of returning the cached snapshot, so a failed
+   * or stale recovery never blocks the next one. Late continuations of the superseded drain stay
+   * fenced by isOwnerCurrent once the owner slot is replaced, so an old result cannot overwrite
+   * the new one.
+   */
+  refresh() {
+    if (this.detached) this.detached = false
+    this.owner?.controller.abort(new DOMException('Runtime client refresh superseded prior drain', 'AbortError'))
+    this.owner = null
+    this.registered = false
+    this.readyPublished = false
+    this.currentHostId = null
+    this.dirty = true
+    this.startDrainIfAbsent()
+  }
+
   /** Document-local teardown only; tab departure itself is owned by browser lifecycle events. */
   detach() {
     this.detached = true
