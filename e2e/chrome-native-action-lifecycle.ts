@@ -1270,6 +1270,48 @@ export const diagnoseChromeNativeActionLifecycle = async (
   ].toSorted((left, right) => left.atMs - right.atMs || left.order - right.order)
   initialWorkerSightings.forEach(({ target, atMs }) => addWorker(target, atMs))
 
+  /** Applies the first creation event for a Service Worker target record. */
+  const recordWorkerCreated = (record: WorkerRecord): boolean => {
+    record.createEvents += 1
+    if (record.createEvents > 1) {
+      failWorker('A Service Worker target was created more than once')
+      return true
+    }
+    if (worker?.targetId === record.target.targetId) {
+      failWorker('The bound exact worker was created more than once')
+      return true
+    }
+
+    return false
+  }
+
+  /** Applies the first attach event for a Service Worker target record. */
+  const recordWorkerAttached = (
+    record: WorkerRecord,
+    event: Extract<ChromeLifecycleEvent, { type: 'target-attached' }>
+  ): boolean => {
+    record.attachEvents += 1
+    if (record.attachEvents > 1) {
+      failWorker('A Service Worker target attached more than once')
+      return true
+    }
+    if (!nonEmpty(event.sessionId) || event.sessionId.length > MAX_VALUE_STRING_LENGTH) {
+      failWorker('Observed Service Worker session identity is invalid')
+      return true
+    }
+    if (record.sessionId !== undefined && record.sessionId !== event.sessionId) {
+      failWorker('A Service Worker attached with a divergent session identity')
+      return true
+    }
+    if (worker?.targetId === record.target.targetId) {
+      failWorker('The bound exact worker attached again after binding')
+      return true
+    }
+    record.sessionId = event.sessionId
+
+    return false
+  }
+
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
     if (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') {
       const known = workerRecords.get(event.target.targetId)
@@ -1288,37 +1330,8 @@ export const diagnoseChromeNativeActionLifecycle = async (
       const record = known ?? addWorker(event.target, eventAtMs)
       if (!record) return true
 
-      if (event.type === 'target-created') {
-        record.createEvents += 1
-        if (record.createEvents > 1) {
-          failWorker('A Service Worker target was created more than once')
-          return true
-        }
-        if (worker?.targetId === record.target.targetId) {
-          failWorker('The bound exact worker was created more than once')
-          return true
-        }
-      }
-      if (event.type === 'target-attached') {
-        record.attachEvents += 1
-        if (record.attachEvents > 1) {
-          failWorker('A Service Worker target attached more than once')
-          return true
-        }
-        if (!nonEmpty(event.sessionId) || event.sessionId.length > MAX_VALUE_STRING_LENGTH) {
-          failWorker('Observed Service Worker session identity is invalid')
-          return true
-        }
-        if (record.sessionId !== undefined && record.sessionId !== event.sessionId) {
-          failWorker('A Service Worker attached with a divergent session identity')
-          return true
-        }
-        if (worker?.targetId === record.target.targetId) {
-          failWorker('The bound exact worker attached again after binding')
-          return true
-        }
-        record.sessionId = event.sessionId
-      }
+      if (event.type === 'target-created' && recordWorkerCreated(record)) return true
+      if (event.type === 'target-attached' && recordWorkerAttached(record, event)) return true
       if (worker?.targetId === record.target.targetId && event.target.url !== worker.targetUrl) {
         failWorker('The bound exact worker changed URL or entry')
         return true
