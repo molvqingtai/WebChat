@@ -13,18 +13,23 @@ import {
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 const createBus = () => {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
   const listeners = new Set<(...args: unknown[]) => unknown>()
   const messages: Message[] = []
   const runtime = {
     id: 'test-extension',
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime send contract
     sendMessage: (...args: unknown[]) => {
+      // SAFETY: the comctx send contract passes the message as the last argument.
       const message = args.at(-1) as Message
       messages.push(structuredClone(message))
       const sender = args.length === 2 ? { tab: { id: 7, url: 'https://example.com/' } } : {}
       listeners.forEach((listener) => listener(message, sender))
     },
     onMessage: {
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
       addListener: (listener: (...args: unknown[]) => unknown) => listeners.add(listener),
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
       removeListener: (listener: (...args: unknown[]) => unknown) => listeners.delete(listener)
     }
   }
@@ -59,6 +64,7 @@ describe('background service routing', () => {
     expect(baselineListeners).toBe(2)
 
     const notification = injectNotification(new BackgroundInjectAdapter(bus.runtime))
+    // SAFETY: the probe payload only needs the body field this scenario inspects.
     await expect(notification.push({ body: 'probe' } as ProjectedTextMessage)).resolves.toBe('notification-id')
     await settle()
 
