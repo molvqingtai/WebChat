@@ -792,6 +792,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const diff = detail.diff as Array<Record<string, unknown>>
     // String (lexicographic) index order: `/10` sorts before `/2`, matching the diff's own sort.
     expect(diff.map(({ path }) => path)).toEqual(['/background/scripts/10', '/background/scripts/2'])
+    // SAFETY: the test narrows the diff entry's runtime descriptor it asserts on.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- manifest diff value descriptor read by the test
     const missingSide = diff[0]!.runtime as Record<string, unknown>
     expect(missingSide.type).toBe('missing')
     expect(missingSide.length).toBe(0)
