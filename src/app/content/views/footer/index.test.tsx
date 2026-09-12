@@ -15,6 +15,7 @@ vi.mock('@/hooks/useCursorPosition', () => ({
 }))
 vi.mock('imgcap', () => ({ default: vi.fn() }))
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- spy accepts the forwarded remesh action
 const sendSpy = vi.fn((_action: unknown) => {})
 const fakeDomain = {
   query: {
@@ -24,13 +25,16 @@ const fakeDomain = {
     CanSubmitTextQuery: () => ({ name: 'Room.CanSubmitTextQuery' })
   },
   command: {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- domain double forwards the command value
     InputCommand: (value: unknown) => value,
     ClearCommand: () => 'MessageInput.ClearCommand',
     WarningCommand: () => 'Toast.WarningCommand',
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- domain double forwards the command value
     SendTextMessageCommand: (value: unknown) => value
   }
 }
 let canSubmitText = false
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening -- query fixture keyed by remesh query name
 const queryFixtures: Record<string, unknown> = {
   'MessageInput.ValueQuery': 'hello',
   'UserInfo.UserInfoQuery': { id: 'local-user', name: 'Local', avatar: '' },
@@ -46,7 +50,7 @@ afterEach(() => {
 const renderFooter = () => render(<Footer />)
 const textarea = () => screen.getByRole('textbox')
 const sendButton = () => screen.getByRole('button', { name: /send/i })
-const submitShape = () => ({ body: 'hello', mentions: [] })
+const submittedPayload = () => ({ body: 'hello', mentions: [] })
 
 const pressEnter = (shiftKey = false) => {
   fireEvent.keyDown(textarea(), { key: 'Enter', code: 'Enter', shiftKey })
@@ -82,6 +86,7 @@ describe('Footer @ autocomplete keyboard', () => {
 
   const openAutoComplete = async () => {
     renderFooter()
+    // SAFETY: the queried textarea is the rendered message input.
     const input = textarea() as HTMLTextAreaElement
     input.value = '@'
     input.dispatchEvent(new InputEvent('input', { bubbles: true, data: '@' }))
@@ -119,7 +124,7 @@ describe('Footer @ autocomplete keyboard', () => {
     fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
 
     await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledWith(expect.stringContaining('@bob')))
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
     await vi.waitFor(() => expect(options()).toHaveLength(0))
   })
 
@@ -129,7 +134,7 @@ describe('Footer @ autocomplete keyboard', () => {
     fireEvent.keyDown(input, { key: 'Escape', code: 'Escape' })
 
     await vi.waitFor(() => expect(options()).toHaveLength(0))
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
     expect(scrollIntoViewSpy).not.toHaveBeenCalled()
   })
 })
@@ -138,6 +143,7 @@ describe('Footer step-4 submit gate', () => {
   it('disables the send button and no-ops Enter while CanSubmitTextQuery is false, keeping the draft', () => {
     renderFooter()
 
+    // SAFETY: the queried send control is a rendered <button> element.
     expect((sendButton() as HTMLButtonElement).disabled).toBe(true)
 
     // Editing stays available: typing dispatches InputCommand (draft recorded) but submission is a no-op.
@@ -145,20 +151,21 @@ describe('Footer step-4 submit gate', () => {
     expect(sendSpy).toHaveBeenCalledWith('draft')
 
     pressEnter()
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
     fireEvent.click(sendButton())
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
   })
 
   it('enables the button and lets Enter submit exactly once when CanSubmitTextQuery becomes true', async () => {
     canSubmitText = true
     renderFooter()
 
+    // SAFETY: the queried send control is a rendered <button> element.
     expect((sendButton() as HTMLButtonElement).disabled).toBe(false)
 
     pressEnter()
     await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1))
-    expect(sendSpy).toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).toHaveBeenCalledWith(submittedPayload())
   })
 
   it('lets Shift+Enter edit without submitting or preventing default editing behavior', () => {
@@ -168,12 +175,12 @@ describe('Footer step-4 submit gate', () => {
     // dispatchEvent returns true when default was NOT prevented: Shift+Enter keeps editing.
     const notPrevented = fireEvent.keyDown(textarea(), { key: 'Enter', code: 'Enter', shiftKey: true })
     expect(notPrevented).toBe(true)
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
 
     // Editing stays fully available after the Shift+Enter keypress.
     fireEvent.input(textarea(), { target: { value: 'edited draft' } })
     expect(sendSpy).toHaveBeenCalledWith('edited draft')
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
   })
 
   it('does not let a gated Enter occupy the real throttle window: after recovery the first Enter submits', async () => {
@@ -182,15 +189,16 @@ describe('Footer step-4 submit gate', () => {
     // Before connection: Enter is gated before the throttled submit path.
     pressEnter()
     await Promise.resolve()
-    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).not.toHaveBeenCalledWith(submittedPayload())
 
     // Connection completes: the very next Enter must not be swallowed by a stale throttle window.
     canSubmitText = true
     rerender(<Footer />)
+    // SAFETY: the queried send control is a rendered <button> element.
     expect((sendButton() as HTMLButtonElement).disabled).toBe(false)
 
     pressEnter()
     await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1))
-    expect(sendSpy).toHaveBeenCalledWith(submitShape())
+    expect(sendSpy).toHaveBeenCalledWith(submittedPayload())
   })
 })
