@@ -928,6 +928,25 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
   }
 }
 
+/** The worker discovery window fields, all absent when no worker was bound. */
+const workerDiscoverySnapshot = (worker: BoundWorker | undefined) => ({
+  workerDiscoveryStartedAtMs: worker?.discoveryStartedAtMs ?? null,
+  workerDiscoveryCompletedAtMs: worker?.discoveryCompletedAtMs ?? null,
+  workerDiscoveryDeadlineMs: worker?.discoveryDeadlineMs ?? null
+})
+
+/** The observed worker-side binding fields, all absent when no worker was bound. */
+const workerBindingSnapshot = (worker: BoundWorker | undefined) => ({
+  extensionId: worker?.runtimeId ?? null,
+  packagedWorkerEntry: worker?.packagedWorkerEntry ?? null,
+  packagedManifestDigest: worker?.packagedManifestDigest ?? null,
+  workerTargetId: worker?.targetId ?? null,
+  workerSessionId: worker?.sessionId ?? null,
+  workerEntry: worker?.workerEntry ?? null,
+  runtimeManifestDigest: worker?.runtimeManifestDigest ?? null,
+  ...workerDiscoverySnapshot(worker)
+})
+
 const bindingSnapshot = (
   context: ChromeLifecycleContext,
   worker: BoundWorker | undefined,
@@ -941,16 +960,7 @@ const bindingSnapshot = (
   processGeneration: context.processGeneration,
   browserVersion: context.browserVersion,
   browserExecutable: context.browserExecutable,
-  extensionId: worker?.runtimeId ?? null,
-  packagedWorkerEntry: worker?.packagedWorkerEntry ?? null,
-  packagedManifestDigest: worker?.packagedManifestDigest ?? null,
-  workerTargetId: worker?.targetId ?? null,
-  workerSessionId: worker?.sessionId ?? null,
-  workerEntry: worker?.workerEntry ?? null,
-  runtimeManifestDigest: worker?.runtimeManifestDigest ?? null,
-  workerDiscoveryStartedAtMs: worker?.discoveryStartedAtMs ?? null,
-  workerDiscoveryCompletedAtMs: worker?.discoveryCompletedAtMs ?? null,
-  workerDiscoveryDeadlineMs: worker?.discoveryDeadlineMs ?? null,
+  ...workerBindingSnapshot(worker),
   acceptedUrl: CHROME_NATIVE_ACTION_ACCEPTED_URL,
   pageTargetId: state?.targetId ?? null,
   pageSessionId: state?.pageSessionId ?? null,
