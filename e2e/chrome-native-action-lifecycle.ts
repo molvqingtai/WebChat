@@ -1674,6 +1674,21 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Applies the bound lifecycle post-sample checks; false stops the loop at the same conditions. */
+  const resolveBoundSampleOutcome = (
+    sample: ChromeLifecycleDomSample | undefined,
+    afterWait: number,
+    beforeWait: number
+  ): boolean => {
+    if (finalDom || state.unexpectedFailure || state.sharedRuntimeUnavailable || finalDomMissing) return false
+    if (afterWait >= lifecycleDeadlineMs) return false
+    if (afterWait === beforeWait && sample?.extensionRootCount !== 1) {
+      state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
+      return false
+    }
+    return true
+  }
+
   /** Applies the bound lifecycle post-wait evidence and deadline checks; false stops the loop. */
   const resolveBoundWaitEvidenceOutcome = (delivered: boolean, afterWait: number): boolean => {
     if (delivered && pendingEvents.length === 0) {
@@ -2213,12 +2228,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
         continue
       }
       const sample = await sampleDom()
-      if (finalDom || state.unexpectedFailure || state.sharedRuntimeUnavailable || finalDomMissing) break
-      if (afterWait >= lifecycleDeadlineMs) break
-      if (afterWait === beforeWait && sample?.extensionRootCount !== 1) {
-        state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
-        break
-      }
+      if (!resolveBoundSampleOutcome(sample, afterWait, beforeWait)) break
     }
   }
 
