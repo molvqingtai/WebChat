@@ -20,6 +20,7 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 
 const deferred = <Value,>() => {
   let resolve!: (value: Value) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<Value>((onResolve, onReject) => {
     resolve = onResolve
@@ -47,6 +48,7 @@ const createStorage = (read: Promise<AppStatus | null>) => {
   })
   const set = vi.fn(async () => {})
   const watch = vi.fn(async () => async () => {})
+  // SAFETY: the spies are cast to the storage surface this fixture installs.
   const storage: Storage = { get: get as Storage['get'], set: set as Storage['set'], watch }
   return { storage, get, set, watch }
 }
