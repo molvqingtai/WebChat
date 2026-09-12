@@ -1577,7 +1577,7 @@ describe('ChatRoomDomain exact application port', () => {
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
       // SAFETY: the held send keeps the promise identity this scenario asserts on.
-      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- simulates a held send while matching the existing mock return type
       heldSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('reconnect success'))
