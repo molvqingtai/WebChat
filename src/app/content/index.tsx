@@ -9,7 +9,7 @@ import App from './App'
 import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
-import { detachClient, initClient, whenFailure, whenHostPhase } from '@/domain/impls/runtime/Client'
+import { detachClient, initClient, refreshClient, whenFailure, whenHostPhase } from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
@@ -82,7 +82,7 @@ const preparationLockCoordinator = import.meta.env.FIREFOX
   : createWebLocksPreparationCoordinator()
 
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored by the lifecycle owner
-let initializeRuntimeImpl: () => Promise<unknown> = () => {
+let initializeRuntimeImpl: (refresh?: boolean) => Promise<unknown> = () => {
   throw new Error('Content store has not been created')
 }
 
@@ -90,7 +90,7 @@ const initializationDependencies: InitializationDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
   prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator),
   prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator),
-  initializeRuntime: () => initializeRuntimeImpl(),
+  initializeRuntime: (refresh) => initializeRuntimeImpl(refresh),
   detachRuntime: detachClient
 }
 
@@ -272,9 +272,9 @@ const createContentStore = () => {
 
   // The production readiness barrier: the Chat, persistence, and World appliers exist before the
   // first drain pull, so initialization readiness is published only after every stage settles.
-  initializeRuntimeImpl = async () => {
+  initializeRuntimeImpl = async (refresh) => {
     activateApplicationDependencies()
-    return initClient()
+    return refresh ? refreshClient() : initClient()
   }
 
   return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }

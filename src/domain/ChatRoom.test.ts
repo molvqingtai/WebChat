@@ -347,6 +347,9 @@ const createPendingConnectionFixture = () => {
 
   return {
     adapter,
+    server,
+    store,
+    room,
     entered: entered.promise,
     release: () => {
       holdFirstJoin = false
@@ -370,6 +373,35 @@ const createPendingConnectionFixture = () => {
 }
 
 describe('ChatRoomDomain exact application port', () => {
+  it('does not let a completed old leave start a join after a newer recovery takes ownership', async () => {
+    const fixture = createPendingConnectionFixture()
+    fixture.release()
+    fixture.startJoin()
+    await vi.waitFor(() => expect(fixture.finished()).toBe(true))
+    const first = Promise.withResolvers<void>()
+    const second = Promise.withResolvers<void>()
+    let calls = 0
+    fixture.server.reconnectDomain = () => (++calls === 1 ? first.promise : second.promise)
+    const leaveRoom = fixture.adapter.leaveRoom.bind(fixture.adapter)
+    let firstCall = true
+    vi.spyOn(fixture.adapter, 'leaveRoom').mockImplementation(() => {
+      const task = leaveRoom()
+      if (firstCall) {
+        firstCall = false
+        void task.then(() => fixture.store.send(fixture.room.command.ReconnectCommand()))
+      }
+      return task
+    })
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    await vi.waitFor(() => expect(calls).toBe(1))
+    first.resolve()
+    await vi.waitFor(() => expect(calls).toBe(2))
+    expect(fixture.joinCalls()).toBe(1)
+    second.resolve()
+    await vi.waitFor(() => expect(fixture.joinCalls()).toBe(2))
+    await fixture.dispose()
+  })
+
   it('joins with the current protocol user/site and derives users from sessions', async () => {
     const fixture = createFixture()
     await join(fixture)
@@ -383,7 +415,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('derives recovery eligibility from configured identity and the initial join single-flight', async () => {
+  it('allows manual recovery during the initial join and fences its late completion', async () => {
     const missingIdentity = createFixture({ user: null })
 
     expect(missingIdentity.store.query(missingIdentity.room.query.ReconnectAvailableQuery())).toBe(false)
@@ -399,16 +431,24 @@ describe('ChatRoomDomain exact application port', () => {
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledOnce())
-    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
-
-    fixture.store.send(fixture.room.command.ReconnectCommand())
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
-    expect(fixture.chat.joinRoom).toHaveBeenCalledOnce()
-    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
-
-    initialJoin.resolve()
-    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+
+    // A manual refresh supersedes the in-flight initial join: it starts a new request and joins
+    // again (the newest request), whose completion finishes the join; the superseded first join
+    // cannot reclaim the state.
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).not.toBeNull()
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+    expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce()
+
+    // The superseding retry completes and its request interval settles; the superseded first join's
+    // late completion cannot reclaim the state.
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+    initialJoin.resolve()
+    await Promise.resolve()
+    expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(false)
     fixture.store.discard()
   })
 
@@ -422,7 +462,7 @@ describe('ChatRoomDomain exact application port', () => {
 
     expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
-    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
 
     pending.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
@@ -637,12 +677,13 @@ describe('ChatRoomDomain exact application port', () => {
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
-    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    const first = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     fixture.store.send(fixture.room.command.ReconnectCommand())
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.id).toBe(request.id)
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    expect(request.id).toBe(first.id + 1)
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
-    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
-    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+    expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(2)
 
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.outcome).toEqual({}))
@@ -655,7 +696,7 @@ describe('ChatRoomDomain exact application port', () => {
     expect(selfJoins).toEqual([1])
 
     fixture.emitReadiness('ready')
-    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
+    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
       user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
@@ -681,7 +722,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => roomErrors.push(error))
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
-    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true))
+    await vi.waitFor(() => expect(roomErrors).toEqual([new Error('initial join failed')]))
     fixture.store.send(fixture.room.command.ReconnectCommand())
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
 
@@ -691,9 +732,9 @@ describe('ChatRoomDomain exact application port', () => {
       })
     )
     expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(false)
-    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
-    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+    expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce()
     expect(connectionErrors).toEqual([new Error('initial join failed')])
     expect(roomErrors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
 
@@ -1320,7 +1361,9 @@ describe('ChatRoomDomain exact application port', () => {
     const reconnect = deferred()
     const fixture = createFixture()
     await join(fixture)
-    vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(reconnect.promise)
+    vi.mocked(fixture.chat.leaveRoom)
+      .mockReturnValueOnce(new Promise(() => {}))
+      .mockReturnValueOnce(reconnect.promise)
     const started: number[] = []
     const finished: { id: number; error?: Error }[] = []
     fixture.store.subscribeEvent(fixture.room.event.ReconnectStartedEvent, (id) => started.push(id))
@@ -1331,13 +1374,13 @@ describe('ChatRoomDomain exact application port', () => {
 
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     expect(request).toEqual({
-      id: 1,
+      id: 2,
       intervalSettled: false,
       outcome: null
     })
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
-    expect(started).toEqual([request.id])
-    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
+    expect(started).toEqual([request.id - 1, request.id])
+    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(2))
 
     fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id + 1))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(request)

@@ -33,6 +33,7 @@ export class RemoteRoomTransport implements RoomTransport {
   private readonly pendingJoins = new Map<string, PendingJoin>()
   private binding: Promise<void> = Promise.resolve()
   private generation = 0
+  private bindingSignal?: AbortSignal
   private acceptingGeneration = 0
   private admission = 0
   private disposed = false
@@ -49,7 +50,8 @@ export class RemoteRoomTransport implements RoomTransport {
 
   constructor(private readonly service: TransportService) {}
 
-  rebind() {
+  rebind(signal?: AbortSignal) {
+    this.bindingSignal = signal
     this.recoveryCapabilityEpoch += 1
     this.invalidateOwner(this.generation)
     this.pendingJoins.clear()
@@ -105,7 +107,7 @@ export class RemoteRoomTransport implements RoomTransport {
   }
 
   private isCurrent(generation: number) {
-    return !this.disposed && this.generation === generation
+    return !this.disposed && this.generation === generation && !this.bindingSignal?.aborted
   }
 
   private invalidationFor(generation: number) {

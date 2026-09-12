@@ -63,4 +63,62 @@ describe('ChromiumTransportOwner', () => {
     expect(rebind).toHaveBeenCalledTimes(3)
     expect(join).toHaveBeenCalledWith('room-a')
   })
+  it('replaces a hung alignment without replacing the facade or accepting its late failure', async () => {
+    const stale = deferred<void>()
+    const rebind = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(undefined)
+    const ensureDocument = vi.fn(async () => ({ phase: 'ready' as const, created: false }))
+    const transport = { rebind }
+    const owner = new ChromiumTransportOwner(ensureDocument, () => transport)
+    const first = owner.ensure()
+    const rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    await Promise.resolve()
+    expect(rebind).toHaveBeenCalledOnce()
+    await expect(owner.ensure(true)).resolves.toBe(transport)
+    await rejected
+    stale.reject(new Error('old callback failed'))
+    await Promise.resolve()
+    await expect(owner.ensure()).resolves.toBe(transport)
+    expect(rebind).toHaveBeenCalledTimes(2)
+    expect(ensureDocument).toHaveBeenCalledTimes(3)
+  })
+
+  it('rebinds when refresh overtakes alignment settlement before admission releases', async () => {
+    const alignment = deferred<void>()
+    const signals: Array<AbortSignal | undefined> = []
+    const rebind = vi.fn((signal?: AbortSignal) => {
+      signals.push(signal)
+      return signals.length === 1 ? alignment.promise : Promise.resolve()
+    })
+    const owner = new ChromiumTransportOwner(
+      async () => ({ phase: 'ready', created: false }),
+      () => ({ rebind })
+    )
+    const first = owner.ensure()
+    const retired = first.catch(() => undefined)
+    await Promise.resolve()
+    const next = alignment.promise.then(() => owner.ensure(true))
+    alignment.resolve()
+    await next
+    await retired
+    expect(rebind).toHaveBeenCalledTimes(2)
+    expect(signals[0]?.aborted).toBe(true)
+    expect(signals[1]?.aborted).toBe(false)
+  })
+
+  it('fences a replaced document check before it can rebind the current facade', async () => {
+    const stale = deferred<{ phase: 'ready'; created: boolean }>()
+    const ensureDocument = vi
+      .fn()
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue({ phase: 'ready', created: false })
+    const transport = { rebind: vi.fn(async () => {}) }
+    const owner = new ChromiumTransportOwner(ensureDocument, () => transport)
+    const first = owner.ensure()
+    const rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(owner.ensure(true)).resolves.toBe(transport)
+    await rejected
+    stale.resolve({ phase: 'ready', created: true })
+    await Promise.resolve()
+    expect(transport.rebind).toHaveBeenCalledOnce()
+  })
 })

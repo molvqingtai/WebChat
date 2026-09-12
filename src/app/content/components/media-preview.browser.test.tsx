@@ -159,6 +159,7 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
 vi.mock('@/domain/impls/runtime/Client', () => ({
   detachClient: fixture.detachClient,
   initClient: vi.fn(),
+  refreshClient: vi.fn(),
   whenHostPhase: vi.fn(),
   whenFailure: vi.fn()
 }))

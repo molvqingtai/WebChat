@@ -54,7 +54,7 @@ const chromeTransportOwner = new ChromiumTransportOwner(
   () => new RemoteRoomTransport(injectTransport(new BackgroundInjectAdapter(messageApi)))
 )
 
-const ensureChromeTransport = () => chromeTransportOwner.ensure()
+const ensureChromeTransport = (refresh = false) => chromeTransportOwner.ensure(refresh)
 
 const admission = {
   tabs: browser.tabs,
@@ -63,16 +63,20 @@ const admission = {
   }
 }
 
-const ensureBackgroundHost = async () => {
-  const transport = await selectBackgroundTransport(import.meta.env.FIREFOX, ensureChromeTransport)
+const ensureBackgroundHost = async (refresh = false) => {
+  const transport = await selectBackgroundTransport(import.meta.env.FIREFOX, () => ensureChromeTransport(refresh))
   const { host } = backgroundHost.ensure(() => startHost(new ProvideAdapter(), presenceStore, transport, admission))
   readServerSnapshot(host.server)
 }
 
 export const registerPage: RuntimeCoordinator['registerPage'] = async (payload) => {
-  await ensureBackgroundHost()
+  await ensureBackgroundHost(payload.refresh)
   const server = backgroundHost.server
   if (!server) throw new Error('Logical Runtime background host is unavailable')
+  if (payload.refresh) {
+    const result = await server.reconnectDomain({ ...payload, replace: true })
+    if (result === null) throw new DOMException('Runtime recovery superseded', 'AbortError')
+  }
   return server.attachPage(payload)
 }
 

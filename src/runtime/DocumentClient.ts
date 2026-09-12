@@ -49,6 +49,7 @@ interface ProjectionAppliers {
  */
 export class DocumentClient {
   private registered = false
+  private refreshRegistration = false
   private currentHostId: string | null = null
   private dirty = false
   /** The one live drain owner: a document-local exact entry, abort controller, and task. Never exposed. */
@@ -156,9 +157,13 @@ export class DocumentClient {
     try {
       do {
         this.dirty = false
+        const refresh = this.refreshRegistration
+        this.refreshRegistration = false
+        const registration: Parameters<RuntimeCoordinator['registerPage']>[0] = { domain: this.options.domain }
+        if (refresh) registration.refresh = true
         const projection = this.registered
           ? await this.options.server.getSnapshot({ domain: this.options.domain })
-          : await this.options.coordinator.registerPage({ domain: this.options.domain })
+          : await this.options.coordinator.registerPage(registration)
         if (!this.isOwnerCurrent(entry)) return
         if (this.currentHostId !== null && projection.hostId !== this.currentHostId) {
           // The logical Background was replaced: drop only host-local drain identity and loop
@@ -269,6 +274,7 @@ export class DocumentClient {
     this.initWaiters.forEach((waiter) => waiter.reject(superseded))
     this.initWaiters.clear()
     this.registered = false
+    this.refreshRegistration = true
     this.readyPublished = false
     this.currentHostId = null
     this.currentSnapshot = null

@@ -225,9 +225,39 @@ const ConnectionDomain = Remesh.domain({
         ) {
           return null
         }
+        const attempts = get(AttemptsState())
+        const superseded = attempts.filter((attempt) => attempt.domain === payload.domain)
+        const generations = get(GenerationsState())
+        const generation = (generations.find((item) => item.domain === payload.domain)?.generation ?? 0) + 1
+        const worldRecovery = get(WorldRecoveryAttemptState())
+        // Old automatic joins may still be awaiting the lost transport. Retire their logical
+        // ownership before the cut so a late failure cannot leave the replacement's rooms.
+        // Increment retry identities too: an already armed retry belongs to the old owner.
         // Server invokes this only after both physical routing cuts resolve. These state moves
         // are silent, so no normal leave or empty current-state projection escapes during prepare.
         return [
+          AttemptsState().new(attempts.filter((attempt) => attempt.domain !== payload.domain)),
+          GenerationsState().new(
+            replaceBy(generations, (item) => item.domain === payload.domain, { domain: payload.domain, generation })
+          ),
+          WorldRecoveryAttemptState().new(null),
+          WorldRecoveryGenerationState().new(get(WorldRecoveryGenerationState()) + 1),
+          PendingWorldRefreshState().new(false),
+          ...superseded.flatMap((attempt) => [
+            sessionDomain.command.AbortPreparedCommand(attempt.attemptId),
+            worldDomain.command.AbortStagedCommand(attempt.attemptId),
+            ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
+            ...(attempt.operationId
+              ? [
+                  OperationCancelledEvent({
+                    operationId: attempt.operationId,
+                    supersedingOperationId: payload.attemptId
+                  })
+                ]
+              : []),
+            AttemptSupersededEvent(attempt)
+          ]),
+          ...(worldRecovery ? [worldDomain.command.AbortRecoveryCommand(worldRecovery.requestId)] : []),
           DualEpochGateState().new(null),
           DualEpochInstallState().new(null),
           DualEpochCutState().new(payload),

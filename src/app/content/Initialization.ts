@@ -11,7 +11,7 @@ export interface InitializationDependencies {
   prepareLocalStorage: () => Promise<void>
   prepareMessageDatabase: () => Promise<void>
   // oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored
-  initializeRuntime: () => Promise<unknown | null>
+  initializeRuntime: (refresh?: boolean) => Promise<unknown | null>
   detachRuntime: () => void
 }
 
@@ -44,7 +44,8 @@ const runInitializationAttempt = async (
   signal: AbortSignal,
   onRuntimeStarted: () => void = () => {},
   timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS,
-  runtimeFailed = { value: false }
+  runtimeFailed = { value: false },
+  refresh = false
 ) => {
   const deadline = Date.now() + timeoutMs
 
@@ -61,7 +62,7 @@ const runInitializationAttempt = async (
   const runtime = await run(() => {
     onRuntimeStarted()
     runtimeFailed.value = true
-    return dependencies.initializeRuntime()
+    return dependencies.initializeRuntime(refresh)
   })
   if (!runtime) {
     runtimeFailed.value = true
@@ -118,7 +119,8 @@ export const startInitializationLifecycle = ({
         runtimeStarted = true
       },
       timeoutMs,
-      runtimeFailed
+      runtimeFailed,
+      attemptGeneration > 1
     )
       .then(() => {
         if (!active || signal.aborted || generation !== attemptGeneration) return

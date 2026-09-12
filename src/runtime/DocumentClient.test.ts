@@ -958,12 +958,13 @@ describe('DocumentClient one-way current-state drain', () => {
   it('rejects a superseded refresh instead of resolving it with the newest snapshot', async () => {
     const { client, coordinator, registerQueue } = setup()
     const first = client.refresh()
+    const rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
     const second = client.refresh()
     // Each refresh forces its own registration; only the second may settle with the snapshot.
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
     registerQueue.shift() // the superseded first registration stays pending
     registerQueue.shift()!.resolve(snapshot('second'))
-    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    await rejected
     await expect(second).resolves.toMatchObject({ hostPhase: 'ready' })
   })
 })

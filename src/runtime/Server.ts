@@ -1468,8 +1468,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       // previous rejected promise.
       const tabId = await requireCallerTab(payload, payload.domain, { allowRecoveryFailure: true })
       const existing = inFlightReconnects.get(payload.domain)
-      if (existing) return existing
+      if (existing && !payload.replace) return existing
       const documentUrl = callerDocumentUrl(payload, tabId)
+      if (existing) {
+        const previous = replacementAttempts.get(payload.domain)
+        const seed = previous ? cloneSeed(previous) : replacementSeeds.get(payload.domain)
+        invalidateReplacementForDomain(payload.domain)
+        if (seed && seedMatchesCaller(seed, tabId, documentUrl)) replacementSeeds.set(payload.domain, seed)
+      }
       const reservation: ReplacementReservation = {
         domain: payload.domain,
         hostId: connectionOptions.hostId,
