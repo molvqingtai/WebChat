@@ -1674,6 +1674,22 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Applies the bound lifecycle post-wait evidence and deadline checks; false stops the loop. */
+  const resolveBoundWaitEvidenceOutcome = (delivered: boolean, afterWait: number): boolean => {
+    if (delivered && pendingEvents.length === 0) {
+      state.unexpectedFailure = 'Lifecycle adapter reported an event without delivering it to the sink'
+      return false
+    }
+    if (timeline.clockFailure || afterWait >= lifecycleDeadlineMs) {
+      state.deadlineFailure ??= timeline.clockFailure ?? 'Lifecycle observation reached the absolute deadline'
+      if (delivered) {
+        state.unexpectedFailure = 'Lifecycle evidence arrived at or after the absolute deadline'
+        return false
+      }
+    }
+    return true
+  }
+
   /** Whether the bound lifecycle may still wait for evidence, recording a deadline failure first. */
   const mayWaitForLifecycleEvidence = (beforeWait: number): boolean => {
     if (timeline.clockFailure) return false
@@ -2183,17 +2199,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     const afterWait = timeline.now()
-    if (delivered && pendingEvents.length === 0) {
-      state.unexpectedFailure = 'Lifecycle adapter reported an event without delivering it to the sink'
-      break
-    }
-    if (timeline.clockFailure || afterWait >= lifecycleDeadlineMs) {
-      state.deadlineFailure ??= timeline.clockFailure ?? 'Lifecycle observation reached the absolute deadline'
-      if (delivered) {
-        state.unexpectedFailure = 'Lifecycle evidence arrived at or after the absolute deadline'
-        break
-      }
-    }
+    if (!resolveBoundWaitEvidenceOutcome(delivered, afterWait)) break
     if (!delivered) {
       if (unresolvedWorkers().length > 0) {
         if (afterWait >= lifecycleDeadlineMs) {
