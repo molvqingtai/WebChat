@@ -1312,8 +1312,14 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return false
   }
 
+  /** Whether the event carries a target identity the worker records track. */
+  const isWorkerTargetIdentityEvent = (
+    event: ChromeLifecycleEvent
+  ): event is Extract<ChromeLifecycleEvent, { type: 'target-created' | 'target-changed' | 'target-attached' }> =>
+    event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached'
+
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
-    if (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') {
+    if (isWorkerTargetIdentityEvent(event)) {
       const known = workerRecords.get(event.target.targetId)
       if (event.target.type !== 'service_worker' && !known) return false
       if (event.target.type !== 'service_worker') {
@@ -1344,38 +1350,48 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return true
     }
 
-    if (event.type === 'target-destroyed' || event.type === 'target-detached') {
-      const record = workerRecords.get(event.targetId)
-      if (!record) return false
-      if (event.type === 'target-detached' && record.sessionId !== undefined && event.sessionId !== record.sessionId) {
-        failWorker('A Service Worker detached with a divergent session identity')
-        return true
-      }
-      record.active = false
-      record.needsProbe = false
-      record.classification = undefined
-      if (worker?.targetId === event.targetId) failWorker('The bound exact worker disappeared')
-      timeline.record('worker-inactive', {
-        appearanceOrder: record.appearanceOrder,
-        targetId: record.target.targetId,
-        reason: event.type
-      })
-      return true
-    }
+    if (event.type === 'target-destroyed' || event.type === 'target-detached') return recordWorkerInactive(event)
 
-    if (event.type === 'observation-error') {
-      const record = [...workerRecords.values()].find(
-        ({ target, sessionId }) => event.targetId === target.targetId || event.sessionId === sessionId
-      )
-      if (!record) return false
-      record.classification = undefined
-      record.needsProbe = false
-      record.unresolvedReason = event.message
-      if (worker?.targetId === record.target.targetId) failWorker('Bound worker observation failed')
-      return true
-    }
+    if (event.type === 'observation-error') return recordWorkerObservationError(event)
 
     return false
+  }
+
+  /** Applies a destroyed/detached event to the matching Service Worker record. */
+  const recordWorkerInactive = (
+    event: Extract<ChromeLifecycleEvent, { type: 'target-destroyed' | 'target-detached' }>
+  ): boolean => {
+    const record = workerRecords.get(event.targetId)
+    if (!record) return false
+    if (event.type === 'target-detached' && record.sessionId !== undefined && event.sessionId !== record.sessionId) {
+      failWorker('A Service Worker detached with a divergent session identity')
+      return true
+    }
+    record.active = false
+    record.needsProbe = false
+    record.classification = undefined
+    if (worker?.targetId === event.targetId) failWorker('The bound exact worker disappeared')
+    timeline.record('worker-inactive', {
+      appearanceOrder: record.appearanceOrder,
+      targetId: record.target.targetId,
+      reason: event.type
+    })
+    return true
+  }
+
+  /** Applies an observation failure to the worker record it belongs to. */
+  const recordWorkerObservationError = (
+    event: Extract<ChromeLifecycleEvent, { type: 'observation-error' }>
+  ): boolean => {
+    const record = [...workerRecords.values()].find(
+      ({ target, sessionId }) => event.targetId === target.targetId || event.sessionId === sessionId
+    )
+    if (!record) return false
+    record.classification = undefined
+    record.needsProbe = false
+    record.unresolvedReason = event.message
+    if (worker?.targetId === record.target.targetId) failWorker('Bound worker observation failed')
+    return true
   }
 
   const workerFence = (deadlineMs: number, operation: string): string | undefined => {
