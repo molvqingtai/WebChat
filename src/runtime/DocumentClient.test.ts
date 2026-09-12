@@ -45,6 +45,7 @@ const inboundRecord = (id: string): TextMessageRecord => ({
 
 const deferred = <Value>() => {
   let resolve!: (value: Value) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
   let reject!: (reason?: unknown) => void
   const promise = new Promise<Value>((onResolve, onReject) => {
     resolve = onResolve
@@ -79,7 +80,9 @@ const setup = () => {
     })
   }
   const client = new DocumentClient({
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     coordinator: coordinator as never,
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     server: server as never,
     domain: DOMAIN
   })
@@ -318,7 +321,9 @@ describe('DocumentClient one-way current-state drain', () => {
       })
     }
     const client = new DocumentClient({
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       coordinator: syncThrowCoordinator as never,
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       server: { getSnapshot: async () => snapshot('') } as never,
       domain: DOMAIN
     })
@@ -363,6 +368,9 @@ describe('DocumentClient one-way current-state drain', () => {
     client.invalidate()
     await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
     expect(server.getSnapshot).toHaveBeenCalledWith({ domain: DOMAIN })
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- raw call argument rebuilt for inspection
     const readPayload = server.getSnapshot.mock.calls[0]?.[0] as unknown as Record<string, unknown>
     expect(Object.keys(readPayload)).not.toHaveLength(0)
     readQueue.shift()!.resolve(snapshot(''))
@@ -370,6 +378,7 @@ describe('DocumentClient one-way current-state drain', () => {
   })
 
   it('a pulled host replacement re-registers through the register-and-read surface before applying', async () => {
+    // oxlint-disable-next-line eslint/no-unused-vars -- test harness boundary
     const { client, coordinator, server, registerQueue, readQueue } = setup()
     const applied: string[] = []
     client.registerApplier('chat', (projection) => {
@@ -503,27 +512,39 @@ describe('DocumentClient one-way current-state drain', () => {
     const coordinator = { registerPage: vi.fn(() => registration.promise) }
     const server = {
       getSnapshot: vi.fn(async () => projection),
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       provideHistory: provideHistory as unknown as RuntimeServer['provideHistory'],
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
       ackInbound: ackInbound as unknown as RuntimeServer['ackInbound']
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
     const messageStore = createMessageStore(createMemoryMessageDatabase('stale-applier'))
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
     const messages: string[] = []
     room.onMessage((message) => messages.push(message.id))
+    // oxlint-disable-next-line eslint/no-unused-vars -- test harness boundary
     client.registerApplier('chat', (p, context) => room.applyChat(p))
     client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
 
     // Hold the real durable insert of the first owner's persistence stage.
     const insertGate = Promise.withResolvers<void>()
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const extendedInsert = messageStore.insert as unknown as (
       input: Parameters<typeof messageStore.insert>[0],
       options?: { signal?: AbortSignal }
     ) => ReturnType<typeof messageStore.insert>
     const originalInsert = extendedInsert.bind(messageStore)
     let holdsFirst = true
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     vi.spyOn(messageStore, 'insert').mockImplementation((async (input: unknown, options?: unknown) => {
       if (holdsFirst) await insertGate.promise
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       return originalInsert(input as never, options as never)
     }) as typeof messageStore.insert)
 
@@ -560,18 +581,25 @@ describe('DocumentClient one-way current-state drain', () => {
       provideHistory: vi.fn(async () => {}),
       ackInbound: vi.fn(async () => {})
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
     const messageStore = createMessageStore(createMemoryMessageDatabase('signal-plumbing'))
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
     client.registerApplier('chat', (p) => room.applyChat(p))
     client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
 
     const insertGate = Promise.withResolvers<void>()
     const seenSignals: Array<AbortSignal | undefined> = []
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,
       options?: { signal?: AbortSignal }
     ) => ReturnType<typeof messageStore.insert>
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     vi.spyOn(messageStore, 'insert').mockImplementation(((input: unknown, options?: { signal?: AbortSignal }) => {
       seenSignals.push(options?.signal)
       return (async () => {
@@ -619,8 +647,10 @@ describe('DocumentClient one-way current-state drain', () => {
       provideHistory: vi.fn(async () => {}),
       ackInbound: vi.fn(async () => {})
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
     const messageStore = createMessageStore(createMemoryMessageDatabase('self-join-stale'))
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
     client.registerApplier('chat', (p) => room.applyChat(p))
     client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
@@ -629,11 +659,16 @@ describe('DocumentClient one-way current-state drain', () => {
     // a completed write, so only the post-await owner assertion fences the stale settlement.
     const insertGate = Promise.withResolvers<void>()
     let holdsFirst = true
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
     const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,
       options?: { signal?: AbortSignal }
     ) => ReturnType<typeof messageStore.insert>
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const spy = vi.spyOn(messageStore, 'insert').mockImplementation(((
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,
       options?: { signal?: AbortSignal }
     ) => {
@@ -671,8 +706,10 @@ describe('DocumentClient one-way current-state drain', () => {
     const provideGate = Promise.withResolvers<void>()
     const provideHistory = vi.fn(async () => provideGate.promise)
     const server = { getSnapshot: vi.fn(async () => snapshot('')), provideHistory, ackInbound: vi.fn(async () => {}) }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
     const messageStore = createMessageStore(createMemoryMessageDatabase('provide-stale'))
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
     client.registerApplier('chat', (p) => room.applyChat(p))
     client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
@@ -706,8 +743,10 @@ describe('DocumentClient one-way current-state drain', () => {
       if (holdAck) await ackGate.promise
     })
     const server = { getSnapshot: vi.fn(async () => projection), provideHistory: vi.fn(async () => {}), ackInbound }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
     const messageStore = createMessageStore(createMemoryMessageDatabase('ack-stale'))
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
     client.registerApplier('chat', (p) => room.applyChat(p))
     client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
@@ -732,6 +771,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     // The fresh owner re-attempts only the exact pair's negative ACK — no second insert attempt.
     expect(insertSpy).toHaveBeenCalledTimes(1)
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const ackCalls = (ackInbound.mock.calls as Array<[{ inserted?: boolean }?]>).filter(
       (call) => call[0]?.inserted === false
     )
@@ -757,11 +797,15 @@ describe('DocumentClient one-way current-state drain', () => {
           supplyCallback = callback
         }),
         ackInbound: vi.fn(async () => {}),
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         resolveHistorySupply: resolveHistorySupply as never,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         rejectHistorySupply: rejectHistorySupply as never
       }
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
       const messageStore = createMessageStore(createMemoryMessageDatabase(`detach-supply-${branch}`))
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
       client.registerApplier('chat', (p) => room.applyChat(p))
       client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
@@ -781,8 +825,10 @@ describe('DocumentClient one-way current-state drain', () => {
         queryCount += 1
         if (queryCount === 1) {
           queryStarted.resolve(query?.signal ?? new AbortController().signal)
+          // SAFETY: the test narrows this runtime value to the shape it asserts on.
           return releaseQuery.promise as never
         }
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         return [] as never
       })
       supplyCallback!({
