@@ -694,6 +694,7 @@ const sentToPeer = (fake: ReturnType<typeof createFakeTransport>, roomId: string
       const recipients = typeof message.to === 'string' ? [message.to] : message.to
       return message.roomId === roomId && recipients?.includes(peerId)
     })
+    // SAFETY: recorded payloads come from the code under test; they are parsed only to read the wire messages
     .map((message) => JSON.parse(message.payload) as TestWireMessage)
 
 const session = (user = REMOTE_USER) => ({
@@ -759,6 +760,7 @@ const registerHistoryProvider = (
         if (active.get(event.request.supplyId) !== controller) return
         return server.rejectHistorySupply({
           supplyId: event.request.supplyId,
+          // SAFETY: this double raises the rejection, so its reason is an Error
           reason: (error as Error).message,
           ...(payload.caller ? { caller: payload.caller } : {})
         })
@@ -778,13 +780,16 @@ const registerHistoryProvider = (
 const sessionAllocationEventFixture = () => {
   const textPayload: TextMessageAllocatedEventPayload = {
     operationId: 'fixture',
+    // SAFETY: the fixture record carries only the fields this allocation assertion reads
     record: {} as TextMessageRecord
   }
   const reactionPayload: ReactionMessageAllocatedEventPayload = {
     operationId: 'fixture',
+    // SAFETY: the fixture record carries only the fields this allocation assertion reads
     record: {} as ReactionMessageRecord
   }
   // @ts-expect-error — a reaction allocation payload is not a text allocation payload
+  // SAFETY: this negative case deliberately puts a reaction record in a text payload, which the expect-error above requires
   const wrongVariant: TextMessageAllocatedEventPayload = { operationId: 'fixture', record: {} as ReactionMessageRecord }
   // @ts-expect-error — the typed allocation payload requires a record
   const missingRecord: TextMessageAllocatedEventPayload = { operationId: 'fixture' }
@@ -800,6 +805,7 @@ describe('RuntimeServer lifecycle', () => {
   it('fails closed before a direct replacement cut when the mandatory retirement capability is malformed', async () => {
     const { fake, server } = await setup()
     const joinsBeforeReplacement = fake.joinCalls.length
+    // SAFETY: reads one private transport field through a widened shape to observe preparation retirement
     const malformed = fake.transport as unknown as { retireRoomsForPreparation?: unknown }
     malformed.retireRoomsForPreparation = undefined
 
@@ -829,6 +835,7 @@ describe('RuntimeServer lifecycle', () => {
       expect(
         fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
           if (sentRoomId !== roomId) return false
+          // SAFETY: the payload comes from the code under test and is parsed only to read the message
           const message = JSON.parse(payload) as ChatRoomMessage
           return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
         })
