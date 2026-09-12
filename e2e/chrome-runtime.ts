@@ -66,7 +66,9 @@ type Evidence = {
     content: PortAttack
     options: PortAttack
     durableUnchanged: boolean
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw observed values for the e2e comparison
     before: Record<string, unknown>
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw observed values for the e2e comparison
     after: Record<string, unknown>
   }
   sandbox: string
@@ -83,7 +85,9 @@ type Evidence = {
 
 type TargetSession = [sessionId: string, target: TargetInfo]
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const errorStack = (error: unknown): string => (error instanceof Error ? (error.stack ?? error.message) : String(error))
 
 const executable = process.env.WEBCHAT_CHROMIUM_EXECUTABLE
@@ -116,8 +120,10 @@ await Promise.all([access(executable), access(manifestPath)])
 const extensionManifest: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
 if (
   extensionManifest === null ||
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the parsed manifest
   typeof extensionManifest !== 'object' ||
   !('name' in extensionManifest) ||
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the parsed manifest
   typeof extensionManifest.name !== 'string' ||
   extensionManifest.name.trim().length === 0
 ) {
@@ -125,6 +131,7 @@ if (
 }
 const extensionName = extensionManifest.name
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- the CDP remote value is decoded by the caller
 const remoteValue = (value: any): unknown => {
   if (Object.hasOwn(value, 'value')) return value.value
   if (value.unserializableValue) return value.unserializableValue
@@ -265,6 +272,7 @@ try {
       )
       const [port] = activePort.split('\n')
       const endpoint = `http://127.0.0.1:${port}`
+      // SAFETY: the CDP version endpoint returns this documented shape.
       const version = await withDeadline<{ Browser: string; webSocketDebuggerUrl: string }>(
         fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(cdpRequestTimeoutMs) }).then(
           async (response) => (await response.json()) as { Browser: string; webSocketDebuggerUrl: string }
@@ -391,7 +399,7 @@ try {
             expression,
             awaitPromise: true,
             returnByValue: true,
-            ...(contextId ? { contextId } : {})
+            contextId: contextId || undefined
           },
           sessionId
         )
@@ -458,6 +466,7 @@ try {
         observers: []
       }
       const presenceRecords = (sessionId: string) =>
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw storage records read by the e2e probe
         evaluate<Record<string, unknown>>(
           sessionId,
           `chrome.storage.session.get(null).then((values) => Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith('WEB_CHAT_RUNTIME_PRESENCE_V1:'))))`
