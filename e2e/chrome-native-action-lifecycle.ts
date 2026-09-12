@@ -1612,6 +1612,23 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return bound
   }
 
+  /** Applies the post-wait evidence, deadline and monotonic-progress checks; false stops the loop. */
+  const resolveWorkerDiscoveryWaitOutcome = (delivered: boolean, beforeWait: number, afterWait: number): boolean => {
+    if (delivered && pendingEvents.length === 0) {
+      failWorker('Worker discovery adapter reported an event without delivering it to the sink')
+      return false
+    }
+    if (timeline.clockFailure || afterWait > workerDiscoveryDeadlineMs) {
+      failWorker(timeline.clockFailure ?? 'Worker discovery evidence arrived after the absolute deadline')
+      return false
+    }
+    if (!delivered && afterWait === beforeWait) {
+      failWorker('Worker discovery adapter made no monotonic progress')
+      return false
+    }
+    return true
+  }
+
   while (!worker && !workerFailure && !startupContinuity.failure) {
     while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
       const pending = pendingEvents.shift()!
@@ -1640,18 +1657,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       break
     }
     const afterWait = timeline.now()
-    if (delivered && pendingEvents.length === 0) {
-      failWorker('Worker discovery adapter reported an event without delivering it to the sink')
-      break
-    }
-    if (timeline.clockFailure || afterWait > workerDiscoveryDeadlineMs) {
-      failWorker(timeline.clockFailure ?? 'Worker discovery evidence arrived after the absolute deadline')
-      break
-    }
-    if (!delivered && afterWait === beforeWait) {
-      failWorker('Worker discovery adapter made no monotonic progress')
-      break
-    }
+    if (!resolveWorkerDiscoveryWaitOutcome(delivered, beforeWait, afterWait)) break
   }
 
   if (!worker && !workerFailure && !startupContinuity.failure) {
