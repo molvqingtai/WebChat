@@ -1824,24 +1824,39 @@ export const diagnoseChromeNativeActionLifecycle = async (
     state.navigationId = event.navigationId
   }
 
+  /** Records the post-operation deadline fence failure and reports whether the caller must stop. */
+  const recordDeadlineFence = (label: string): boolean => {
+    const fence = deadlineFenceAfter(label)
+    if (!fence.failure) return false
+    state.deadlineFailure = fence.failure
+    return true
+  }
+
+  /** Applies the bound-worker outcome of a consumed worker event; false stops the dispatch. */
+  const applyWorkerEventOutcome = (event: ChromeLifecycleEvent): boolean => {
+    if (workerFailure) state.extensionFailure ??= workerFailure
+    validateBoundWorker()
+    const workerWasReclassifiedAsPage = isWorkerTargetIdentityEvent(event) && event.target.type === 'page'
+    return workerWasReclassifiedAsPage
+  }
+
+  /** Whether the startup-continuity observation lets the accepted-target dispatch continue. */
+  const startupContinuityAllowsEvent = (): boolean => {
+    if (startupContinuity.failure) {
+      state.targetFailure = startupContinuity.failure.reason
+      return false
+    }
+    return !(state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
+  }
+
   const processEvent = async (event: ChromeLifecycleEvent, eventAtMs: number): Promise<void> => {
     if (observeWorkerEvent(event, eventAtMs)) {
       await probePendingWorkers(lifecycleDeadlineMs)
-      if (workerFailure) state.extensionFailure ??= workerFailure
-      validateBoundWorker()
-      const workerWasReclassifiedAsPage =
-        (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') &&
-        event.target.type === 'page'
-      if (!workerWasReclassifiedAsPage) return
+      if (!applyWorkerEventOutcome(event)) return
     }
 
     observeStartupContinuity(startupContinuity, event, state.targetId)
-    if (startupContinuity.failure) {
-      state.targetFailure = startupContinuity.failure.reason
-      return
-    }
-    if (state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
-      return
+    if (!startupContinuityAllowsEvent()) return
 
     if (event.type === 'target-created' || event.type === 'target-changed') {
       observeBoundTargetIdentity(event)
@@ -1864,11 +1879,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
           return
         }
         await adapter.enableSessionObservation(session, sessionDomains('page'), lifecycleDeadlineMs)
-        const observationFence = deadlineFenceAfter('Accepted session observation')
-        if (observationFence.failure) {
-          state.deadlineFailure = observationFence.failure
-          return
-        }
+        if (recordDeadlineFence('Accepted session observation')) return
         await adapter.resumeSession(session.sessionId, lifecycleDeadlineMs)
         const resumeFence = deadlineFenceAfter('Accepted session resume')
         if (resumeFence.failure) {
