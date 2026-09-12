@@ -1630,86 +1630,89 @@ const SessionDomain = Remesh.domain({
           )
         }
 
-        const record: PresenceDomainRecord = {
-          domain: runtime.domain,
-          lastJoinedAt: persisted?.lastJoinedAt ?? 0,
-          ...retainedLocalLifecycle(persisted),
-          observers: nextObservers
-        }
-        const wasLogicallyActive =
-          observed?.status === 'active' || hasActiveUserPresence(nextObservers, message.user.id, message.presenceId)
-        const isLaterLogicalJoin = message.joinedAt > runtime.joinedAt
-        const physicalBindingChanged =
-          current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
-        const sessionSnapshot = snapshot(nextRuntime)
-        const publicSession = projectRuntimeSession(session)
-        // The displaced user's one-to-zero transition is classified independently from the
-        // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
-        // when only the displaced side applies, a join when only the incoming side applies,
-        // otherwise a refresh snapshot. The displaced side counts only when the displaced user
-        // has no OTHER active or grace-preserved observation (excluding the displaced presence).
-        const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
-        const displacedLeaves =
-          displaced !== undefined &&
-          !nextObservers.some(
-            (observation) =>
-              observation.status === 'active' &&
-              observation.user.id === displaced.user.id &&
-              observation.presenceId !== displaced.presenceId
-          )
-        const sessionEvent: RuntimeSessionEvent =
-          incomingJoins && displacedLeaves
-            ? {
-                type: 'replace',
-                domain: runtime.domain,
-                snapshot: sessionSnapshot,
-                previous: projectRuntimeSession(displaced),
-                session: publicSession,
-                occurredAt: clock.now(),
-                provenance: 'live'
-              }
-            : displacedLeaves
+        const applyCommittedUpdate = () => {
+          const record: PresenceDomainRecord = {
+            domain: runtime.domain,
+            lastJoinedAt: persisted?.lastJoinedAt ?? 0,
+            ...retainedLocalLifecycle(persisted),
+            observers: nextObservers
+          }
+          const wasLogicallyActive =
+            observed?.status === 'active' || hasActiveUserPresence(nextObservers, message.user.id, message.presenceId)
+          const isLaterLogicalJoin = message.joinedAt > runtime.joinedAt
+          const physicalBindingChanged =
+            current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
+          const sessionSnapshot = snapshot(nextRuntime)
+          const publicSession = projectRuntimeSession(session)
+          // The displaced user's one-to-zero transition is classified independently from the
+          // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
+          // when only the displaced side applies, a join when only the incoming side applies,
+          // otherwise a refresh snapshot. The displaced side counts only when the displaced user
+          // has no OTHER active or grace-preserved observation (excluding the displaced presence).
+          const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
+          const displacedLeaves =
+            displaced !== undefined &&
+            !nextObservers.some(
+              (observation) =>
+                observation.status === 'active' &&
+                observation.user.id === displaced.user.id &&
+                observation.presenceId !== displaced.presenceId
+            )
+          const sessionEvent: RuntimeSessionEvent =
+            incomingJoins && displacedLeaves
               ? {
-                  type: 'leave',
+                  type: 'replace',
                   domain: runtime.domain,
                   snapshot: sessionSnapshot,
-                  session: projectRuntimeSession(displaced),
+                  previous: projectRuntimeSession(displaced),
+                  session: publicSession,
                   occurredAt: clock.now(),
                   provenance: 'live'
                 }
-              : incomingJoins
+              : displacedLeaves
                 ? {
-                    type: 'join',
+                    type: 'leave',
                     domain: runtime.domain,
                     snapshot: sessionSnapshot,
-                    session: publicSession,
+                    session: projectRuntimeSession(displaced),
+                    occurredAt: clock.now(),
                     provenance: 'live'
                   }
-                : {
-                    type: 'snapshot',
-                    domain: runtime.domain,
-                    snapshot: sessionSnapshot,
-                    provenance: 'refresh'
-                  }
-        return [
-          DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
-          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
-          ...(pendingLeave
-            ? [
-                PendingLeavesState().new(
-                  removeBy(
-                    pendingLeaves,
-                    (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                : incomingJoins
+                  ? {
+                      type: 'join',
+                      domain: runtime.domain,
+                      snapshot: sessionSnapshot,
+                      session: publicSession,
+                      provenance: 'live'
+                    }
+                  : {
+                      type: 'snapshot',
+                      domain: runtime.domain,
+                      snapshot: sessionSnapshot,
+                      provenance: 'refresh'
+                    }
+          return [
+            DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
+            PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
+            ...(pendingLeave
+              ? [
+                  PendingLeavesState().new(
+                    removeBy(
+                      pendingLeaves,
+                      (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                    )
                   )
-                )
-              ]
-            : []),
-          PersistPresenceRequestedEvent({ record }),
-          RuntimeSessionChangedEvent(sessionEvent),
-          ...(physicalBindingChanged
-            ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
-            : [])
-        ]
+                ]
+              : []),
+            PersistPresenceRequestedEvent({ record }),
+            RuntimeSessionChangedEvent(sessionEvent),
+            ...(physicalBindingChanged
+              ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
+              : [])
+          ]
+        }
+        return applyCommittedUpdate()
       }
     })
 
