@@ -225,6 +225,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
 
     // The comctx-exported method requires a caller-bearing request at runtime and at the type level.
     // SAFETY: the cast lets this test call the exported method without a caller payload, which is exactly the rejection under test.
+    // oxlint-disable-next-line anti-slop/no-unknown-returns -- the test bypasses the typed export to assert the caller-payload rejection
     await expect((fixture.server.getSnapshot as (payload?: unknown) => Promise<unknown>)()).rejects.toThrow(
       'Caller-bearing snapshot request is required'
     )
@@ -660,7 +661,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     messages: (roomId: string) =>
       // SAFETY: recorded payloads come from the code under test; they are parsed only to read the wire messages
-      sent.filter((item) => item.roomId === roomId).map((item) => JSON.parse(item.payload) as TestWireMessage)
+      sent.flatMap((item) => (item.roomId === roomId ? [JSON.parse(item.payload) as TestWireMessage] : []))
   }
 }
 
@@ -750,20 +751,21 @@ const registerHistoryProvider = (
       .then((result) => {
         controller.signal.throwIfAborted()
         if (active.get(event.request.supplyId) !== controller) return
-        return server.resolveHistorySupply({
-          supplyId: event.request.supplyId,
-          result,
-          ...(payload.caller ? { caller: payload.caller } : {})
-        })
+        const resolved = { supplyId: event.request.supplyId, result }
+        return server.resolveHistorySupply(
+          payload.caller === undefined ? resolved : { ...resolved, caller: payload.caller }
+        )
       })
       .catch((error) => {
         if (active.get(event.request.supplyId) !== controller) return
-        return server.rejectHistorySupply({
+        const rejected = {
           supplyId: event.request.supplyId,
           // SAFETY: this test double rejects with Error or DOMException by convention, and both carry the message forwarded as the reason
-          reason: (error as Error).message,
-          ...(payload.caller ? { caller: payload.caller } : {})
-        })
+          reason: (error as Error).message
+        }
+        return server.rejectHistorySupply(
+          payload.caller === undefined ? rejected : { ...rejected, caller: payload.caller }
+        )
       })
       .finally(() => {
         if (active.get(event.request.supplyId) === controller) active.delete(event.request.supplyId)
@@ -806,6 +808,7 @@ describe('RuntimeServer lifecycle', () => {
     const { fake, server } = await setup()
     const joinsBeforeReplacement = fake.joinCalls.length
     // SAFETY: the transport double is widened so this test can write undefined into a capability the server requires
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately widens the transport double so this test can inject a malformed required capability
     const malformed = fake.transport as unknown as { retireRoomsForPreparation?: unknown }
     malformed.retireRoomsForPreparation = undefined
 
@@ -3982,6 +3985,7 @@ describe('RuntimeServer lifecycle', () => {
     await expect(
       server.joinChatRoom({
         domain: DOMAIN,
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately builds an invalid user record to test the join validation
         user: { ...USER_INFO, name: 1 } as unknown as ChatUser,
         site: SITE
       })
@@ -5181,6 +5185,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, user: refreshedUser })
     fake.receive(roomId, 'peer-a', { ...accepted, user: { ...refreshedUser, id: 'forged-user' } })
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: accepted.joinedAt + 1 })
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately injects an invalid wire message to test the receive validation
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
@@ -5221,6 +5226,7 @@ describe('RuntimeServer trusted delivery', () => {
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
     ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) =>
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately injects each invalid wire message to test the receive validation
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
     )
     fake.receive(roomId, 'peer-a', text('valid-after-rejections'))
@@ -5419,6 +5425,7 @@ describe('RuntimeServer send reliability', () => {
     const { fake, server } = await setup()
     const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'valid', mentions: [] })
     const attemptsBefore = fake.sendAttempts.length
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately builds an invalid message to test the send validation
     const invalid = { ...record.message, body: 1 } as unknown as ChatMessage
 
     await expect(server.sendChatMessage({ domain: DOMAIN, event: invalid })).rejects.toThrow('Invalid message.')
