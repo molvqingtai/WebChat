@@ -4483,7 +4483,7 @@ describe('RuntimeServer lifecycle', () => {
       set: async (items) => {
         const record = Object.values(items)[0] as { local?: unknown } | undefined
         // The release cleanup save carries no local record; active-record saves always do.
-        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the presence record is test data; the typeof distinguishes a cleanup save from an active-record save
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the presence record is test data; the typeof confirms it is an object before the 'local' in record check distinguishes a cleanup save from an active-record save
         if (record && typeof record === 'object' && !('local' in record)) {
           cleanupWrites += 1
           if (cleanupWrites === 1) {
