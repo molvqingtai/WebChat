@@ -882,8 +882,10 @@ const HistoryDomain = Remesh.domain({
     const HandleHistoryMessagesPullCommand = domain.command({
       name: 'History.HandleHistoryMessagesPullCommand',
       impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPull }) => {
+        const isActiveDomain = (candidate: string | null): candidate is string =>
+          candidate !== null && !get(sessionDomain.query.ReleasingDomainQuery(candidate))
         const domain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
-        if (!domain || get(sessionDomain.query.ReleasingDomainQuery(domain))) return null
+        if (!isActiveDomain(domain)) return null
         // One synchronization per connection incarnation and direction: after the direction is
         // terminal, neither the same nor a different syncId may start History again on this
         // connection; while active, only the bound syncId progresses and a different id is inert
@@ -926,48 +928,53 @@ const HistoryDomain = Remesh.domain({
         const activeSync = get(ActiveSuppliesState()).find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === domain
         )?.syncId
-        if ((current || unsettledActive) && (current?.syncId ?? activeSync) !== payload.message.syncId) {
+        const resolveSuccessorAdmission = () => {
           if (successor && successor.syncId !== payload.message.syncId) return null
           const jobs = get(ProviderSupplyJobsState())
           // Upsert-aware admission: the successor's cumulative bytes are subtracted before the
           // check validates others + newCumulative (old + incoming page); an update at exactly 32
           // entries is allowed (only a NEW identity is bounded by the 32-job cap).
-          const existingBytes = successor?.queueBytes ?? 0
-          const hasExisting = Boolean(successor)
-          const requesterJobs = get(RequesterSupplyJobsState())
-          const admittedBytes = [...jobs, ...successors, ...requesterJobs].reduce(
-            (total, item) => total + item.queueBytes,
-            0
-          )
-          const nextCount = hasExisting
-            ? jobs.length + successors.length + requesterJobs.length
-            : jobs.length + successors.length + requesterJobs.length + 1
-          const newCumulativeBytes = existingBytes + queueBytes
-          if (
-            nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-            admittedBytes - existingBytes + newCumulativeBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
-          ) {
-            // Budget overflow terminates the existing dormant successor under its complete
-            // identity (and still records the protocol-drop diagnostic); its canonical admission
-            // state is released without touching other sources, and a later smaller page at the
-            // same number cannot revive it.
-            return [
-              wireDomain.command.DropProtocolCommand({
-                sourcePeerId: payload.sourcePeerId,
-                reason: 'history provider queue limit reached'
-              }),
-              ...(successor
-                ? [
-                    CancelSuccessorCommand({
-                      sourcePeerId: successor.sourcePeerId,
-                      domain: successor.domain,
-                      syncId: successor.syncId,
-                      syncToken: successor.syncToken
-                    })
-                  ]
-                : [])
-            ]
+          const enforceSuccessorCapacity = () => {
+            const existingBytes = successor?.queueBytes ?? 0
+            const hasExisting = Boolean(successor)
+            const requesterJobs = get(RequesterSupplyJobsState())
+            const admittedBytes = [...jobs, ...successors, ...requesterJobs].reduce(
+              (total, item) => total + item.queueBytes,
+              0
+            )
+            const nextCount = hasExisting
+              ? jobs.length + successors.length + requesterJobs.length
+              : jobs.length + successors.length + requesterJobs.length + 1
+            const newCumulativeBytes = existingBytes + queueBytes
+            if (
+              nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
+              admittedBytes - existingBytes + newCumulativeBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
+            ) {
+              // Budget overflow terminates the existing dormant successor under its complete
+              // identity (and still records the protocol-drop diagnostic); its canonical admission
+              // state is released without touching other sources, and a later smaller page at the
+              // same number cannot revive it.
+              return [
+                wireDomain.command.DropProtocolCommand({
+                  sourcePeerId: payload.sourcePeerId,
+                  reason: 'history provider queue limit reached'
+                }),
+                ...(successor
+                  ? [
+                      CancelSuccessorCommand({
+                        sourcePeerId: successor.sourcePeerId,
+                        domain: successor.domain,
+                        syncId: successor.syncId,
+                        syncToken: successor.syncToken
+                      })
+                    ]
+                  : [])
+              ]
+            }
+            return null
           }
+          const overflow = enforceSuccessorCapacity()
+          if (overflow) return overflow
           const allocated = nextTokens(get, 1)
           const key: HistoryAttemptKey = {
             sourcePeerId: payload.sourcePeerId,
@@ -1046,41 +1053,48 @@ const HistoryDomain = Remesh.domain({
                 ])
           ]
         }
+        if ((current || unsettledActive) && (current?.syncId ?? activeSync) !== payload.message.syncId) {
+          return resolveSuccessorAdmission()
+        }
 
-        // A delayed old inventory page carrying the SAME syncId as an unsettled active owner (after
-        // cleanup removed logical provider State) must be idempotently ignored or rejected against
-        // the old complete owner, never admitted as a new token/job beside the running query.
         if (!current && unsettledActive && activeSync === payload.message.syncId) {
           return null
         }
         const expectedPage = current?.expectedRequestPage ?? 0
-        // Identical replay of the last applied inventory page is idempotent; changed replay, gap,
-        // out-of-order, empty non-final, or post-done input cancels the attempt.
-        if (payload.message.page === expectedPage - 1 && current) {
-          if (current.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) return null
-          return CancelProviderAttemptCommand({
-            sourcePeerId: payload.sourcePeerId,
-            domain,
-            syncId: current.syncId,
-            syncToken: current.syncToken
-          })
+        /** Idempotent replay, gap, out-of-order and post-done page classification. */
+        const resolveRequesterPageAdmission = () => {
+          // Identical replay of the last applied inventory page is idempotent; changed replay, gap,
+          // out-of-order, empty non-final, or post-done input cancels the attempt.
+          if (payload.message.page === expectedPage - 1 && current) {
+            if (current.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) return null
+            return CancelProviderAttemptCommand({
+              sourcePeerId: payload.sourcePeerId,
+              domain,
+              syncId: current.syncId,
+              syncToken: current.syncToken
+            })
+          }
+          if (payload.message.page !== expectedPage) {
+            return CancelProviderAttemptCommand({
+              sourcePeerId: payload.sourcePeerId,
+              domain,
+              syncId: current?.syncId ?? payload.message.syncId,
+              syncToken: current?.syncToken ?? ''
+            })
+          }
+          if (current?.inventoryDone || (payload.message.messageIds.length === 0 && !payload.message.done)) {
+            return CancelProviderAttemptCommand({
+              sourcePeerId: payload.sourcePeerId,
+              domain,
+              syncId: current?.syncId ?? payload.message.syncId,
+              syncToken: current?.syncToken ?? ''
+            })
+          }
+          return null
         }
-        if (payload.message.page !== expectedPage) {
-          return CancelProviderAttemptCommand({
-            sourcePeerId: payload.sourcePeerId,
-            domain,
-            syncId: current?.syncId ?? payload.message.syncId,
-            syncToken: current?.syncToken ?? ''
-          })
-        }
-        if (current?.inventoryDone || (payload.message.messageIds.length === 0 && !payload.message.done)) {
-          return CancelProviderAttemptCommand({
-            sourcePeerId: payload.sourcePeerId,
-            domain,
-            syncId: current?.syncId ?? payload.message.syncId,
-            syncToken: current?.syncToken ?? ''
-          })
-        }
+        const pageAdmission = resolveRequesterPageAdmission()
+        if (pageAdmission) return pageAdmission
+
         const jobs = get(ProviderSupplyJobsState())
         // Upsert-aware admission: the existing provider job is found by the COMPLETE sync identity,
         // its old cumulative bytes are subtracted, and the check validates others + newCumulative
@@ -1099,93 +1113,102 @@ const HistoryDomain = Remesh.domain({
             item.syncId === currentKey.syncId &&
             item.syncToken === currentKey.syncToken
         )
-        const existingBytes = existingJob?.queueBytes ?? 0
-        const hasExisting = Boolean(existingJob)
-        const requesterJobs = get(RequesterSupplyJobsState())
-        const admittedBytes = [...jobs, ...successors, ...requesterJobs].reduce(
-          (total, item) => total + item.queueBytes,
-          0
-        )
-        const nextCount = hasExisting
-          ? jobs.length + successors.length + requesterJobs.length
-          : jobs.length + successors.length + requesterJobs.length + 1
-        // newCumulativeBytes = existing cumulative (if any) + this page's bytes.
-        const newCumulativeBytes = existingBytes + queueBytes
-        if (
-          nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-          admittedBytes - existingBytes + newCumulativeBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
-        ) {
-          // Budget overflow terminates the matching provider attempt under its complete identity
-          // (and still records the protocol-drop diagnostic); its canonical admission state is
-          // released without touching other sources, and a later smaller page at the same number
-          // cannot revive the terminated attempt.
+        const enforceProviderQueueCapacity = () => {
+          const existingBytes = existingJob?.queueBytes ?? 0
+          const hasExisting = Boolean(existingJob)
+          const requesterJobs = get(RequesterSupplyJobsState())
+          const admittedBytes = [...jobs, ...successors, ...requesterJobs].reduce(
+            (total, item) => total + item.queueBytes,
+            0
+          )
+          const nextCount = hasExisting
+            ? jobs.length + successors.length + requesterJobs.length
+            : jobs.length + successors.length + requesterJobs.length + 1
+          // newCumulativeBytes = existing cumulative (if any) + this page's bytes.
+          const newCumulativeBytes = existingBytes + queueBytes
+          if (
+            nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
+            admittedBytes - existingBytes + newCumulativeBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
+          ) {
+            // Budget overflow terminates the matching provider attempt under its complete identity
+            // (and still records the protocol-drop diagnostic); its canonical admission state is
+            // released without touching other sources, and a later smaller page at the same number
+            // cannot revive the terminated attempt.
+            return [
+              wireDomain.command.DropProtocolCommand({
+                sourcePeerId: payload.sourcePeerId,
+                reason: 'history provider queue limit reached'
+              }),
+              CancelProviderAttemptCommand(currentKey)
+            ]
+          }
+          return null
+        }
+        const providerOverflow = enforceProviderQueueCapacity()
+        if (providerOverflow) return providerOverflow
+
+        const commitProviderAttemptPage = () => {
+          const allocated = nextTokens(get, 1)
+          const key: HistoryAttemptKey = {
+            sourcePeerId: payload.sourcePeerId,
+            domain,
+            syncId: payload.message.syncId,
+            syncToken: current?.syncToken ?? token('provider', allocated.values[0])
+          }
+          const inventory = new Set([...(current?.inventory ?? []), ...payload.message.messageIds])
+          const inventoryCount = (current?.inventoryCount ?? 0) + payload.message.messageIds.length
+          const inventoryBytes = (current?.inventoryBytes ?? 0) + queueBytes
+          const next: ProviderAttemptState = current
+            ? {
+                ...current,
+                inventory,
+                inventoryCount,
+                inventoryBytes,
+                expectedRequestPage: expectedPage + 1,
+                lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
+                inventoryDone: current.inventoryDone || payload.message.done
+              }
+            : {
+                ...key,
+                cutoff: historyCutoff(clock.now()),
+                inventory,
+                inventoryCount,
+                inventoryBytes,
+                expectedRequestPage: expectedPage + 1,
+                lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
+                inventoryDone: payload.message.done,
+                snapshot: [],
+                nextResponsePage: 0,
+                responseDone: false
+              }
           return [
-            wireDomain.command.DropProtocolCommand({
-              sourcePeerId: payload.sourcePeerId,
-              reason: 'history provider queue limit reached'
-            }),
-            CancelProviderAttemptCommand(currentKey)
+            TokenState().new(allocated.next),
+            ProviderAttemptsState().new(
+              replaceBy(providers, (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === domain, next)
+            ),
+            // One canonical admission record is upserted on every accepted page: its cumulative
+            // metadata bytes are updated, and it transitions to ready exactly once on the final page.
+            // The attempt timeout is armed from page zero. The first valid page zero binds this
+            // connection's sole provider syncId for the source+domain+provider direction.
+            ...(current
+              ? []
+              : [
+                  BindSyncIdCommand({
+                    sourcePeerId: payload.sourcePeerId,
+                    domain,
+                    direction: 'provider',
+                    syncId: payload.message.syncId
+                  }),
+                  ProviderTimeoutArmedEvent(key)
+                ]),
+            AdmitProviderSupplyCommand({
+              ...key,
+              queueBytes: next.inventoryBytes,
+              ready: next.inventoryDone
+            })
           ]
         }
-        const allocated = nextTokens(get, 1)
-        const key: HistoryAttemptKey = {
-          sourcePeerId: payload.sourcePeerId,
-          domain,
-          syncId: payload.message.syncId,
-          syncToken: current?.syncToken ?? token('provider', allocated.values[0])
-        }
-        const inventory = new Set([...(current?.inventory ?? []), ...payload.message.messageIds])
-        const inventoryCount = (current?.inventoryCount ?? 0) + payload.message.messageIds.length
-        const inventoryBytes = (current?.inventoryBytes ?? 0) + queueBytes
-        const next: ProviderAttemptState = current
-          ? {
-              ...current,
-              inventory,
-              inventoryCount,
-              inventoryBytes,
-              expectedRequestPage: expectedPage + 1,
-              lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
-              inventoryDone: current.inventoryDone || payload.message.done
-            }
-          : {
-              ...key,
-              cutoff: historyCutoff(clock.now()),
-              inventory,
-              inventoryCount,
-              inventoryBytes,
-              expectedRequestPage: expectedPage + 1,
-              lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
-              inventoryDone: payload.message.done,
-              snapshot: [],
-              nextResponsePage: 0,
-              responseDone: false
-            }
-        return [
-          TokenState().new(allocated.next),
-          ProviderAttemptsState().new(
-            replaceBy(providers, (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === domain, next)
-          ),
-          // One canonical admission record is upserted on every accepted page: its cumulative
-          // metadata bytes are updated, and it transitions to ready exactly once on the final page.
-          // The attempt timeout is armed from page zero. The first valid page zero binds this
-          // connection's sole provider syncId for the source+domain+provider direction.
-          ...(current
-            ? []
-            : [
-                BindSyncIdCommand({
-                  sourcePeerId: payload.sourcePeerId,
-                  domain,
-                  direction: 'provider',
-                  syncId: payload.message.syncId
-                }),
-                ProviderTimeoutArmedEvent(key)
-              ]),
-          AdmitProviderSupplyCommand({
-            ...key,
-            queueBytes: next.inventoryBytes,
-            ready: next.inventoryDone
-          })
-        ]
+        return commitProviderAttemptPage()
       }
     })
 
