@@ -754,6 +754,53 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(detail.exact).toBe(false)
   })
 
+  it('caps an oversized array length difference and reports overflow', async () => {
+    const shortScripts = Array.from({ length: 10 }, (_, index) => `script-${index}.js`)
+    const longScripts = [...shortScripts, ...Array.from({ length: 6 }, (_, index) => `script-${10 + index}.js`)]
+    const arrayContext: ChromeLifecycleContext = {
+      ...context,
+      packagedManifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: longScripts }
+      }
+    }
+    const adapter = prepareAdapter()
+    adapter.registerWorker(foreignWorkerTarget, foreignWorkerSession, {
+      runtimeId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      manifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: shortScripts }
+      }
+    })
+    adapter.startupTargets = [blankTarget, foreignWorkerTarget, workerTarget]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, arrayContext)
+    const foreignEvidence = result.timeline.find(
+      ({ type, detail }) =>
+        type === 'worker-classified' &&
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+        (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
+    )
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const detail = foreignEvidence?.detail as Record<string, unknown>
+    expect(detail.diffOverflow).toBe(true)
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const diff = detail.diff as Array<Record<string, unknown>>
+    expect(diff).toHaveLength(CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES)
+    const paths = diff.map(({ path }) => path)
+    // Six length differences exceed the four-entry cap; the kept entries stay in lexicographic order.
+    expect(paths).toEqual([
+      '/background/scripts/10',
+      '/background/scripts/11',
+      '/background/scripts/12',
+      '/background/scripts/13'
+    ])
+    expect(paths).toEqual([...paths].toSorted())
+  })
+
   it('reports array length differences under an allowlisted path with lexicographic index order', async () => {
     const shortScripts = Array.from({ length: 10 }, (_, index) => `script-${index}.js`)
     const longScripts = [...shortScripts, 'script-10.js']

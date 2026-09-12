@@ -928,14 +928,14 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
   }
 }
 
-/** The worker discovery window fields, all absent when no worker was bound. */
+/** The worker discovery window fields; all null when no worker was bound. */
 const workerDiscoverySnapshot = (worker: BoundWorker | undefined) => ({
   workerDiscoveryStartedAtMs: worker?.discoveryStartedAtMs ?? null,
   workerDiscoveryCompletedAtMs: worker?.discoveryCompletedAtMs ?? null,
   workerDiscoveryDeadlineMs: worker?.discoveryDeadlineMs ?? null
 })
 
-/** The observed worker-side binding fields, all absent when no worker was bound. */
+/** The observed worker-side binding fields; all null when no worker was bound. */
 const workerBindingSnapshot = (worker: BoundWorker | undefined) => ({
   extensionId: worker?.runtimeId ?? null,
   packagedWorkerEntry: worker?.packagedWorkerEntry ?? null,
