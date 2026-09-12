@@ -158,10 +158,8 @@ describe.each(backends)('$name Database contract', (backend) => {
     const database = create(backend)
 
     // SAFETY: the deliberately unsupported scope inputs are forwarded to the boundary.
-    // SAFETY: the deliberately unsupported input is forwarded to the boundary.
     await expect(database.read([] as never, async () => null)).rejects.toThrow('must not be empty')
     // SAFETY: the deliberately unsupported scope inputs are forwarded to the boundary.
-    // SAFETY: the deliberately unsupported input is forwarded to the boundary.
     await expect(database.read(['records', 'records'] as never, async () => null)).rejects.toThrow(
       'must not contain duplicates'
     )
@@ -173,7 +171,6 @@ describe.each(backends)('$name Database contract', (backend) => {
       )
     ).rejects.toThrow('outside transaction scope')
     // SAFETY: the deliberately unknown store name is forwarded to the boundary.
-    // SAFETY: the deliberately unsupported input is forwarded to the boundary.
     await expect(database.read(['missing'] as never, async () => null)).rejects.toThrow('Unknown database store')
   })
 

@@ -100,7 +100,7 @@ const viewTransition = (
 ): ViewTransition => ({
   finished,
   ready,
-  // SAFETY: the stubbed view-transition object provides the type set the component reads.
+  // SAFETY: the stub simulates the native ViewTransition interface the component consumes.
   types: new Set<string>() as ViewTransitionTypeSet,
   updateCallbackDone,
   skipTransition: vi.fn()

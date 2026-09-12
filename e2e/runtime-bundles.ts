@@ -123,7 +123,7 @@ const assertCodecBoundary = (target: string, sources: Iterable<string>) => {
   const source = [...sources].join('\n')
   requiredCodecMarkers.forEach((marker) => assert(source.includes(marker), `${target} must contain ${marker}`))
   prohibitedCodecResidue.forEach((residue) =>
-    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the rejection helper accepts any promise result type
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the synchronous residue scan reads a literal residue string from the packaged source
     assert(!source.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
   )
 }
