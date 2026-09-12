@@ -60,5 +60,5 @@ export default defineConfig({
           include: '**/*.svg'
         })
       ]
-    }) as any
+    })
 })
