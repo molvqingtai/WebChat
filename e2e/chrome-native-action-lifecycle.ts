@@ -348,10 +348,12 @@ const manifestDiffValue = (path: string, value: ComparableManifestValue): Manife
   return value
 }
 
-const manifestDiff = (
-  packaged: JsonValue,
-  runtime: JsonValue
-): { readonly entries: readonly ManifestDiffEntry[]; readonly overflow: boolean } => {
+type ManifestDiffReport = {
+  readonly entries: readonly ManifestDiffEntry[]
+  readonly overflow: boolean
+}
+
+const manifestDiff = (packaged: JsonValue, runtime: JsonValue): ManifestDiffReport => {
   const differences: ManifestDiffEntry[] = []
 
   const visit = (path: string, left: ComparableManifestValue, right: ComparableManifestValue): void => {
@@ -887,7 +889,80 @@ const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): TargetUrlE
 const originKind = (origin: string): 'extension' | 'other' =>
   origin.startsWith('chrome-extension://') ? 'extension' : 'other'
 
-const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
+type TargetUrlClassification = 'other-target' | 'startup-page' | 'accepted-page' | 'unexpected-page'
+type TargetIdentityEvidence = {
+  readonly targetId: string
+  readonly targetType: ChromeLifecycleTargetType
+}
+
+type LifecycleEventEvidence =
+  | ({ readonly type: 'target-created' | 'target-changed' } & TargetIdentityEvidence & { readonly targetUrl: string })
+  | ({
+      readonly type: 'target-created' | 'target-changed'
+    } & TargetIdentityEvidence & { readonly targetUrlClassification: TargetUrlClassification })
+  | ({
+      readonly type: 'target-attached'
+      readonly sessionId: string
+    } & TargetIdentityEvidence & { readonly targetUrl: string })
+  | ({
+      readonly type: 'target-attached'
+      readonly sessionId: string
+    } & TargetIdentityEvidence & { readonly targetUrlClassification: TargetUrlClassification })
+  | { readonly type: 'target-destroyed'; readonly targetId: string }
+  | { readonly type: 'target-detached'; readonly sessionId: string; readonly targetId: string }
+  | {
+      readonly type: 'frame-navigated'
+      readonly frameId: string
+      readonly navigationId: string
+      readonly parentFrameId: string | null
+      readonly sessionId: string
+      readonly targetId: string
+      readonly urlMatchesAccepted: boolean
+    }
+  | {
+      readonly type: 'page-lifecycle'
+      readonly frameId: string
+      readonly name: string
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'execution-context-created'
+      readonly contextId: number
+      readonly frameId: string
+      readonly originType: 'extension' | 'other'
+      readonly sessionId: string
+      readonly targetId: string
+      readonly world: 'isolated' | 'main' | 'other'
+    }
+  | {
+      readonly type: 'execution-context-destroyed'
+      readonly contextId: number
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'console'
+      readonly classification: 'shared-runtime-unavailable' | 'unexpected-error' | 'diagnostic'
+      readonly contextId: number
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'exception'
+      readonly classification: 'shared-runtime-unavailable' | 'unexpected-exception'
+      readonly contextId: number | null
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'observation-error'
+      readonly classification: 'observation-error'
+      readonly sessionId: string | null
+      readonly targetId: string | null
+    }
+
+const privacySafeEventEvidence = (event: ChromeLifecycleEvent): LifecycleEventEvidence => {
   switch (event.type) {
     case 'target-created':
     case 'target-changed':
