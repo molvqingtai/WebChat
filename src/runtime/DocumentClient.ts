@@ -253,19 +253,25 @@ export class DocumentClient {
    * Starts a fresh register-and-read recovery regardless of the current drain state. Unlike the
    * deduping init, it supersedes any in-flight drain (including a hung one, whose RPC has no
    * timeout) and forces a re-registration instead of returning the cached snapshot, so a failed
-   * or stale recovery never blocks the next one. Late continuations of the superseded drain stay
-   * fenced by isOwnerCurrent once the owner slot is replaced, so an old result cannot overwrite
-   * the new one.
+   * or stale recovery never blocks the next one. It clears the cached snapshot, so the new drain
+   * reports the connecting phase again, and it returns the same waiter init() hands out so the
+   * caller can await the fresh projection. Late continuations of the superseded drain stay fenced
+   * by isOwnerCurrent once the owner slot is replaced, so an old result cannot overwrite the new one.
    */
-  refresh() {
+  refresh(): Promise<RuntimeSnapshot | null> {
     if (this.detached) this.detached = false
     this.owner?.controller.abort(new DOMException('Runtime client refresh superseded prior drain', 'AbortError'))
     this.owner = null
     this.registered = false
     this.readyPublished = false
     this.currentHostId = null
+    this.currentSnapshot = null
+    const waiter = new Promise<RuntimeSnapshot>((resolve, reject) => {
+      this.initWaiters.add({ resolve, reject })
+    })
     this.dirty = true
     this.startDrainIfAbsent()
+    return waiter
   }
 
   /** Document-local teardown only; tab departure itself is owned by browser lifecycle events. */
