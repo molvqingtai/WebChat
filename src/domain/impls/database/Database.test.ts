@@ -416,7 +416,7 @@ describe.each(backends)('$name Database contract', (backend) => {
     const name = `database-empty-index-${backend.name}-${databaseId++}`
     names.add(name)
     const definition: DatabaseDefinition<{
-      items: { key: string | number; value: { group: string }; indexes: { '': string } }
+      items: { key: string | number; value: { group: string; count: number }; indexes: { '': number } }
     }> = {
       name,
       version: 1,
@@ -425,7 +425,7 @@ describe.each(backends)('$name Database contract', (backend) => {
         items: {
           key: 'string-or-number',
           introducedIn: 1,
-          indexes: { '': { key: 'string', keyPath: 'group', introducedIn: 1 } }
+          indexes: { '': { key: 'number', keyPath: 'count', introducedIn: 1 } }
         }
       }
     }
@@ -433,15 +433,18 @@ describe.each(backends)('$name Database contract', (backend) => {
 
     await database.write(['items'], async (transaction) => {
       await Promise.all([
-        transaction.insert('items', 2, { group: 'a' }),
-        transaction.insert('items', 1, { group: 'b' })
+        transaction.insert('items', 'a', { group: 'x', count: 2 }),
+        transaction.insert('items', 'b', { group: 'y', count: 1 })
       ])
     })
-    // The empty-string index falls back to the default key, so the scan uses the default key
-    // order (id) rather than the empty index's group keyPath.
+    // SAFETY: a miscast caller forwards a string range against the number-typed empty index; the
+    // empty-string index falls back to the default key type, so the string bounds are accepted
+    // and the scan uses the default key order rather than the empty index's count keyPath.
     await expect(
-      database.read(['items'], (transaction) => transaction.scan('items', { index: '' }))
-    ).resolves.toMatchObject([{ key: 1 }, { key: 2 }])
+      database.read(['items'], (transaction) =>
+        transaction.scan('items', { index: '', range: { lower: 'b', upper: 'z' } } as never)
+      )
+    ).resolves.toMatchObject([{ key: 'b' }])
     await database.close()
   })
 
