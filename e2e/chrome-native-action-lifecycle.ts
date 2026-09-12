@@ -830,6 +830,10 @@ const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): JsonObject
   return { targetUrlClassification: 'unexpected-page' }
 }
 
+/** Classifies an execution-context origin for the privacy-safe evidence record. */
+const originKind = (origin: string): 'extension' | 'other' =>
+  origin.startsWith('chrome-extension://') ? 'extension' : 'other'
+
 const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
   switch (event.type) {
     case 'target-created':
@@ -875,7 +879,7 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
         contextId: event.contextId,
         frameId: event.frameId,
         type: event.type,
-        originType: event.origin.startsWith('chrome-extension://') ? 'extension' : 'other',
+        originType: originKind(event.origin),
         sessionId: event.sessionId,
         targetId: event.targetId,
         world: event.world
