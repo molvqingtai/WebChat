@@ -1775,6 +1775,37 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Applies a destroyed event to the bound-target continuity state. */
+  const observeBoundTargetDestroyed = (event: Extract<ChromeLifecycleEvent, { type: 'target-destroyed' }>): void => {
+    if (event.targetId === state.targetId) {
+      state.targetDestroyed = true
+      state.targetFailure = 'The sole accepted target was destroyed'
+    }
+  }
+
+  /** Resolves the accepted page session for an attach event, or null when the event is rejected. */
+  const resolveAcceptedPageSession = (
+    event: Extract<ChromeLifecycleEvent, { type: 'target-attached' }>
+  ): ChromeLifecycleSession | null => {
+    if (event.target.targetId !== state.targetId) {
+      if (event.target.type === 'page' && event.target.targetId !== startupPages[0]!.targetId) {
+        state.targetFailure = 'A replacement page session attached during the bound lifecycle'
+      }
+      return null
+    }
+    if (
+      event.target.type !== 'page' ||
+      event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL ||
+      !nonEmpty(event.sessionId) ||
+      state.pageSessionId !== undefined
+    ) {
+      state.targetFailure = 'The accepted target attached with a divergent session binding'
+      return null
+    }
+    state.pageSessionId = event.sessionId
+    return { targetId: state.targetId, sessionId: event.sessionId, targetType: 'page' }
+  }
+
   const processEvent = async (event: ChromeLifecycleEvent, eventAtMs: number): Promise<void> => {
     if (observeWorkerEvent(event, eventAtMs)) {
       await probePendingWorkers(lifecycleDeadlineMs)
@@ -1800,35 +1831,13 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     if (event.type === 'target-destroyed') {
-      if (event.targetId === state.targetId) {
-        state.targetDestroyed = true
-        state.targetFailure = 'The sole accepted target was destroyed'
-      }
+      observeBoundTargetDestroyed(event)
       return
     }
 
     if (event.type === 'target-attached') {
-      if (event.target.targetId !== state.targetId) {
-        if (event.target.type === 'page' && event.target.targetId !== startupPages[0]!.targetId) {
-          state.targetFailure = 'A replacement page session attached during the bound lifecycle'
-        }
-        return
-      }
-      if (
-        event.target.type !== 'page' ||
-        event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL ||
-        !nonEmpty(event.sessionId) ||
-        state.pageSessionId !== undefined
-      ) {
-        state.targetFailure = 'The accepted target attached with a divergent session binding'
-        return
-      }
-      state.pageSessionId = event.sessionId
-      const session: ChromeLifecycleSession = {
-        targetId: state.targetId,
-        sessionId: event.sessionId,
-        targetType: 'page'
-      }
+      const session = resolveAcceptedPageSession(event)
+      if (!session) return
       try {
         const beforeObservationFailure =
           state.deadlineFailure ?? deadlineFenceAfter('Accepted session observation').failure
