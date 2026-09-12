@@ -148,6 +148,8 @@ const projectHistory = (
  * Join/leave/sessions/feedback/failure projections are derived by diffing successive current
  * projections; inbound persistence settles through the ordinary `ackInbound` action.
  */
+type RuntimeDomain = RuntimeSnapshot['domains'][number]
+
 export class ChatRoom extends EventHub implements ChatRoomPort {
   private reportResult: ((token: number, result: ConnectionLifecycleResult) => void) | null = null
   private standaloneMint: (() => number) | null = null
@@ -212,16 +214,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
   }
 
-  // ── Chat projection stage (drain owner) ─────────────────────────────────────
+
+// ── Chat projection stage (drain owner) ─────────────────────────────────────
 
   applyChat(projection: RuntimeSnapshot) {
     this.resetHostLocalStateIfReplaced(projection)
     const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
-    const sessions = sessionsFrom({ localSession: domain?.localSession, sessions: domain?.sessions ?? [] })
-    // Join/leave lifecycle events derive only from remote sessions: the local self-join notice is
-    // owned once by the persistence stage's idempotent self-join projection.
-    const remoteSessions = domain?.sessions ?? []
-    const localJoinedAt = domain?.localSession?.joinedAt
     if (!domain) {
       // The released domain leaves no membership: a later rejoin starts from a fresh baseline.
       this.appliedSessions = null
@@ -232,43 +230,57 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       // transition and cannot establish the notice baseline: only a committed runtime can.
       return
     }
+    this.applySessionNotices(domain)
+    this.applyHistoryFeedback(domain)
+    this.applyRetainedFailures(projection)
+  }
+
+  /** Join/leave lifecycle notices derived from the committed session projection. */
+  private applySessionNotices(domain: RuntimeDomain) {
+    const sessions = sessionsFrom({ localSession: domain.localSession, sessions: domain.sessions ?? [] })
+    // Join/leave lifecycle events derive only from remote sessions: the local self-join notice is
+    // owned once by the persistence stage's idempotent self-join projection.
+    const remoteSessions = domain.sessions ?? []
+    const localJoinedAt = domain.localSession?.joinedAt
     const previous = this.appliedSessions
     if (previous === null) {
       // Baseline: the first committed projection cannot produce live join/leave notices;
       // sessions present here are current state.
       this.appliedSessions = remoteSessions
       this.emit('sessions', sessions)
-    } else {
-      this.appliedSessions = remoteSessions
-      this.emit('sessions', sessions)
-      const localUserId = domain.localSession?.user.id
-      // Membership finality counts every presence of the user, including this page's own local
-      // session: a same-user local presence suppresses the final leave exactly like a remote one.
-      const countIn = (list: readonly RuntimeSession[], userId: string) =>
-        list.filter((session) => session.user.id === userId).length + (localUserId === userId ? 1 : 0)
-      const userIds = new Set([
-        ...previous.map((session) => session.user.id),
-        ...remoteSessions.map((session) => session.user.id)
-      ])
-      for (const userId of userIds) {
-        const before = countIn(previous, userId)
-        const after = countIn(remoteSessions, userId)
-        if (before === 0 && after > 0) {
-          // A live join notice exists only for a strictly later logical join while this page is
-          // a committed member; an older/equal generation converges silently as current state.
-          const joined = remoteSessions.find((session) => session.user.id === userId)
-          if (joined && localJoinedAt !== undefined && joined.joinedAt > localJoinedAt) {
-            this.emit('join', toChatSession(joined))
-          }
-        } else if (before > 0 && after === 0) {
-          const left = previous.find((session) => session.user.id === userId)
-          if (left) this.emit('leave', toChatSession(left))
+      return
+    }
+    this.appliedSessions = remoteSessions
+    this.emit('sessions', sessions)
+    const localUserId = domain.localSession?.user.id
+    // Membership finality counts every presence of the user, including this page's own local
+    // session: a same-user local presence suppresses the final leave exactly like a remote one.
+    const countIn = (list: readonly RuntimeSession[], userId: string) =>
+      list.filter((session) => session.user.id === userId).length + (localUserId === userId ? 1 : 0)
+    const userIds = new Set([
+      ...previous.map((session) => session.user.id),
+      ...remoteSessions.map((session) => session.user.id)
+    ])
+    for (const userId of userIds) {
+      const before = countIn(previous, userId)
+      const after = countIn(remoteSessions, userId)
+      if (before === 0 && after > 0) {
+        // A live join notice exists only for a strictly later logical join while this page is
+        // a committed member; an older/equal generation converges silently as current state.
+        const joined = remoteSessions.find((session) => session.user.id === userId)
+        if (joined && localJoinedAt !== undefined && joined.joinedAt > localJoinedAt) {
+          this.emit('join', toChatSession(joined))
         }
+      } else if (before > 0 && after === 0) {
+        const left = previous.find((session) => session.user.id === userId)
+        if (left) this.emit('leave', toChatSession(left))
       }
     }
+  }
 
-    // History loading owners are current state: activate on appearance, dismiss on disappearance.
-    const ownerIds = new Set((domain?.historyFeedback ?? []).map((item) => item.ownerId))
+  /** History loading owners are current state: activate on appearance, dismiss on disappearance. */
+  private applyHistoryFeedback(domain: RuntimeDomain) {
+    const ownerIds = new Set((domain.historyFeedback ?? []).map((item) => item.ownerId))
     for (const ownerId of ownerIds) {
       if (!this.appliedFeedbackOwnerIds.has(ownerId)) {
         this.emit('historyFeedback', {
@@ -288,9 +300,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       }
     }
     this.appliedFeedbackOwnerIds = ownerIds
+  }
 
-    // Retained Runtime failures are idempotent current facts: present each unseen eventId once,
-    // and reconcile the dedup window to the projection's own bounded current set (never unbounded).
+  /** Retained Runtime failures are idempotent current facts: present each unseen eventId once. */
+  private applyRetainedFailures(projection: RuntimeSnapshot) {
     const currentFailureIds = new Set(projection.failures.map((failure) => failure.eventId))
     for (const eventId of this.seenErrorEventIds) {
       if (!currentFailureIds.has(eventId)) this.seenErrorEventIds.delete(eventId)
