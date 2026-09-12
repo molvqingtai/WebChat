@@ -1538,6 +1538,7 @@ const HistoryDomain = Remesh.domain({
         const pending = get(PendingWireSendsState())
         const found = pending.find((item) => item.requestId === requestId && item.type === 'provider')
         if (!found) return null
+        // SAFETY: the pending send was selected by its provider type above.
         const current = found as PendingProviderSend
         const providers = get(ProviderAttemptsState())
         const attempt = providers.find((item) => matchesSync(item, current))
@@ -2165,6 +2166,7 @@ const HistoryDomain = Remesh.domain({
                 RequesterAttemptsState().new(
                   replaceBy(get(RequesterAttemptsState()), (item) => matchesSync(item, live), next)
                 ),
+                // SAFETY: the inventory page command is emitted as a Remesh command output in this effect.
                 QueueInventoryPageCommand(next) as RemeshCommandOutput
               ]
             }
