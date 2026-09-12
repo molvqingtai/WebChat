@@ -262,6 +262,12 @@ export class DocumentClient {
     if (this.detached) this.detached = false
     this.owner?.controller.abort(new DOMException('Runtime client refresh superseded prior drain', 'AbortError'))
     this.owner = null
+    // Supersede any prior refresh/init waiters too: an older recovery attempt must not continue
+    // with the fresh result, so its callers are rejected as superseded instead of being resolved
+    // by the shared waiter pool with the newest snapshot.
+    const superseded = new DOMException('Runtime client refresh superseded a prior recovery', 'AbortError')
+    this.initWaiters.forEach((waiter) => waiter.reject(superseded))
+    this.initWaiters.clear()
     this.registered = false
     this.readyPublished = false
     this.currentHostId = null
