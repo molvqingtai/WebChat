@@ -245,9 +245,12 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
       .toSorted()
       .reduce(
         (acc, key) => {
+          // SAFETY: value is a non-null object here (null and arrays returned above), so its own
+          // enumerable keys form a record whose entries the assertJson recursion validates.
           acc[key] = assertJson((value as Record<string, unknown>)[key], childSeen)
           return acc
         },
+        // SAFETY: the accumulator starts empty and every assignment stores an assertJson result.
         {} as Record<string, JsonValue>
       )
   }
@@ -446,9 +449,12 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
   }
   return keys.reduce(
     (acc, key) => {
+      // SAFETY: value is a non-null object here (null and arrays returned above), so its own
+      // enumerable keys form a record whose entries normalizeEvidence validates.
       acc[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, childSeen)
       return acc
     },
+    // SAFETY: the accumulator starts empty and every assignment stores a normalizeEvidence result.
     {} as Record<string, JsonValue>
   )
 }
