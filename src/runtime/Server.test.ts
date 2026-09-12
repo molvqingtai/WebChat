@@ -70,9 +70,11 @@ const observeDualEpochGateDispatches = () => {
     store.send = (output: RemeshAction) => {
       if (!output || Array.isArray(output) || output.type !== 'RemeshCommandAction') return send(output)
       if (output.Command.commandName === 'Connection.BeginDualEpochReplacementCommand') {
+        // SAFETY: the command-name check above establishes that arg is the dual-epoch gate payload this double records
         begins.push(output.arg as ObservedDualEpochGate)
       }
       if (output.Command.commandName === 'Connection.AbortDualEpochCommand') {
+        // SAFETY: the command-name check above establishes that arg is the dual-epoch gate payload this double records
         aborts.push(output.arg as ObservedDualEpochGate)
       }
       return send(output)
@@ -155,6 +157,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
     const attach = () => server.attachPage({ domain: DOMAIN, caller: { tab: tabs.get(7) } })
     const call = () => ({ caller: { tab: tabs.get(7) } })
     const hints = () =>
+      // SAFETY: these are captured server payloads; the optional tag is read only to filter them in the assertion
       sentMessages.filter(({ message }) => (message as { type?: string }).type === 'runtime:state-changed')
     return { admission, attach, call, fake, hints, sentMessages, server, tabs }
   }
@@ -221,6 +224,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
     await fixture.attach()
 
     // The comctx-exported method requires a caller-bearing request at runtime and at the type level.
+    // SAFETY: the cast lets this test call the exported method without a caller payload, which is exactly the rejection under test.
     await expect((fixture.server.getSnapshot as (payload?: unknown) => Promise<unknown>)()).rejects.toThrow(
       'Caller-bearing snapshot request is required'
     )
@@ -453,6 +457,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       operationLog.push(`send:${roomId}`)
       const sendGate = sendGates.get(roomId)
       if (sendGate) await sendGate.promise
+      // SAFETY: the payload is produced by the code under test; parsing it here reads only the wire tag
       const message = JSON.parse(payload) as TestWireMessage
       if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) return
       if (!historySendGate) return
@@ -654,6 +659,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       errorListeners.forEach((listener) => listener(error, roomId))
     },
     messages: (roomId: string) =>
+      // SAFETY: recorded payloads come from the code under test; they are parsed only to read the wire messages
       sent.filter((item) => item.roomId === roomId).map((item) => JSON.parse(item.payload) as TestWireMessage)
   }
 }
