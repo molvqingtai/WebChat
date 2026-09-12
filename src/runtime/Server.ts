@@ -1240,7 +1240,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
     }
     if (retained) return cloneSeed(retained)
-    if (shared) return captureSharedWorldRecoverySeed(shared, reservation.domain, reservation.tabId, reservation.documentUrl)
+    if (shared)
+      return captureSharedWorldRecoverySeed(shared, reservation.domain, reservation.tabId, reservation.documentUrl)
     return captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
   }
 

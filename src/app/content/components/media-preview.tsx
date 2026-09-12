@@ -650,7 +650,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     if (!owner) return
     const handleKeyDown = (nativeEvent: Event) => {
       // SAFETY: the keydown listener is attached to the preview surface, so the native event is a KeyboardEvent.
-    const event = nativeEvent as KeyboardEvent
+      const event = nativeEvent as KeyboardEvent
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -685,7 +685,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     const surfaces = [backdropRef.current, overlayRef.current].filter((surface) => surface !== null)
     const handleWheel = (nativeEvent: Event) => {
       // SAFETY: the wheel listener is attached to the preview surface, so the native event is a WheelEvent.
-    const event = nativeEvent as WheelEvent
+      const event = nativeEvent as WheelEvent
       event.preventDefault()
       event.stopPropagation()
       const center = layoutRef.current.center

@@ -214,8 +214,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
   }
 
-
-// ── Chat projection stage (drain owner) ─────────────────────────────────────
+  // ── Chat projection stage (drain owner) ─────────────────────────────────────
 
   applyChat(projection: RuntimeSnapshot) {
     this.resetHostLocalStateIfReplaced(projection)

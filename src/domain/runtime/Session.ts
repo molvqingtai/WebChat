@@ -1467,45 +1467,42 @@ const SessionDomain = Remesh.domain({
 
         const acceptsBinding = () => {
           if (observed?.status === 'ended') {
-
-          // The wire acceptance already limited this frame to the current trusted Chat room
-          // generation. A lawful same-presence correction additionally requires the source to be a
-          // CURRENTLY ADMITTED physical member of the room: a source that left (PeerLeave) without
-          // a fresh PeerJoin may not re-activate an ended presence with a sender-chosen new
-          // sessionId. It is accepted only with a NEW physical sessionId that exactly matches the
-          // observer's accepted logical identity and time and conflicts with no newer active
-          // binding or logical generation; an exact replay, an identity/time mutation, or a newer
-          // conflict stays terminally rejected.
-          const exactReplay = message.sessionId === observed.sessionId
-          const identityMatch = message.user.id === observed.user.id && message.joinedAt === observed.joinedAt
-          const admitted = get(
-            wireDomain.query.IsSourceAdmittedQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
-          )
-          const newerConflict =
-            runtime.sessions.some((item) => item.user.id === message.user.id && item.joinedAt > message.joinedAt) ||
-            observers.some(
-              (observer) =>
-                observer.status === 'active' &&
-                observer.user.id === message.user.id &&
-                observer.presenceId !== message.presenceId &&
-                observer.joinedAt > message.joinedAt
+            // The wire acceptance already limited this frame to the current trusted Chat room
+            // generation. A lawful same-presence correction additionally requires the source to be a
+            // CURRENTLY ADMITTED physical member of the room: a source that left (PeerLeave) without
+            // a fresh PeerJoin may not re-activate an ended presence with a sender-chosen new
+            // sessionId. It is accepted only with a NEW physical sessionId that exactly matches the
+            // observer's accepted logical identity and time and conflicts with no newer active
+            // binding or logical generation; an exact replay, an identity/time mutation, or a newer
+            // conflict stays terminally rejected.
+            const exactReplay = message.sessionId === observed.sessionId
+            const identityMatch = message.user.id === observed.user.id && message.joinedAt === observed.joinedAt
+            const admitted = get(
+              wireDomain.query.IsSourceAdmittedQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
             )
-          if (exactReplay || !identityMatch || !admitted || newerConflict) {
-            return false
-          }
-          // Legal correction: fall through so the binding/observer/leave flow below re-activates
-          // the same logical observation without allocating a new logical generation.
+            const newerConflict =
+              runtime.sessions.some((item) => item.user.id === message.user.id && item.joinedAt > message.joinedAt) ||
+              observers.some(
+                (observer) =>
+                  observer.status === 'active' &&
+                  observer.user.id === message.user.id &&
+                  observer.presenceId !== message.presenceId &&
+                  observer.joinedAt > message.joinedAt
+              )
+            if (exactReplay || !identityMatch || !admitted || newerConflict) {
+              return false
+            }
+            // Legal correction: fall through so the binding/observer/leave flow below re-activates
+            // the same logical observation without allocating a new logical generation.
             return true
           }
           if (
-
-          (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
-          (current?.sessionId === message.sessionId &&
-            (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
-                  ) {
-
-          return false
-                  }
+            (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
+            (current?.sessionId === message.sessionId &&
+              (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
+          ) {
+            return false
+          }
           return true
         }
         if (!acceptsBinding()) return rejectBinding()

@@ -115,7 +115,10 @@ const Footer: FC = () => {
   // Replace the hash URL in ![Image](hash:${hash}) with base64 and update the atUserRecord.
   const transformMessage = async (message: string) => {
     const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
-    const transformed = matchList.reduce<{ text: string; updates: { text: string; startIndex: number; endIndex: number }[] }>(
+    const transformed = matchList.reduce<{
+      text: string
+      updates: { text: string; startIndex: number; endIndex: number }[]
+    }>(
       (acc, match) => {
         const base64 = imageRecord.current.get(match[1])
         if (!base64) return acc
@@ -143,10 +146,11 @@ const Footer: FC = () => {
       return
     }
     const transformedMessage = await transformMessage(message)
-    const mentions = [...atUserRecord.current].flatMap(([userId, ranges]) => {
-      const user = userList.find((user) => user.id === userId)
-      return user ? [{ ...user, ranges: [...ranges] }] : []
-    })
+    const mentions = [...atUserRecord.current]
+      .flatMap(([userId, ranges]) => {
+        const user = userList.find((user) => user.id === userId)
+        return user ? [{ ...user, ranges: [...ranges] }] : []
+      })
       .filter(Boolean)
 
     const newMessage = { body: transformedMessage, mentions }

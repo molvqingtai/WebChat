@@ -1,15 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "react",
-    "react-hooks",
-    "jsx-a11y",
-    "unicorn"
-  ],
-  "jsPlugins": [
-    "./tools/oxlint/anti-slop/index.ts"
-  ],
+  "plugins": ["typescript", "react", "react-hooks", "jsx-a11y", "unicorn"],
+  "jsPlugins": ["./tools/oxlint/anti-slop/index.ts"],
   "rules": {
     "typescript/consistent-type-imports": "error",
     "complexity": "warn",
@@ -44,11 +36,7 @@
   ],
   "overrides": [
     {
-      "files": [
-        "**/*.test.*",
-        "**/*.browser.test.*",
-        "e2e/**"
-      ],
+      "files": ["**/*.test.*", "**/*.browser.test.*", "e2e/**"],
       "rules": {
         "anti-slop/no-module-mocking": "off"
       }
