@@ -29,7 +29,7 @@ const createTransport = () => {
   const joinCalls: string[] = []
   const leaveControls = new Map<
     string,
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     { promise: Promise<void>; resolve: () => void; reject: (reason?: unknown) => void }
   >()
   const leaveTerminals = new Map<string, Promise<void>>()
@@ -51,7 +51,7 @@ const createTransport = () => {
       () => {
         if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
       },
-      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
       (error: unknown) => {
         leaveFailures.set(roomId, error)
         if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
@@ -121,7 +121,7 @@ const createTransport = () => {
     joinCalls,
     deferLeave: (roomId: string) => {
       let resolve!: () => void
-      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
       let reject!: (reason?: unknown) => void
       const promise = new Promise<void>((onResolve, onReject) => {
         resolve = onResolve
@@ -130,7 +130,7 @@ const createTransport = () => {
       leaveControls.set(roomId, { promise, resolve, reject })
     },
     resolveLeave: (roomId: string) => leaveControls.get(roomId)?.resolve(),
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     rejectLeave: (roomId: string, reason: unknown) => leaveControls.get(roomId)?.reject(reason),
     sent,
     plantPeer: (roomId: string, peerId: string) => {
@@ -143,7 +143,7 @@ const createTransport = () => {
       peersByRoom.get(roomId)?.delete(peerId)
       leaveListeners.forEach((listener) => listener(roomId, peerId))
     },
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     receive: (roomId: string, sourcePeerId: string, message: unknown) =>
       messageListeners.forEach((listener) => listener(roomId, sourcePeerId, JSON.stringify(message)))
   }
@@ -223,7 +223,7 @@ describe('Offscreen physical retirement through the Runtime replacement path', (
         () => {
           reconnectSettled = true
         },
-        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
         (error: unknown) => {
           reconnectSettled = true
           reconnectError = error
@@ -261,13 +261,13 @@ describe('DocumentClient across a logical Background replacement', () => {
     'retires a physically pending B1 History supply on replacement without touching B2 (late %s)',
     async (branch) => {
       const hints: unknown[] = []
-      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
       const listeners = new Set<(message: unknown) => void>()
       const admission: RuntimeAdmission = {
         tabs: {
           get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
           query: async () => [{ id: 1, url: `${DOMAIN}/` }],
-          // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+          // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
           sendMessage: async (_tabId: number, message: unknown) => {
             hints.push(message)
             listeners.forEach((listener) => listener(message))
@@ -299,7 +299,7 @@ describe('DocumentClient across a logical Background replacement', () => {
         registerPage: async (payload: { domain: string }) => current.attachPage({ ...payload, caller })
       }
       // SAFETY: the test narrows this runtime value to the shape it asserts on.
-      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adapter facade keeps the original server methods it wraps
       const facade = {
         getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
         joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
@@ -856,13 +856,13 @@ describe('DocumentClient across a logical Background replacement', () => {
   })
 
   it('a valid same-sequence successor persists through the real Server/Delivery reconnect chain', async () => {
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     const listeners = new Set<(message: unknown) => void>()
     const admission: RuntimeAdmission = {
       tabs: {
         get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
         query: async () => [{ id: 1, url: `${DOMAIN}/` }],
-        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
         sendMessage: async (_tabId: number, message: unknown) => {
           listeners.forEach((listener) => listener(message))
         }
@@ -877,7 +877,7 @@ describe('DocumentClient across a logical Background replacement', () => {
       registerPage: async (payload: { domain: string }) => server.attachPage({ ...payload, caller })
     }
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adapter facade keeps the original server methods it wraps
     const facade = {
       getSnapshot: (payload?: { domain?: string }) => server.getSnapshot({ ...payload, caller }),
       joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
@@ -1008,13 +1008,13 @@ describe('DocumentClient across a logical Background replacement', () => {
 
   it('re-registers through the real register-and-read surface and rebuilds lease and History provider', async () => {
     const hints: unknown[] = []
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     const listeners = new Set<(message: unknown) => void>()
     const admission: RuntimeAdmission = {
       tabs: {
         get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
         query: async () => [{ id: 1, url: `${DOMAIN}/` }],
-        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
         sendMessage: async (_tabId: number, message: unknown) => {
           hints.push(message)
           listeners.forEach((listener) => listener(message))
@@ -1031,7 +1031,7 @@ describe('DocumentClient across a logical Background replacement', () => {
       registerPage: async (payload: { domain: string }) => current.attachPage({ ...payload, caller })
     }
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adapter facade keeps the original server methods it wraps
     const facade = {
       getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
       provideHistory: (payload: { domain: string }, callback: Parameters<RuntimeServer['provideHistory']>[1]) => {

@@ -369,8 +369,7 @@ describe('DocumentClient one-way current-state drain', () => {
     await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
     expect(server.getSnapshot).toHaveBeenCalledWith({ domain: DOMAIN })
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- raw call argument rebuilt for inspection
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- reads the original mock call argument for inspection
     const readPayload = server.getSnapshot.mock.calls[0]?.[0] as unknown as Record<string, unknown>
     expect(Object.keys(readPayload)).not.toHaveLength(0)
     readQueue.shift()!.resolve(snapshot(''))
@@ -378,8 +377,7 @@ describe('DocumentClient one-way current-state drain', () => {
   })
 
   it('a pulled host replacement re-registers through the register-and-read surface before applying', async () => {
-    // oxlint-disable-next-line eslint/no-unused-vars -- test harness boundary
-    const { client, coordinator, server, registerQueue, readQueue } = setup()
+    const { client, coordinator, server, registerQueue } = setup()
     const applied: string[] = []
     client.registerApplier('chat', (projection) => {
       applied.push(projection.hostId)
@@ -513,10 +511,10 @@ describe('DocumentClient one-way current-state drain', () => {
     const server = {
       getSnapshot: vi.fn(async () => projection),
       // SAFETY: the test narrows this runtime value to the shape it asserts on.
-      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
       provideHistory: provideHistory as unknown as RuntimeServer['provideHistory'],
       // SAFETY: the test narrows this runtime value to the shape it asserts on.
-      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
       ackInbound: ackInbound as unknown as RuntimeServer['ackInbound']
     }
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
@@ -526,14 +524,13 @@ describe('DocumentClient one-way current-state drain', () => {
     const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
     const messages: string[] = []
     room.onMessage((message) => messages.push(message.id))
-    // oxlint-disable-next-line eslint/no-unused-vars -- test harness boundary
-    client.registerApplier('chat', (p, context) => room.applyChat(p))
+    client.registerApplier('chat', (p) => room.applyChat(p))
     client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
 
     // Hold the real durable insert of the first owner's persistence stage.
     const insertGate = Promise.withResolvers<void>()
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
     const extendedInsert = messageStore.insert as unknown as (
       input: Parameters<typeof messageStore.insert>[0],
       options?: { signal?: AbortSignal }
@@ -592,7 +589,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const insertGate = Promise.withResolvers<void>()
     const seenSignals: Array<AbortSignal | undefined> = []
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
     const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
       // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,
@@ -660,7 +657,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const insertGate = Promise.withResolvers<void>()
     let holdsFirst = true
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately rebuilt test value
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
     const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
       // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,
