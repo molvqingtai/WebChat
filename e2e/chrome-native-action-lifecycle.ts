@@ -259,6 +259,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
       )
   }
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the diagnostic reports the runtime type of a value that failed the JSON boundary parse
   throw new Error(`Unsupported JSON value: ${typeof value}`)
 }
 
@@ -292,14 +293,17 @@ type ComparableManifestValue = JsonValue | typeof MISSING_MANIFEST_VALUE
 
 const asPackagedManifest = (value: unknown): PackagedManifest => {
   const parsed = assertJson(value)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- asPackagedManifest parses untrusted manifest input at its boundary
   if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
     throw new Error('Packaged manifest must be a JSON object')
   }
   if (parsed.manifest_version !== 3) throw new Error('Packaged manifest must use manifest_version 3')
   const background = parsed.background
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted background field at the same manifest boundary
   if (background === null || Array.isArray(background) || typeof background !== 'object') {
     throw new Error('Packaged manifest background must be a JSON object')
   }
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted service worker entry at the manifest boundary
   if (
     typeof background.service_worker !== 'string' ||
     !nonEmpty(background.service_worker) ||
