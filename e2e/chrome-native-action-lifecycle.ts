@@ -1571,6 +1571,47 @@ export const diagnoseChromeNativeActionLifecycle = async (
     observeStartupContinuity(startupContinuity, event)
   }
 
+  /**
+   * Decides the exact-worker binding at the discovery fence. 'retry' means the loop observes
+   * another turn; every other outcome already recorded its failure or the bound worker.
+   */
+  const resolveWorkerBindingDecision = (): 'retry' | 'failed' | BoundWorker => {
+    const exactWorkers = activeExactWorkers()
+    if (exactWorkers.length > 1) {
+      failWorker('More than one exact packaged Service Worker exists at the decision fence')
+      return 'failed'
+    }
+    if (exactWorkers.length !== 1 || unresolvedWorkers().length > 0) return 'retry'
+    const discoveryCompletedAtMs = timeline.now()
+    if (timeline.clockFailure || discoveryCompletedAtMs >= workerDiscoveryDeadlineMs) {
+      failWorker(
+        timeline.clockFailure ?? 'The final worker discovery decision reached or exceeded the worker discovery deadline'
+      )
+      return 'failed'
+    }
+    const record = exactWorkers[0]!
+    const classification = record.classification!
+    if (!record.sessionId) {
+      failWorker('The exact packaged Service Worker has no attached session')
+      return 'failed'
+    }
+    const bound: BoundWorker = {
+      targetId: record.target.targetId,
+      sessionId: record.sessionId,
+      targetUrl: record.target.url,
+      runtimeId: classification.runtimeId,
+      workerEntry: classification.workerEntry,
+      packagedWorkerEntry: packagedManifest.workerEntry,
+      packagedManifestDigest: packagedManifest.digest,
+      runtimeManifestDigest: classification.runtimeManifestDigest,
+      discoveryStartedAtMs: workerDiscoveryStartedAtMs,
+      discoveryCompletedAtMs,
+      discoveryDeadlineMs: workerDiscoveryDeadlineMs
+    }
+    timeline.record('worker-bound', bound, discoveryCompletedAtMs)
+    return bound
+  }
+
   while (!worker && !workerFailure && !startupContinuity.failure) {
     while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
       const pending = pendingEvents.shift()!
@@ -1583,40 +1624,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
       break
     }
 
-    const exactWorkers = activeExactWorkers()
-    if (exactWorkers.length > 1) {
-      failWorker('More than one exact packaged Service Worker exists at the decision fence')
-      break
-    }
-    if (exactWorkers.length === 1 && unresolvedWorkers().length === 0) {
-      const discoveryCompletedAtMs = timeline.now()
-      if (timeline.clockFailure || discoveryCompletedAtMs >= workerDiscoveryDeadlineMs) {
-        failWorker(
-          timeline.clockFailure ??
-            'The final worker discovery decision reached or exceeded the worker discovery deadline'
-        )
-        break
-      }
-      const record = exactWorkers[0]!
-      const classification = record.classification!
-      if (!record.sessionId) {
-        failWorker('The exact packaged Service Worker has no attached session')
-        break
-      }
-      worker = {
-        targetId: record.target.targetId,
-        sessionId: record.sessionId,
-        targetUrl: record.target.url,
-        runtimeId: classification.runtimeId,
-        workerEntry: classification.workerEntry,
-        packagedWorkerEntry: packagedManifest.workerEntry,
-        packagedManifestDigest: packagedManifest.digest,
-        runtimeManifestDigest: classification.runtimeManifestDigest,
-        discoveryStartedAtMs: workerDiscoveryStartedAtMs,
-        discoveryCompletedAtMs,
-        discoveryDeadlineMs: workerDiscoveryDeadlineMs
-      }
-      timeline.record('worker-bound', worker, discoveryCompletedAtMs)
+    const bindingDecision = resolveWorkerBindingDecision()
+    if (bindingDecision !== 'retry') {
+      if (bindingDecision !== 'failed') worker = bindingDecision
       break
     }
 
