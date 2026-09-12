@@ -68,6 +68,7 @@ describe('message image rendering', () => {
       .mockReturnValueOnce('blob:webchat-diagram')
     const view = render(<Markdown>{`![Cat](${catSource})\n\n[Diagram](${diagramSource})`}</Markdown>)
 
+    // SAFETY: the rendered markdown root is the first element child of the container.
     const container = view.container.firstElementChild as HTMLElement
     const triggers = screen.getAllByRole('button')
     const images = screen.getAllByRole('img')

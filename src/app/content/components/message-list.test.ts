@@ -55,6 +55,7 @@ const renderRows = (messages: readonly DisplayMessage[]) => {
       grouped.map((message, index) => row(message, index, grouped.length))
     )
   )
+  // SAFETY: the selector is scoped to the rendered message list, so every match is an element.
   return Array.from(view.container.querySelectorAll('[data-message-id]')).map((item) =>
     (item as HTMLElement).dataset.messageId!.replace(/^message-scroller-item:/, '')
   )
