@@ -334,9 +334,9 @@ const manifestValueDescriptor = (value: ComparableManifestValue): ManifestDiffVa
     return { type: 'missing', length: 0, digest: digest('missing') }
   }
   const canonical = JSON.stringify(value)
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- manifestDiffValue labels an untrusted manifest value by its runtime type at the manifest boundary
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- manifestValueDescriptor labels the runtime type of an already validated manifest value for the difference report
   const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
-  /* oxlint-disable anti-slop/no-runtime-typeof -- the descriptor length follows the same runtime type of the untrusted manifest value */
+  /* oxlint-disable anti-slop/no-runtime-typeof -- the descriptor length follows the same already validated manifest value's runtime type */
   const length =
     typeof value === 'string'
       ? value.length
