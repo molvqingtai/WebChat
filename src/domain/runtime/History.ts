@@ -883,7 +883,7 @@ const HistoryDomain = Remesh.domain({
       name: 'History.HandleHistoryMessagesPullCommand',
       impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPull }) => {
         const isActiveDomain = (candidate: string | null): candidate is string =>
-          candidate !== null && !get(sessionDomain.query.ReleasingDomainQuery(candidate))
+          candidate !== null && candidate.length > 0 && !get(sessionDomain.query.ReleasingDomainQuery(candidate))
         const domain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
         if (!isActiveDomain(domain)) return null
         // One synchronization per connection incarnation and direction: after the direction is
@@ -1061,39 +1061,56 @@ const HistoryDomain = Remesh.domain({
           return null
         }
         const expectedPage = current?.expectedRequestPage ?? 0
-        /** Idempotent replay, gap, out-of-order and post-done page classification. */
-        const resolveRequesterPageAdmission = () => {
+        /**
+         * Idempotent replay, gap, out-of-order and post-done page classification.
+         * `terminate: true` ends the command (with `output`, null meaning no output); identical
+         * replay therefore terminates with no output, while `terminate: false` admits the page.
+         */
+        const resolveRequesterPageAdmission = ():
+          | { terminate: true; output: RemeshCommandOutput | null }
+          | { terminate: false } => {
           // Identical replay of the last applied inventory page is idempotent; changed replay, gap,
           // out-of-order, empty non-final, or post-done input cancels the attempt.
           if (payload.message.page === expectedPage - 1 && current) {
-            if (current.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) return null
-            return CancelProviderAttemptCommand({
-              sourcePeerId: payload.sourcePeerId,
-              domain,
-              syncId: current.syncId,
-              syncToken: current.syncToken
-            })
+            if (current.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) {
+              return { terminate: true, output: null }
+            }
+            return {
+              terminate: true,
+              output: CancelProviderAttemptCommand({
+                sourcePeerId: payload.sourcePeerId,
+                domain,
+                syncId: current.syncId,
+                syncToken: current.syncToken
+              })
+            }
           }
           if (payload.message.page !== expectedPage) {
-            return CancelProviderAttemptCommand({
-              sourcePeerId: payload.sourcePeerId,
-              domain,
-              syncId: current?.syncId ?? payload.message.syncId,
-              syncToken: current?.syncToken ?? ''
-            })
+            return {
+              terminate: true,
+              output: CancelProviderAttemptCommand({
+                sourcePeerId: payload.sourcePeerId,
+                domain,
+                syncId: current?.syncId ?? payload.message.syncId,
+                syncToken: current?.syncToken ?? ''
+              })
+            }
           }
           if (current?.inventoryDone || (payload.message.messageIds.length === 0 && !payload.message.done)) {
-            return CancelProviderAttemptCommand({
-              sourcePeerId: payload.sourcePeerId,
-              domain,
-              syncId: current?.syncId ?? payload.message.syncId,
-              syncToken: current?.syncToken ?? ''
-            })
+            return {
+              terminate: true,
+              output: CancelProviderAttemptCommand({
+                sourcePeerId: payload.sourcePeerId,
+                domain,
+                syncId: current?.syncId ?? payload.message.syncId,
+                syncToken: current?.syncToken ?? ''
+              })
+            }
           }
-          return null
+          return { terminate: false }
         }
         const pageAdmission = resolveRequesterPageAdmission()
-        if (pageAdmission) return pageAdmission
+        if (pageAdmission.terminate) return pageAdmission.output
 
         const jobs = get(ProviderSupplyJobsState())
         // Upsert-aware admission: the existing provider job is found by the COMPLETE sync identity,

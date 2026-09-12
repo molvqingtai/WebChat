@@ -843,3 +843,64 @@ describe('HistoryDomain dead-page projection', () => {
     expect(pagePort.historyPageIds(DOMAIN)).toEqual(['tab:1'])
   })
 })
+
+describe('HistoryDomain inventory page replay', () => {
+  const inventoryPage = (syncId: string, page: number, messageIds: string[], done = false): HistoryMessagesPull => ({
+    type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+    syncId,
+    page,
+    messageIds,
+    done
+  })
+  const sendInventory = (
+    store: Fixture['store'],
+    history: Fixture['history'],
+    syncId: string,
+    page: number,
+    messageIds: string[],
+    done = false
+  ) =>
+    store.send(
+      history.command.HandleHistoryMessagesPullCommand({
+        roomId: ROOM_ID,
+        sourcePeerId: 'peer-a',
+        message: inventoryPage(syncId, page, messageIds, done)
+      })
+    )
+
+  it('treats an identical accepted page replay as inert', async () => {
+    const { store, history } = await setup()
+    sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
+    const attempts = structuredClone(store.query(history.query.ProviderAttemptsQuery()))
+    const jobs = structuredClone(store.query(history.query.ProviderSupplyJobsQuery()))
+    expect(attempts).toHaveLength(1)
+    expect(jobs.length).toBeGreaterThan(0)
+
+    // Replaying the exact page must terminate with no output: no counting, bytes, token or job change.
+    sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
+    expect(store.query(history.query.ProviderSupplyJobsQuery())).toEqual(jobs)
+  })
+
+  it('does not cancel an accepted attempt when an identical replay arrives at the queue boundary', async () => {
+    const { store, history } = await setup()
+    sendInventory(store, history, 'boundary-a', 0, ['m1'])
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
+    // Fill the shared pool to its 32-job cap with distinct requester identities.
+    for (let index = 0; index < 32; index += 1) {
+      store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: `fill-${index}` }))
+    }
+    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(32))
+    const attempts = structuredClone(store.query(history.query.ProviderAttemptsQuery()))
+    const jobs = structuredClone(store.query(history.query.ProviderSupplyJobsQuery()))
+    // The identical replay must terminate with no output and must not trip the capacity branch.
+    sendInventory(store, history, 'boundary-a', 0, ['m1'])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
+    expect(store.query(history.query.ProviderSupplyJobsQuery())).toEqual(jobs)
+  })
+})
