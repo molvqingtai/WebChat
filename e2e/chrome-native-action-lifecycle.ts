@@ -1629,6 +1629,16 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return true
   }
 
+  /** Records the failure for a discovery phase that ended without a bound exact worker. */
+  const recordUnresolvedDiscoveryFailure = (): void => {
+    if (worker || workerFailure || startupContinuity.failure) return
+    const unresolved = unresolvedWorkers()
+    workerFailure =
+      unresolved.length > 0
+        ? `Worker discovery ended with ${unresolved.length} unresolved candidate(s)`
+        : 'No exact packaged Service Worker appeared before the discovery deadline'
+  }
+
   /** Applies the overflow or clock failure before any further discovery work; false stops the loop. */
   const resolveDiscoveryOverflowFailure = (): boolean => {
     if (timeline.overflow || timeline.clockFailure) {
@@ -1670,13 +1680,8 @@ export const diagnoseChromeNativeActionLifecycle = async (
     if (!resolveWorkerDiscoveryWaitOutcome(delivered, beforeWait, afterWait)) break
   }
 
-  if (!worker && !workerFailure && !startupContinuity.failure) {
-    const unresolved = unresolvedWorkers()
-    workerFailure =
-      unresolved.length > 0
-        ? `Worker discovery ended with ${unresolved.length} unresolved candidate(s)`
-        : 'No exact packaged Service Worker appeared before the discovery deadline'
-  }
+  recordUnresolvedDiscoveryFailure()
+
   if (startupContinuity.failure) {
     return finish(
       context,
