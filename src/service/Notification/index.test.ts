@@ -42,7 +42,7 @@ const createMessage = (url: string | null = 'https://alpha.example/chat'): Notif
   receivedAt: 1,
   author: { id: 'remote-user', name: 'Remote', avatar: 'avatar.png' },
   reactions: { likes: [], hates: [] },
-  ...(url === null ? {} : { meta: { tab: { id: 7, url } } })
+  meta: url === null ? undefined : { tab: { id: 7, url } }
 })
 
 const currentTab = (url: string) => ({
@@ -60,7 +60,7 @@ const browserTab = (id: number, windowId: number, index: number, lastAccessed: n
   windowId,
   index,
   lastAccessed,
-  ...(url === undefined ? {} : { url })
+  url
 })
 
 const expectNoTabOrWindowMutation = () => {
@@ -76,6 +76,7 @@ const expectNoTabOrWindowMutation = () => {
 const clickNotification = async (message: NotificationMessage = createMessage(), id = 'notification-1') => {
   const notification = new Notification()
   await notification.push(message)
+  // SAFETY: the captured listener is the notification click handler registered by the service.
   const onClicked = browserFixture.notifications.onClicked.addListener.mock.calls[0]![0] as (
     id: string
   ) => Promise<void>
@@ -358,9 +359,11 @@ describe('Notification browser service', () => {
   it('removes closed notification context before a later click', async () => {
     const notification = new Notification()
     await notification.push(createMessage())
+    // SAFETY: the captured listener is the notification close handler registered by the service.
     const onClosed = browserFixture.notifications.onClosed.addListener.mock.calls[0]![0] as (
       id: string
     ) => Promise<void>
+    // SAFETY: the captured listener is the notification click handler registered by the service.
     const onClicked = browserFixture.notifications.onClicked.addListener.mock.calls[0]![0] as (
       id: string
     ) => Promise<void>
@@ -381,6 +384,7 @@ describe('Notification browser service', () => {
     })
     const notification = new Notification()
     await notification.push(createMessage())
+    // SAFETY: the captured listener is the notification button handler registered by the service.
     const onButtonClicked = browserFixture.notifications.onButtonClicked.addListener.mock.calls[0]![0] as (
       id: string
     ) => Promise<void>
@@ -395,6 +399,7 @@ describe('Notification browser service', () => {
     browserFixture.tabs.get.mockRejectedValue(new Error('No tab'))
     const notification = new Notification()
     await notification.push(createMessage())
+    // SAFETY: the captured listener is the notification button handler registered by the service.
     const onButtonClicked = browserFixture.notifications.onButtonClicked.addListener.mock.calls[0]![0] as (
       id: string
     ) => Promise<void>
