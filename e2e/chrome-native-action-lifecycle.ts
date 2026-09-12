@@ -310,6 +310,7 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
   }
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted service worker entry at the manifest boundary
   if (
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted service worker entry at the manifest boundary
     typeof background.service_worker !== 'string' ||
     !nonEmpty(background.service_worker) ||
     background.service_worker.length > MAX_VALUE_STRING_LENGTH
@@ -380,8 +381,10 @@ const manifestDiff = (packaged: JsonValue, runtime: JsonValue): ManifestDiffRepo
       const bothObjects =
         left !== null &&
         right !== null &&
+        /* oxlint-disable anti-slop/no-runtime-typeof -- compares two untrusted manifest values and must confirm both are objects before recursing */
         typeof left === 'object' &&
         typeof right === 'object' &&
+        /* oxlint-enable anti-slop/no-runtime-typeof */
         !Array.isArray(left) &&
         !Array.isArray(right)
       if (bothArrays) {
@@ -446,6 +449,7 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
   if (value === null) return null
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- normalizeEvidence dispatches on the runtime type of untrusted evidence values at their boundary
   if (typeof value === 'string') return boundedString(value)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- normalizeEvidence dispatches on the runtime type of untrusted evidence values
   if (typeof value === 'boolean') return value
   /* oxlint-disable anti-slop/no-runtime-typeof -- the evidence normalizer maps each remaining runtime type of an untrusted value onto its bounded evidence form */
   if (typeof value === 'number') return Number.isFinite(value) ? value : boundedString(String(value))
@@ -504,6 +508,7 @@ const TERMINAL_EVIDENCE_FAILURE = normalizeTerminal(
 )
 
 const deepFreeze = <Value>(value: Value): Value => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertBoundedEvidence checks the runtime shape of untrusted evidence before freezing it
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value).forEach(deepFreeze)
     Object.freeze(value)
@@ -866,6 +871,7 @@ const validateDomSample = (sample: ChromeLifecycleDomSample, binding: ChromeLife
   if (!['loading', 'interactive', 'complete'].includes(sample.readyState)) {
     return 'DOM sample has an invalid readiness state'
   }
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- validates the untrusted DOM sample fields before they are used as evidence
   if (typeof sample.bodyPresent !== 'boolean' || typeof sample.runtimeUnavailable !== 'boolean') {
     return 'DOM sample has invalid structural flags'
   }
@@ -1581,10 +1587,12 @@ export const diagnoseChromeNativeActionLifecycle = async (
     session: ChromeLifecycleSession,
     identity: ChromeLifecycleWorkerIdentity
   ): void => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- validates the untrusted worker identity before classification
     if (typeof identity.runtimeId !== 'string' || identity.runtimeId.length > MAX_VALUE_STRING_LENGTH) {
       throw new EvidenceLimitError('Evaluated chrome.runtime.id is not a bounded string')
     }
     const runtimeManifest = assertJson(identity.manifest)
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted runtime manifest at the worker boundary
     if (runtimeManifest === null || Array.isArray(runtimeManifest) || typeof runtimeManifest !== 'object') {
       throw new EvidenceLimitError('Evaluated worker manifest is not a JSON object')
     }
