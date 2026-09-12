@@ -2033,9 +2033,16 @@ const HistoryDomain = Remesh.domain({
             ]
             // One explicit serial selection loop: record the live supply id immediately before
             // each query, await the physical settlement, then continue; no nested stream control.
+            const supersededOrCleanedBeforeStart = (attempt: RequesterAttemptState | undefined) =>
+              !attempt || attempt.retired || attempt.inventoryPages.length > 0
+            const attemptStillLive = () =>
+              get(RequesterAttemptsState()).some((item) => matchesSync(item, key) && !item.retired)
+            const markPageFailedIfRemoved = (pageId: string) => {
+              if (!pagePort.historyPageIds(key.domain).includes(pageId)) failedPageIds.push(pageId)
+            }
             const selection = async function* (): AsyncGenerator<RemeshCommandOutput[]> {
               const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
-              if (!current || current.retired || current.inventoryPages.length > 0) {
+              if (supersededOrCleanedBeforeStart(current)) {
                 // Admitted but superseded or cleaned before starting: release the shared slot
                 // without running any physical work.
                 yield [ReleaseRequesterSupplyJobCommand(key)]
@@ -2045,7 +2052,8 @@ const HistoryDomain = Remesh.domain({
               const supplyRequest = {
                 domain: key.domain,
                 syncId: key.syncId,
-                cutoff: current.cutoff,
+                // The guard above returned for every superseded/cleaned attempt, so `current` is live here.
+                cutoff: current!.cutoff,
                 mode: 'inventory' as const
               }
               let supplied: Awaited<ReturnType<typeof pagePort.supplyHistory>> | null = null
@@ -2070,7 +2078,7 @@ const HistoryDomain = Remesh.domain({
                   }
                   // Re-check the complete live attempt after every settlement before selecting
                   // another page: a cleanup-invalidated or retired requester stops the old loop.
-                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key) && !item.retired)) {
+                  if (!attemptStillLive()) {
                     yield finishEarly()
                     return
                   }
@@ -2080,10 +2088,8 @@ const HistoryDomain = Remesh.domain({
                   // its registration. After every settlement, attempt liveness classifies the
                   // rejection: a cleanup-invalidated requester terminates the old loop, while a
                   // still-current attempt fails over to the next page after physical settlement.
-                  if (!pagePort.historyPageIds(key.domain).includes(pageId)) {
-                    failedPageIds.push(pageId)
-                  }
-                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key) && !item.retired)) {
+                  markPageFailedIfRemoved(pageId)
+                  if (!attemptStillLive()) {
                     yield finishEarly()
                     return
                   }
