@@ -1629,6 +1629,19 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return true
   }
 
+  /** Applies the overflow or clock failure before any further discovery work; false stops the loop. */
+  const resolveDiscoveryOverflowFailure = (): boolean => {
+    if (timeline.overflow || timeline.clockFailure) {
+      failWorker(timeline.overflow ?? timeline.clockFailure!)
+      return false
+    }
+    return true
+  }
+
+  /** Whether the discovery loop may still wait for evidence at the given clock reading. */
+  const mayWaitForDiscoveryEvidence = (beforeWait: number): boolean =>
+    !timeline.clockFailure && beforeWait < workerDiscoveryDeadlineMs
+
   while (!worker && !workerFailure && !startupContinuity.failure) {
     while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
       const pending = pendingEvents.shift()!
@@ -1636,10 +1649,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
     await probePendingWorkers(workerDiscoveryDeadlineMs)
     if (pendingEvents.length > 0) continue
-    if (timeline.overflow || timeline.clockFailure) {
-      failWorker(timeline.overflow ?? timeline.clockFailure!)
-      break
-    }
+    if (!resolveDiscoveryOverflowFailure()) break
 
     const bindingDecision = resolveWorkerBindingDecision()
     if (bindingDecision !== 'retry') {
@@ -1648,7 +1658,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     const beforeWait = timeline.now()
-    if (timeline.clockFailure || beforeWait >= workerDiscoveryDeadlineMs) break
+    if (!mayWaitForDiscoveryEvidence(beforeWait)) break
     let delivered: boolean
     try {
       delivered = await adapter.waitForEvent(workerDiscoveryDeadlineMs)
