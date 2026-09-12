@@ -1629,6 +1629,51 @@ export const diagnoseChromeNativeActionLifecycle = async (
     return true
   }
 
+  /** The terminal outcome and reason for the accepted-target lifecycle, in priority order. */
+  const resolveTerminalDecision = (
+    finalDom: ChromeLifecycleDomSample | { readonly unavailable: string } | undefined,
+    finalDomMissing: boolean
+  ): { readonly outcome: ChromeNativeActionLifecycleOutcome; readonly reason: string } => {
+    if (state.extensionFailure) return { outcome: 'extension-setup-failed', reason: state.extensionFailure }
+    if (state.targetFailure) return { outcome: 'target-lifecycle-failed', reason: state.targetFailure }
+    if (!state.pageSessionId || !state.mainFrameId || !state.navigationId) {
+      return {
+        outcome: 'target-lifecycle-failed',
+        reason: 'The sole accepted target did not complete its bound attach and navigation lifecycle'
+      }
+    }
+    if (timeline.overflow || timeline.clockFailure || finalDomMissing || state.unexpectedFailure) {
+      return {
+        outcome: 'unexpected-content-failure',
+        reason:
+          timeline.overflow ?? timeline.clockFailure ?? state.unexpectedFailure ?? 'Final DOM evidence is unavailable'
+      }
+    }
+    if (state.sharedRuntimeUnavailable) {
+      return { outcome: 'shared-runtime-unavailable', reason: state.sharedRuntimeUnavailable }
+    }
+    if (state.isolatedContextId === undefined) {
+      return {
+        outcome: 'content-context-absent',
+        reason: 'No exact page-bound extension isolated context appeared within the lifecycle budget'
+      }
+    }
+    if (finalDom && 'unavailable' in finalDom) {
+      return { outcome: 'unexpected-content-failure', reason: finalDom.unavailable }
+    }
+    if (finalDom && finalDom.extensionRootCount !== 1) {
+      return {
+        outcome: 'content-mount-absent',
+        reason: 'The exact isolated context appeared without an extension shadow root'
+      }
+    }
+    if (state.deadlineFailure) return { outcome: 'unexpected-content-failure', reason: state.deadlineFailure }
+    return {
+      outcome: 'mounted',
+      reason: 'The exact page-bound isolated context mounted one clean extension shadow root'
+    }
+  }
+
   /** Records the failure for a discovery phase that ended without a bound exact worker. */
   const recordUnresolvedDiscoveryFailure = (): void => {
     if (worker || workerFailure || startupContinuity.failure) return
@@ -2197,40 +2242,16 @@ export const diagnoseChromeNativeActionLifecycle = async (
     finalDom = unavailableDom('Final DOM evidence is unavailable')
   }
 
-  let outcome: ChromeNativeActionLifecycleOutcome
-  let reason: string
-  if (state.extensionFailure) {
-    outcome = 'extension-setup-failed'
-    reason = state.extensionFailure
-  } else if (state.targetFailure) {
-    outcome = 'target-lifecycle-failed'
-    reason = state.targetFailure
-  } else if (!state.pageSessionId || !state.mainFrameId || !state.navigationId) {
-    outcome = 'target-lifecycle-failed'
-    reason = 'The sole accepted target did not complete its bound attach and navigation lifecycle'
-  } else if (timeline.overflow || timeline.clockFailure || finalDomMissing || state.unexpectedFailure) {
-    outcome = 'unexpected-content-failure'
-    reason =
-      timeline.overflow ?? timeline.clockFailure ?? state.unexpectedFailure ?? 'Final DOM evidence is unavailable'
-  } else if (state.sharedRuntimeUnavailable) {
-    outcome = 'shared-runtime-unavailable'
-    reason = state.sharedRuntimeUnavailable
-  } else if (state.isolatedContextId === undefined) {
-    outcome = 'content-context-absent'
-    reason = 'No exact page-bound extension isolated context appeared within the lifecycle budget'
-  } else if ('unavailable' in finalDom) {
-    outcome = 'unexpected-content-failure'
-    reason = finalDom.unavailable
-  } else if (finalDom.extensionRootCount !== 1) {
-    outcome = 'content-mount-absent'
-    reason = 'The exact isolated context appeared without an extension shadow root'
-  } else if (state.deadlineFailure) {
-    outcome = 'unexpected-content-failure'
-    reason = state.deadlineFailure
-  } else {
-    outcome = 'mounted'
-    reason = 'The exact page-bound isolated context mounted one clean extension shadow root'
-  }
-
-  return finish(context, timeline, outcome, reason, finalDom, worker, state, lifecycleStartedAtMs, lifecycleDeadlineMs)
+  const decision = resolveTerminalDecision(finalDom, finalDomMissing)
+  return finish(
+    context,
+    timeline,
+    decision.outcome,
+    decision.reason,
+    finalDom,
+    worker,
+    state,
+    lifecycleStartedAtMs,
+    lifecycleDeadlineMs
+  )
 }
