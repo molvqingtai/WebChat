@@ -530,7 +530,7 @@ describe('DocumentClient one-way current-state drain', () => {
     // Hold the real durable insert of the first owner's persistence stage.
     const insertGate = Promise.withResolvers<void>()
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the real insert while exposing its optional AbortSignal parameter for the cancellation/deferred-write tests
     const extendedInsert = messageStore.insert as unknown as (
       input: Parameters<typeof messageStore.insert>[0],
       options?: { signal?: AbortSignal }
@@ -589,7 +589,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const insertGate = Promise.withResolvers<void>()
     const seenSignals: Array<AbortSignal | undefined> = []
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the real insert while exposing its optional AbortSignal parameter for the cancellation/deferred-write tests
     const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
       // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,
@@ -657,7 +657,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const insertGate = Promise.withResolvers<void>()
     let holdsFirst = true
     // SAFETY: the test narrows this runtime value to the shape it asserts on.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adopts the provided test double as the runtime server surface
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the real insert while exposing its optional AbortSignal parameter for the cancellation/deferred-write tests
     const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
       // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
       input: unknown,

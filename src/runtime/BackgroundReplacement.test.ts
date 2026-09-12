@@ -51,7 +51,7 @@ const createTransport = () => {
       () => {
         if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
       },
-      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- records the arbitrary rejection reason for later assertions
       (error: unknown) => {
         leaveFailures.set(roomId, error)
         if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
@@ -143,7 +143,7 @@ const createTransport = () => {
       peersByRoom.get(roomId)?.delete(peerId)
       leaveListeners.forEach((listener) => listener(roomId, peerId))
     },
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts the raw message and serializes it for the listener
     receive: (roomId: string, sourcePeerId: string, message: unknown) =>
       messageListeners.forEach((listener) => listener(roomId, sourcePeerId, JSON.stringify(message)))
   }
@@ -223,7 +223,7 @@ describe('Offscreen physical retirement through the Runtime replacement path', (
         () => {
           reconnectSettled = true
         },
-        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- records the arbitrary rejection reason for later assertions
         (error: unknown) => {
           reconnectSettled = true
           reconnectError = error
