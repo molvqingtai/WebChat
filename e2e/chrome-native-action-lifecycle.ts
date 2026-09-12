@@ -326,9 +326,9 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
 
 const manifestProjection = (manifest: JsonObject): JsonObject =>
   Object.fromEntries(
-    (['manifest_version', 'name', 'version', 'background'] as const)
-      .filter((key) => Object.hasOwn(manifest, key))
-      .map((key) => [key, manifest[key]!])
+    (['manifest_version', 'name', 'version', 'background'] as const).flatMap((key) =>
+      Object.hasOwn(manifest, key) ? [[key, manifest[key]!] as const] : []
+    )
   )
 
 const pointerSegment = (value: string): string => value.replaceAll('~', '~0').replaceAll('/', '~1')
@@ -686,14 +686,14 @@ const extensionOrigin = (extensionId: string): string => `chrome-extension://${e
 
 const workerUrlIdentity = (
   target: ChromeLifecycleTarget
-): { readonly host: string; readonly entry: string; readonly exactShape: boolean } | null => {
+): { readonly host: string; readonly entry: string; readonly exactWorkerUrl: boolean } | null => {
   try {
     const url = new URL(target.url)
     if (target.type !== 'service_worker' || url.protocol !== 'chrome-extension:') return null
     return {
       host: url.host,
       entry: url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname,
-      exactShape: nonEmpty(url.host) && url.search === '' && url.hash === ''
+      exactWorkerUrl: nonEmpty(url.host) && url.search === '' && url.hash === ''
     }
   } catch {
     return null
@@ -1597,7 +1597,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     const workerEntry = urlIdentity?.entry ?? ''
     const exact =
       urlIdentity !== null &&
-      urlIdentity.exactShape &&
+      urlIdentity.exactWorkerUrl &&
       nonEmpty(identity.runtimeId) &&
       urlIdentity.host === identity.runtimeId &&
       workerEntry === packagedManifest.workerEntry &&
