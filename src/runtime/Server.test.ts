@@ -974,6 +974,7 @@ describe('RuntimeServer lifecycle', () => {
   it('blocks release-start peer edges while keeping a committed opposite domain active', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let holdClearSave = false
     const clearSaveStarted = deferred<void>()
@@ -1393,6 +1394,7 @@ describe('RuntimeServer lifecycle', () => {
   it('host recovery reuses a persisted ended tombstone and still requires the lawful rebind', async () => {
     vi.useFakeTimers()
     try {
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
       const values: Record<string, unknown> = {}
       const presenceStore = createBrowserPresenceStore({
         get: async (key) => ({ [key]: values[key] }),
@@ -1947,6 +1949,7 @@ describe('RuntimeServer lifecycle', () => {
   it('does not use reset persistence while an AppButton performs the dual replacement', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let rejectClearSave = false
     const presenceStore = createBrowserPresenceStore({
@@ -1987,6 +1990,7 @@ describe('RuntimeServer lifecycle', () => {
   it('preserves World, other domains, page lease, and the logical presence across refresh', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
@@ -2296,6 +2300,7 @@ describe('RuntimeServer lifecycle', () => {
   it('waits for another Domain release once before recapturing the manual World replacement', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let holdOtherCleanup = false
     const otherCleanupStarted = deferred<void>()
@@ -2378,6 +2383,7 @@ describe('RuntimeServer lifecycle', () => {
   it('does not reuse an A+B retry seed after B finishes its explicit release', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let holdOtherCleanup = false
     const otherCleanupStarted = deferred<void>()
@@ -2436,6 +2442,7 @@ describe('RuntimeServer lifecycle', () => {
   it('clears a pre-release retry seed before a post-barrier failure permits a fresh document retry', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let holdOtherCleanup = false
     const otherCleanupStarted = deferred<void>()
@@ -2547,6 +2554,7 @@ describe('RuntimeServer lifecycle', () => {
   it('returns an in-flight other Domain release failure before the manual replacement cuts', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     const otherCleanupStarted = deferred<void>()
     const rejectOtherCleanup = deferred<void>()
@@ -2605,6 +2613,7 @@ describe('RuntimeServer lifecycle', () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const thirdDomain = 'https://third.example'
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     const otherCleanupStarted = deferred<void>()
     const releaseOtherCleanup = deferred<void>()
@@ -2765,6 +2774,7 @@ describe('RuntimeServer lifecycle', () => {
   it('replaces World through the dual path when legacy reset persistence would reject', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let rejectClearSave = false
     const presenceStore = createBrowserPresenceStore({
@@ -2817,6 +2827,7 @@ describe('RuntimeServer lifecycle', () => {
   })
 
   it('returns the committed local snapshot without awaiting active Presence persistence', async () => {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     const activeStarted = deferred<void>()
     const releaseActive = deferred<void>()
@@ -4450,6 +4461,7 @@ describe('RuntimeServer lifecycle', () => {
   it('attaches a late lease to a pending cleanup without a redundant write or false failure', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the fake presence store's backing object holds whatever item the typed set writes, and is read back only through the store's typed get
     const values: Record<string, unknown> = {}
     let cleanupWrites = 0
     const cleanupStarted = deferred<void>()
