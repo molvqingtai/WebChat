@@ -325,7 +325,7 @@ const WorldDomain = Remesh.domain({
           presence,
           stagedAttemptId,
           recoveryRequestId,
-          ...(recoveryRequestId && recovery?.manual ? { manual: true } : {})
+          manual: recoveryRequestId && recovery?.manual ? true : undefined
         }
         // Native room-wide broadcast: the provider delivers to the peers active at send time,
         // including the zero-active-peer no-op settlement.
