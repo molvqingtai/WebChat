@@ -154,7 +154,6 @@ const createSharedStatusStorage = (
   const values = new Map<StatusStorageKey, StorageValue>([
     [APP_OPEN_STORAGE_KEY, initial.open],
     [APP_POSITION_STORAGE_KEY, initial.position],
-    // oxlint-disable-next-line anti-slop/no-unknown-returns -- test helper mirrors the storage contract
     [APP_UNREAD_STORAGE_KEY, initial.unread],
     [APP_MESSAGE_AUTHOR_STORAGE_KEY, initial.messageAuthor ?? EMPTY_MESSAGE_AUTHOR]
   ])
@@ -183,7 +182,6 @@ const createSharedStatusStorage = (
       tabReads.set(key, { capture: () => captured.resolve(), wait: release.promise })
       heldReads.set(tabId, tabReads)
       return { captured: captured.promise, release: () => release.resolve() }
-      // oxlint-disable-next-line anti-slop/no-unknown-returns -- test helper mirrors the storage contract
     },
     // SAFETY: the test narrows this value to the shape it asserts on.
     value: <Value extends StorageValue>(key: StatusStorageKey) => values.get(key) as Value,
