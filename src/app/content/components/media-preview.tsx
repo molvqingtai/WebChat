@@ -143,6 +143,7 @@ export const getMediaPreviewRotatedSize = (
   return { width: natural.height, height: natural.width }
 }
 
+// SAFETY: (rotation + 90) % 360 always lands on one of the four MediaPreviewRotation steps.
 export const rotateMediaPreviewClockwise = (rotation: MediaPreviewRotation): MediaPreviewRotation =>
   ((rotation + 90) % 360) as MediaPreviewRotation
 
@@ -265,7 +266,10 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     [fit, state.transform]
   )
   const layoutRef = useRef(layout)
-  layoutRef.current = layout
+  // Keep the layout ref aligned with the latest render for the imperative handlers.
+  useEffect(() => {
+    layoutRef.current = layout
+  })
 
   const commitState = useCallback((next: PreviewState, synchronous = false) => {
     stateRef.current = next
@@ -383,6 +387,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         if (closing.activator.isConnected) closing.activator.focus({ preventScroll: true })
       }
 
+      // SAFETY: the transition API is feature-detected through this cast on the document object.
       const transitionDocument = document as TransitionDocument
       if (!transitionDocument.startViewTransition || reducedMotion()) {
         applyClose(false)
@@ -489,6 +494,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         }
       }
 
+      // SAFETY: the transition API is feature-detected through this cast on the document object.
       const transitionDocument = document as TransitionDocument
       if (!transitionDocument.startViewTransition || reducedMotion()) {
         applyOpen(false)
@@ -643,7 +649,8 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     const owner = overlayRef.current?.getRootNode()
     if (!owner) return
     const handleKeyDown = (nativeEvent: Event) => {
-      const event = nativeEvent as KeyboardEvent
+      // SAFETY: the keydown listener is attached to the preview surface, so the native event is a KeyboardEvent.
+    const event = nativeEvent as KeyboardEvent
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -677,7 +684,8 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     if (!previewOpen) return
     const surfaces = [backdropRef.current, overlayRef.current].filter((surface) => surface !== null)
     const handleWheel = (nativeEvent: Event) => {
-      const event = nativeEvent as WheelEvent
+      // SAFETY: the wheel listener is attached to the preview surface, so the native event is a WheelEvent.
+    const event = nativeEvent as WheelEvent
       event.preventDefault()
       event.stopPropagation()
       const center = layoutRef.current.center

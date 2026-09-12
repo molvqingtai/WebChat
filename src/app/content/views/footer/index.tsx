@@ -115,7 +115,7 @@ const Footer: FC = () => {
   // Replace the hash URL in ![Image](hash:${hash}) with base64 and update the atUserRecord.
   const transformMessage = async (message: string) => {
     const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
-    const transformed = matchList.reduce(
+    const transformed = matchList.reduce<{ text: string; updates: { text: string; startIndex: number; endIndex: number }[] }>(
       (acc, match) => {
         const base64 = imageRecord.current.get(match[1])
         if (!base64) return acc
@@ -128,7 +128,7 @@ const Footer: FC = () => {
         acc.updates.push({ text: nextText, startIndex, endIndex })
         return acc
       },
-      { text: message, updates: [] as { text: string; startIndex: number; endIndex: number }[] }
+      { text: message, updates: [] }
     )
     transformed.updates.forEach(({ text, startIndex, endIndex }) => updateAtUserAtRecord(text, startIndex, endIndex, 0))
     return transformed.text
@@ -143,11 +143,10 @@ const Footer: FC = () => {
       return
     }
     const transformedMessage = await transformMessage(message)
-    const mentions = [...atUserRecord.current]
-      .map(([userId, ranges]) => {
-        const user = userList.find((user) => user.id === userId)
-        return (user ? { ...user, ranges: [...ranges] } : undefined)!
-      })
+    const mentions = [...atUserRecord.current].flatMap(([userId, ranges]) => {
+      const user = userList.find((user) => user.id === userId)
+      return user ? [{ ...user, ranges: [...ranges] }] : []
+    })
       .filter(Boolean)
 
     const newMessage = { body: transformedMessage, mentions }
@@ -218,6 +217,7 @@ const Footer: FC = () => {
   }
 
   const handleInput: InputEventHandler<HTMLTextAreaElement> = (e) => {
+    // SAFETY: the handler is bound to the message textarea element.
     const target = e.target as HTMLTextAreaElement
     const currentMessage = target.value
 
@@ -235,6 +235,7 @@ const Footer: FC = () => {
       }
     }
 
+    // SAFETY: the input handler receives a React input event, whose native event is an InputEvent.
     const event = e.nativeEvent as InputEvent
 
     if (event.data === '@' && autoCompleteList.length) {
@@ -304,6 +305,7 @@ const Footer: FC = () => {
         inputRef.current?.focus()
       })
     } catch (error) {
+      // SAFETY: the send failure path only propagates thrown errors as Error.
       send(toastDomain.command.ErrorCommand((error as Error).message))
     } finally {
       setInputLoading(false)
