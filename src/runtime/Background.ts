@@ -13,7 +13,12 @@ import { notifyServerTabs, readServerSnapshot, removeServerTab } from '@/runtime
 import { TRANSPORT_NAMESPACE_PREFIX, type TransportService } from '@/runtime/TransportHost'
 
 const OFFSCREEN_URL = '/offscreen.html'
-const messageApi = browser.runtime as unknown as MessageApi
+const messageApi = (() => {
+  // SAFETY: browser.runtime is the extension runtime object; widen once before re-narrowing.
+  const raw = browser.runtime as unknown
+  // SAFETY: raw is the browser.runtime object narrowed to the comctx MessageApi contract.
+  return raw as MessageApi
+})()
 const presenceStore = createBrowserPresenceStore(browser.storage.session)
 
 interface OffscreenApi {
@@ -28,6 +33,7 @@ interface OffscreenApi {
 const backgroundHost = new HostOwner()
 
 const ensureOffscreenDocument = async (): Promise<{ phase: 'ready' | 'unavailable'; created: boolean }> => {
+  // SAFETY: the Chromium offscreen API is only present on chrome/edge, hence the optional probe.
   const offscreen = (globalThis as { chrome?: { offscreen?: OffscreenApi } }).chrome?.offscreen
   if (!offscreen) return { phase: 'unavailable', created: false }
   if (await offscreen.hasDocument?.()) return { phase: 'ready', created: false }
@@ -39,6 +45,7 @@ const ensureOffscreenDocument = async (): Promise<{ phase: 'ready' | 'unavailabl
   return { phase: 'ready', created: true }
 }
 
+// SAFETY: the proxy factory placeholder is replaced by the injected TransportService implementation.
 const [, injectTransport] = defineProxy(() => ({}) as TransportService, {
   namespace: `${TRANSPORT_NAMESPACE_PREFIX}:${browser.runtime.id}`
 })
@@ -86,6 +93,7 @@ export const watchTabs = () => {
     if (server) void removeServerTab(server, tabId).catch((error) => console.error(error))
   })
   browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the tab update payload
     if (typeof changeInfo.url !== 'string') return
     const server = backgroundHost.server
     if (server) void removeServerTab(server, tabId, changeInfo.url).catch((error) => console.error(error))

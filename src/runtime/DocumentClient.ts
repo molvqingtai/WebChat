@@ -27,6 +27,12 @@ export interface ProjectionApplyContext {
 
 export type ProjectionApplier = (projection: RuntimeSnapshot, context: ProjectionApplyContext) => void | Promise<void>
 
+interface ProjectionAppliers {
+  chat?: ProjectionApplier
+  persistence?: ProjectionApplier
+  world?: ProjectionApplier
+}
+
 /**
  * The one document-local registration/refresh drain owner (V17):
  * - The `runtime:state-changed` listener (installed by the composition module before any read)
@@ -70,13 +76,13 @@ export class DocumentClient {
   private detached = false
   private currentSnapshot: RuntimeSnapshot | null = null
   private hostPhase: HostPhase = 'none'
-  private readonly appliers: { chat?: ProjectionApplier; persistence?: ProjectionApplier; world?: ProjectionApplier } =
-    {}
+  private readonly appliers: ProjectionAppliers = {}
   private readonly readyCallbacks = new Set<() => void>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
   private readonly failureCallbacks = new Set<(error: Error) => void>()
   private readonly initWaiters = new Set<{
     resolve: (snapshot: RuntimeSnapshot) => void
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the failure path rethrows an arbitrary error
     reject: (error: unknown) => void
   }>()
 
@@ -209,6 +215,7 @@ export class DocumentClient {
     }
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the failure path rethrows an arbitrary error
   private publishFailure(error: unknown) {
     const failure = error instanceof Error ? error : new Error(String(error))
     this.setHostPhase('unavailable')

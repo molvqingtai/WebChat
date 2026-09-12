@@ -73,7 +73,8 @@ export interface RoomTransport {
    * failures reject the operation.
    */
   send: (roomId: string, payload: string, to?: string | string[]) => Promise<void>
-  onMessage: (callback: (roomId: string, sourcePeerId: string, rawPayload: string) => void) => () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- implementations may return void, a terminal, or a promise
+  onMessage: (callback: (roomId: string, sourcePeerId: string, rawPayload: string) => unknown) => () => void
   onPeerJoin: (callback: (roomId: string, peerId: string) => void) => () => void
   onPeerLeave: (callback: (roomId: string, peerId: string) => void) => () => void
   onRoomClose: (callback: (roomId: string) => void) => () => void
