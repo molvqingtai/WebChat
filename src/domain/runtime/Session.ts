@@ -245,6 +245,28 @@ const backgroundSendDomain = (requestId: string): string | undefined => {
 const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) =>
   record?.local ? { local: record.local } : {}
 
+/**
+ * Local identity authorization: a joined site must belong to the domain. Protocol shape is not
+ * validated here (local production trusts its typed inputs). A manual-refresh reset removed the
+ * committed aggregate, so the replacement reuses the captured local logical identity carried by
+ * the attempt instead of the retired runtime.
+ */
+const resolvePreparationIdentity = (
+  payload: { mode: SessionPreparationMode; domain: string; user?: ChatUser; site?: ChatSite },
+  current: SessionDomainState | undefined
+): { user: ChatUser; site: ChatSite } | null => {
+  if (payload.mode === 'join') {
+    const site = payload.site!
+    const user = payload.user!
+    if (site.origin !== payload.domain) return null
+    return { user, site }
+  }
+  const user = current?.user ?? payload.user!
+  const site = current?.site ?? payload.site!
+  if (!current && site.origin !== payload.domain) return null
+  return { user, site }
+}
+
 const SessionDomain = Remesh.domain({
   name: 'SessionDomain',
   impl: (domain) => {
@@ -593,85 +615,81 @@ const SessionDomain = Remesh.domain({
           site?: ChatSite
         }
       ) => {
-        const committed = get(DomainsState()).find((item) => item.domain === payload.domain)
-        const priorPrepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === payload.domain)
-        const current = committed ?? priorPrepared?.runtime
-        // A manual-refresh reset removed the committed aggregate but retained the active local
-        // logical seed; that retained seed authorizes the reconnect preparation.
-        const retainedLocalSeed = get(PresenceDomainsState()).some(
-          (item) => item.domain === payload.domain && item.local
-        )
+        const resolvePreparationContext = () => {
+          const committed = get(DomainsState()).find((item) => item.domain === payload.domain)
+          const priorPrepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === payload.domain)
+          // A manual-refresh reset removed the committed aggregate but retained the active local
+          // logical seed; that retained seed authorizes the reconnect preparation.
+          const retainedLocalSeed = get(PresenceDomainsState()).some(
+            (item) => item.domain === payload.domain && item.local
+          )
+          return { committed, priorPrepared, current: committed ?? priorPrepared?.runtime, retainedLocalSeed }
+        }
+        const { committed, priorPrepared, current, retainedLocalSeed } = resolvePreparationContext()
         if (payload.mode !== 'join' && !current && !retainedLocalSeed) {
           return PreparationFailedEvent({ attemptId: payload.attemptId, error: new Error('Runtime domain missing') })
         }
 
-        let user: ChatUser
-        let site: ChatSite
-        if (payload.mode === 'join') {
-          site = payload.site!
-          user = payload.user!
-          // Local identity authorization: the joined site must belong to the domain. Protocol
-          // shape is not validated here (local production trusts its typed inputs).
-          if (site.origin !== payload.domain) {
-            return PreparationFailedEvent({
-              attemptId: payload.attemptId,
-              error: new Error('Invalid local identity or site metadata')
-            })
-          }
-        } else {
-          // A manual-refresh reset removed the committed aggregate: the replacement reuses the
-          // captured local logical identity carried by the attempt instead of the retired runtime.
-          user = current?.user ?? payload.user!
-          site = current?.site ?? payload.site!
-          if (!current && site.origin !== payload.domain) {
-            return PreparationFailedEvent({
-              attemptId: payload.attemptId,
-              error: new Error('Invalid local identity or site metadata')
-            })
-          }
+        const resolvedIdentity = resolvePreparationIdentity(payload, current)
+        if (resolvedIdentity === null) {
+          return PreparationFailedEvent({
+            attemptId: payload.attemptId,
+            error: new Error('Invalid local identity or site metadata')
+          })
         }
+        const { user, site } = resolvedIdentity
 
-        const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
-        const local = current
-          ? {
-              presenceId: current.presenceId,
-              userId: current.user.id,
-              joinedAt: current.joinedAt,
-              status: 'active' as const
+        const resolveLocalPresence = () => {
+          const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
+          if (current) {
+            return {
+              local: {
+                presenceId: current.presenceId,
+                userId: current.user.id,
+                joinedAt: current.joinedAt,
+                status: 'active' as const
+              },
+              observers: presence?.observers ?? []
             }
-          : (presence?.local ?? undefined)
+          }
+          return { local: presence?.local ?? undefined, observers: presence?.observers ?? [] }
+        }
+        const { local, observers } = resolveLocalPresence()
         if (!local || local.userId !== user.id) {
           return PreparationFailedEvent({
             attemptId: payload.attemptId,
             error: new Error('Runtime logical presence is unavailable')
           })
         }
-        const runtime: SessionDomainState = {
-          domain: payload.domain,
-          roomId: current?.roomId ?? getChatRoomId(payload.domain),
-          sessionId: payload.mode === 'join' && current ? current.sessionId : identity.nextId(),
-          presenceId: local.presenceId,
-          user,
-          site,
-          joinedAt: local.joinedAt,
-          fresh: !current && local.status === 'pending',
-          sessions: payload.mode === 'join' ? (committed?.sessions ?? []) : []
+        const buildPrepared = () => {
+          const runtime: SessionDomainState = {
+            domain: payload.domain,
+            roomId: current?.roomId ?? getChatRoomId(payload.domain),
+            sessionId: payload.mode === 'join' && current ? current.sessionId : identity.nextId(),
+            presenceId: local.presenceId,
+            user,
+            site,
+            joinedAt: local.joinedAt,
+            fresh: !current && local.status === 'pending',
+            sessions: payload.mode === 'join' ? (committed?.sessions ?? []) : []
+          }
+          const prepared: PreparedSession = {
+            attemptId: payload.attemptId,
+            mode: payload.mode,
+            runtime,
+            observers: priorPrepared?.observers ?? observers,
+            isNewPresence: !current && local.status === 'pending',
+            reboundBindings: priorPrepared?.reboundBindings ?? [],
+            displacedBindings: priorPrepared?.displacedBindings ?? []
+          }
+          return [
+            PreparedSessionsState().new(
+              replaceBy(get(PreparedSessionsState()), (item) => item.runtime.domain === payload.domain, prepared)
+            ),
+            PreparedEvent({ attemptId: payload.attemptId, domain: payload.domain, roomId: runtime.roomId })
+          ]
         }
-        const prepared: PreparedSession = {
-          attemptId: payload.attemptId,
-          mode: payload.mode,
-          runtime,
-          observers: priorPrepared?.observers ?? presence?.observers ?? [],
-          isNewPresence: !current && local.status === 'pending',
-          reboundBindings: priorPrepared?.reboundBindings ?? [],
-          displacedBindings: priorPrepared?.displacedBindings ?? []
-        }
-        return [
-          PreparedSessionsState().new(
-            replaceBy(get(PreparedSessionsState()), (item) => item.runtime.domain === payload.domain, prepared)
-          ),
-          PreparedEvent({ attemptId: payload.attemptId, domain: payload.domain, roomId: runtime.roomId })
-        ]
+        return buildPrepared()
       }
     })
 

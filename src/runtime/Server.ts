@@ -853,7 +853,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     notifyTabs()
   }
 
-  /** A retry seed is local-only and bound to the exact caller/document/host of this attempt. */
+  /**
+   * A retry seed is local-only and bound to the exact caller/document/host of this attempt; it is
+   * rebuilt from the captured values, never from staged or remote state.
+   */
   const recordReplacementRetrySeed = (
     attempt: DualReplacementAttempt,
     gate: ReplacementGate | undefined,
