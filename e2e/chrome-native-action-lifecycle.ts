@@ -1106,6 +1106,7 @@ const finish = (
 
 const unavailableDom = (reason: string): { readonly unavailable: string } => ({ unavailable: reason })
 
+// oxlint-disable-next-line eslint/complexity -- keeps the discovery and bound observation loops' await order and phase clock reads inline; the async phase extraction was shown by the depth=3 case to change the createTarget deadline
 export const diagnoseChromeNativeActionLifecycle = async (
   adapter: ChromeNativeActionLifecycleAdapter,
   context: ChromeLifecycleContext
