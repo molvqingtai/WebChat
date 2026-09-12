@@ -29,6 +29,7 @@ import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '
 export interface RuntimeTabsApi {
   get: (tabId: number) => Promise<RuntimeTab>
   query: (queryInfo: { url?: string | string[] }) => Promise<RuntimeTab[]>
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- tabs message API contract
   sendMessage: (tabId: number, message: unknown) => Promise<unknown>
 }
 
@@ -215,7 +216,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       worldDomain.command.RecoverTransportStateCommand({
         members: recoveredWorld.members.map(({ sourcePeerId }) => sourcePeerId),
         presences: recoveredWorld.presences.map(({ sourcePeerId, presence }) => ({ sourcePeerId, presence })),
-        ...(recoveredWorld.local ? { registrations: recoveredWorld.local.registrations } : {})
+        registrations: recoveredWorld.local ? recoveredWorld.local.registrations : undefined
       })
     )
   }
@@ -297,6 +298,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         try {
           const tabs = await admission.tabs.query({})
           for (const tab of tabs) {
+            // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the tabs query result
             if (typeof tab.id !== 'number' || typeof tab.url !== 'string') continue
             const url = canonicalNavigationUrl(tab.url)
             if (!url || !isEligibleContentUrl(url)) continue
@@ -393,14 +395,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       .rememberWorldRecovery({
         members: members.map(({ sourcePeerId, generation }) => ({ sourcePeerId, sourceGeneration: generation })),
         presences,
-        ...(store.query(worldDomain.query.RegistrationsQuery()).length > 0
-          ? {
-              local: {
+        local:
+          store.query(worldDomain.query.RegistrationsQuery()).length > 0
+            ? {
                 peerId: config.transport.peerIdOf(getWorldRoomId()),
                 registrations: store.query(worldDomain.query.RegistrationsQuery())
               }
-            }
-          : {})
+            : undefined
       })
       .catch(() => {})
   }
@@ -474,6 +475,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
     const caller = payload.caller?.tab
     const tabId = caller?.id
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller tab id
     if (typeof tabId !== 'number' || !Number.isSafeInteger(tabId) || tabId < 0) {
       if (!config.admission) return null
       throw new Error('Current Page browser caller is required')
@@ -481,11 +483,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (!config.admission) return tabId
     await config.admission.ensureTransport()
     const current = await config.admission.tabs.get(tabId)
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab record
     const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
     if (
       current.id !== tabId ||
       !url ||
       !isEligibleContentUrl(url) ||
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller tab record
       (typeof caller?.url === 'string' && !isSameNavigation(url, caller.url)) ||
       (domain !== undefined && new URL(url).origin !== domain)
     ) {
@@ -501,6 +505,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       domains: base.domains.map((domain) => ({
         ...domain,
         historyFeedback:
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional caller tab id
           typeof callerTabId === 'number' && pagePort.isHistoryProvider(callerTabId, domain.domain)
             ? domain.historyFeedback
             : []
@@ -560,6 +565,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   let currentWorldReplacement: DualReplacementAttempt | undefined
   let replacementSequence = 0
   const takeReplacementFailure = (stage: ReplacementFailureStage) => {
+    // SAFETY: the failure-test transport is attached by the test composition for this exact probe.
     const failure = (config.transport as ReplacementFailureTestTransport).takeReplacementFailure?.(stage)
     if (failure) throw failure
   }
@@ -591,6 +597,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }))
   const callerDocumentUrl = (payload: RuntimePageCall, tabId: number | null) => {
     const callerUrl = payload.caller?.tab?.url
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional caller tab url
     if (typeof callerUrl === 'string') return canonicalNavigationUrl(callerUrl) ?? callerUrl
     return tabId === null ? '' : (tabDomains.get(tabId)?.url ?? '')
   }
@@ -1546,6 +1553,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
       replacementReservations.set(payload.domain, reservation)
       let resolveTask!: (value: undefined | null) => void
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
       let rejectTask!: (reason?: unknown) => void
       const task = new Promise<undefined | null>((resolve, reject) => {
         resolveTask = resolve
