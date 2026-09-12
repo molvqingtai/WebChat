@@ -5,6 +5,7 @@ import { createTransportService, type TransportRoomState, type TransportService 
 
 const deferred = <Value>() => {
   let resolve!: (value: Value) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<Value>((onResolve, onReject) => {
     resolve = onResolve
@@ -272,10 +273,12 @@ describe('RemoteRoomTransport', () => {
     const serializable = transport.mintRecoveryBindingCapability('room-a')!
     expect(Object.getOwnPropertyNames(serializable)).toEqual([])
     expect(Object.getOwnPropertySymbols(serializable)).toEqual([])
+    // SAFETY: the test round-trips the capability to prove it survives plain-data copying.
     const copied = JSON.parse(JSON.stringify(serializable)) as RecoveryBindingCapability
     expect(transport.consumeRecoveryBindingCapabilities([{ roomId: 'room-a', capability: copied }])).toBe(false)
     expect(transport.consumeRecoveryBindingCapabilities([{ roomId: 'room-a', capability: serializable }])).toBe(true)
 
+    // SAFETY: the forged token is an opaque null-prototype object used as a capability key.
     const forged = Object.freeze(Object.create(null)) as RecoveryBindingCapability
     expect(transport.consumeRecoveryBindingCapabilities([{ roomId: 'room-a', capability: forged }])).toBe(false)
 

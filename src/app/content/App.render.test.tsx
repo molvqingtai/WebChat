@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// SAFETY: the hoisted fixture is populated by each render scenario before use.
 const fixture = vi.hoisted(() => ({
   ready: false,
   danmakuEnabled: false,
@@ -10,6 +11,7 @@ const fixture = vi.hoisted(() => ({
 }))
 
 vi.mock('remesh-react', () => ({
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- module mock forwards the domain identity it is given
   useRemeshDomain: (domain: unknown) => domain,
   useRemeshSend: () => fixture.send,
   useRemeshQuery: (query: string) => {
