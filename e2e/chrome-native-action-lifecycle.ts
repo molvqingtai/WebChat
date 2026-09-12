@@ -1674,6 +1674,16 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Whether the bound lifecycle may still wait for evidence, recording a deadline failure first. */
+  const mayWaitForLifecycleEvidence = (beforeWait: number): boolean => {
+    if (timeline.clockFailure) return false
+    if (beforeWait < lifecycleDeadlineMs) return true
+    if (unresolvedWorkers().length > 0) {
+      state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
+    }
+    return false
+  }
+
   /** Records the failure for a discovery phase that ended without a bound exact worker. */
   const recordUnresolvedDiscoveryFailure = (): void => {
     if (worker || workerFailure || startupContinuity.failure) return
@@ -2162,13 +2172,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     const beforeWait = timeline.now()
-    if (timeline.clockFailure) break
-    if (beforeWait >= lifecycleDeadlineMs) {
-      if (unresolvedWorkers().length > 0) {
-        state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
-      }
-      break
-    }
+    if (!mayWaitForLifecycleEvidence(beforeWait)) break
 
     let delivered: boolean
     try {
