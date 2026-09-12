@@ -109,6 +109,7 @@ const assertUniqueTabs = (tabs: readonly FirefoxActionTab[]): void => {
   const identities = new Set<string>()
 
   tabs.forEach((tab) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the harness tab record
     if (typeof tab.identity !== 'string' || tab.identity.trim() === '' || identities.has(tab.identity)) {
       fail('invalid-binding', 'Firefox action tabs require unique physical identities')
     }
@@ -192,6 +193,7 @@ const consumeCurrentHandle = async <Result>(
   const beforeInventory = physicalInventory(beforeTabs)
   const current = await adapter.getCurrentHandle(identity).catch(() => fail(code, message))
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the adapter handle record
   if (!current || current.identity !== identity || typeof current.handle !== 'string' || current.handle.trim() === '') {
     fail(code, message)
   }

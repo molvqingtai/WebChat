@@ -17,11 +17,13 @@ import {
 const NOW = 1_800_000_000_000
 const USER = { id: 'user-1', name: 'User', avatar: '' }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- raw inbound frame, validated by the schema below
 const parseChat = (value: unknown): ChatRoomMessage | null => {
   const parsed = v.safeParse(ChatRoomMessageSchema, value)
   return parsed.success ? parsed.output : null
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- raw inbound frame, validated by the schema below
 const parseWorld = (value: unknown): WorldRoomMessage | null => {
   const parsed = v.safeParse(WorldRoomMessageSchema, value)
   return parsed.success ? parsed.output : null

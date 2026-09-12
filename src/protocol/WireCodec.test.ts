@@ -3,6 +3,7 @@ import { NativeWireCodec, WireCodecError } from '@/protocol'
 
 const compressWithoutDecodedLimit = async (text: string): Promise<string> => {
   const bytes = new TextEncoder().encode(text)
+  // SAFETY: the slice of a Uint8Array's backing store is always an ArrayBuffer.
   const stream = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer])
     .stream()
     .pipeThrough(new CompressionStream('deflate'))
@@ -78,6 +79,7 @@ describe('NativeWireCodec public reference implementation', () => {
     let frame = ''
     let value: unknown
     for (let length = 0; length < 32 && !frame.endsWith('='); length += 1) {
+      // oxlint-disable-next-line anti-slop/no-known-value-widening -- the probe feeds progressively larger codec inputs
       value = { value: 'x'.repeat(length) }
       frame = await NativeWireCodec.encode(value)
     }

@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import '@/assets/styles/tailwind.css'
 import Header from '.'
 
+// SAFETY: the hoisted query queue is filled by each test before render.
 const queries = vi.hoisted(() => [] as unknown[][])
 
 vi.mock('remesh-react', () => ({
