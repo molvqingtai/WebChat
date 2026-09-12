@@ -6,6 +6,7 @@ import { isSameNavigation } from '@/service/adapter/runtime/Navigation'
 export interface TabsApi {
   query: (query: { url?: string }) => Promise<MessageTab[]>
   get: (tabId: number) => Promise<MessageTab>
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- tabs message API contract
   sendMessage: (tabId: number, message: unknown) => unknown
 }
 
@@ -23,8 +24,10 @@ export class TabsProviderAdapter implements Adapter<MessageMeta> {
   sendMessage: SendMessage<MessageMeta> = async (message) => {
     const target = message.meta.tab
     const tabDelivery =
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional tab target
       Number.isSafeInteger(target?.id) && target!.id! >= 0 && typeof target?.url === 'string'
         ? this.tabs.get(target!.id!).then((tab) => {
+            // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab record
             if (typeof tab.url === 'string' && isSameNavigation(tab.url, target!.url!)) {
               return this.tabs.sendMessage(target!.id!, message)
             }

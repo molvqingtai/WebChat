@@ -20,29 +20,29 @@ export const createProviderOnMessage = (
   listeners: MessageListenerRegistry
 ): OnMessage<MessageMeta> => {
   return (callback) => {
-    const handler = (rawMessage: unknown, sender: MessageSender) => {
+    const handler = (...args: unknown[]) => {
+      const rawMessage = args[0]
       if (!isComctxMessage<MessageMeta>(rawMessage)) return
+      // SAFETY: comctx delivers the browser MessageSender as the second listener argument.
+      const sender = args[1] as MessageSender
       const message = rawMessage
       const tab = sender.tab ? { id: sender.tab.id, url: sender.tab.url } : undefined
       // Browser-delivery facts replace every Page payload claim at the provider trust boundary.
       // Runtime methods receive this value as data because comctx transports only method arguments.
-      callback({
-        ...message,
-        ...(message.type === 'apply' && message.args?.length
-          ? {
-              args: [
-                typeof message.args[0] === 'object' && message.args[0] !== null
-                  ? { ...message.args[0], caller: sender.tab ? { tab } : undefined }
-                  : message.args[0],
-                ...message.args.slice(1)
-              ]
-            }
-          : {}),
-        meta: sender.tab ? { tab } : message.meta
-      })
+      const resolvedArgs =
+        message.type === 'apply' && message.args?.length
+          ? [
+              // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the first method argument
+              typeof message.args[0] === 'object' && message.args[0] !== null
+                ? { ...message.args[0], caller: sender.tab ? { tab } : undefined }
+                : message.args[0],
+              ...message.args.slice(1)
+            ]
+          : message.args
+      callback({ ...message, args: resolvedArgs, meta: sender.tab ? { tab } : message.meta })
     }
-    runtime.onMessage.addListener(handler as (...args: unknown[]) => unknown)
-    return listeners.add(() => runtime.onMessage.removeListener(handler as (...args: unknown[]) => unknown))
+    runtime.onMessage.addListener(handler)
+    return listeners.add(() => runtime.onMessage.removeListener(handler))
   }
 }
 
