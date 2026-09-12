@@ -463,6 +463,27 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
+  /** The delivered tab must still match the caller and remain an eligible navigation target. */
+  const assertCallerTabEligible = (
+    current: RuntimeTab,
+    tabId: number,
+    callerUrl: string | undefined,
+    domain: string | undefined
+  ) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab record
+    const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
+    if (
+      current.id !== tabId ||
+      !url ||
+      !isEligibleContentUrl(url) ||
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller tab record
+      (typeof callerUrl === 'string' && !isSameNavigation(url, callerUrl)) ||
+      (domain !== undefined && new URL(url).origin !== domain)
+    ) {
+      throw new Error('Browser tab navigation is no longer eligible')
+    }
+  }
+
   const requireCallerTab = async (
     payload: RuntimePageCall,
     domain?: string,
@@ -483,18 +504,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (!config.admission) return tabId
     await config.admission.ensureTransport()
     const current = await config.admission.tabs.get(tabId)
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab record
-    const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
-    if (
-      current.id !== tabId ||
-      !url ||
-      !isEligibleContentUrl(url) ||
-      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller tab record
-      (typeof caller?.url === 'string' && !isSameNavigation(url, caller.url)) ||
-      (domain !== undefined && new URL(url).origin !== domain)
-    ) {
-      throw new Error('Browser tab navigation is no longer eligible')
-    }
+    assertCallerTabEligible(current, tabId, caller?.url, domain)
     return tabId
   }
 
@@ -512,6 +522,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       })),
       failures: [...retainedFailures]
     }
+  }
+
+  interface ReplacementGate {
+    epoch: string
+    domain: string
+    attemptId: string
+    chatGeneration: number
+    worldGeneration: number
   }
 
   interface DualReplacementRoomIntent {
@@ -798,6 +816,64 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
+  /** The prepared Wire route must still carry both replacement rooms at their staged generations. */
+  const assertPreparedReplacementRoute = (gate: ReplacementGate, chatRoomId: string, worldRoomId: string) => {
+    const route = store.query(wireDomain.query.PreparedRouteQuery(gate.epoch))
+    if (
+      !route?.ready ||
+      !route.rooms.some((room) => room.roomId === chatRoomId && room.generation === gate.chatGeneration) ||
+      !route.rooms.some((room) => room.roomId === worldRoomId && room.generation === gate.worldGeneration)
+    ) {
+      throw new Error('Dual replacement prepared route is no longer current')
+    }
+  }
+
+  /** Public hints begin only after the shared terminal; local state is already complete. */
+  const publishCommittedReplacement = (attempt: DualReplacementAttempt, chatRoomId: string) => {
+    const committedRoom = store.query(sessionDomain.query.DomainQuery(attempt.domain))
+    if (committedRoom) {
+      for (const source of store.query(wireDomain.query.SourcesQuery(chatRoomId))) {
+        store.send(
+          wireDomain.command.SendMessageCommand({
+            requestId: `manual:session:${attempt.epoch}:${source.sourcePeerId}`,
+            roomId: chatRoomId,
+            targetPeerIds: [source.sourcePeerId],
+            message: {
+              type: MESSAGE_TYPE.SESSION,
+              sessionId: committedRoom.sessionId,
+              presenceId: committedRoom.presenceId,
+              joinedAt: committedRoom.joinedAt,
+              user: committedRoom.user
+            }
+          })
+        )
+      }
+    }
+    store.send(worldDomain.command.PublishCurrentCommand({ requestId: `manual:world:${attempt.epoch}` }))
+    notifyTabs()
+  }
+
+  /** A retry seed is local-only and bound to the exact caller/document/host of this attempt. */
+  const recordReplacementRetrySeed = (
+    attempt: DualReplacementAttempt,
+    gate: ReplacementGate | undefined,
+    cut: boolean
+  ) => {
+    if (attempt.invalidated) return
+    if (replacementAttempts.get(attempt.domain) !== attempt) return
+    if (currentWorldReplacement !== attempt) return
+    if (attempt.hostId !== connectionOptions.hostId) return
+    replacementSeeds.set(attempt.domain, cloneSeed(attempt))
+    if (cut && gate) {
+      sharedWorldRecovery = {
+        hostId: attempt.hostId,
+        sourceEpoch: attempt.epoch,
+        worldGeneration: gate.worldGeneration,
+        world: cloneWorldIntent(attempt.world)
+      }
+    }
+  }
+
   const runDualReplacement = async (
     attempt: DualReplacementAttempt,
     payload: RuntimePageCall,
@@ -806,15 +882,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     const chatRoomId = getChatRoomId(attempt.domain)
     const worldRoomId = getWorldRoomId()
     let cut = false
-    let gate:
-      | {
-          epoch: string
-          domain: string
-          attemptId: string
-          chatGeneration: number
-          worldGeneration: number
-        }
-      | undefined
+    let gate: ReplacementGate | undefined
     try {
       assertReleaseBarrierCurrent(releaseBarrier)
       // This is the only physical destruction step. It resolves after each local routing owner
@@ -876,14 +944,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         roomIds: [chatRoomId, worldRoomId]
       })
       await assertReplacementCurrent(attempt, payload)
-      const route = store.query(wireDomain.query.PreparedRouteQuery(replacementGate.epoch))
-      if (
-        !route?.ready ||
-        !route.rooms.some((room) => room.roomId === chatRoomId && room.generation === replacementGate.chatGeneration) ||
-        !route.rooms.some((room) => room.roomId === worldRoomId && room.generation === replacementGate.worldGeneration)
-      ) {
-        throw new Error('Dual replacement prepared route is no longer current')
-      }
+      assertPreparedReplacementRoute(replacementGate, chatRoomId, worldRoomId)
       // Ordered recovery ingress may await decode/owner acceptance, so it belongs before the
       // synchronous commit. The prepared Wire route keeps every accepted frame private here.
       await config.transport.activateIngress?.()
@@ -904,27 +965,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       recoveryReady = undefined
       // Public hints begin only after the shared terminal. The initial local state is already
       // complete, while outbound presence/session catch-up remains ordinary post-commit work.
-      const committedRoom = store.query(sessionDomain.query.DomainQuery(attempt.domain))
-      if (committedRoom) {
-        for (const source of store.query(wireDomain.query.SourcesQuery(chatRoomId))) {
-          store.send(
-            wireDomain.command.SendMessageCommand({
-              requestId: `manual:session:${attempt.epoch}:${source.sourcePeerId}`,
-              roomId: chatRoomId,
-              targetPeerIds: [source.sourcePeerId],
-              message: {
-                type: MESSAGE_TYPE.SESSION,
-                sessionId: committedRoom.sessionId,
-                presenceId: committedRoom.presenceId,
-                joinedAt: committedRoom.joinedAt,
-                user: committedRoom.user
-              }
-            })
-          )
-        }
-      }
-      store.send(worldDomain.command.PublishCurrentCommand({ requestId: `manual:world:${attempt.epoch}` }))
-      notifyTabs()
+      publishCommittedReplacement(attempt, chatRoomId)
       return undefined
     } catch (reason) {
       const error = reason instanceof Error ? reason : new Error('Dual replacement failed')
@@ -937,24 +978,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           // successor cannot publish because abort removed every logical staged owner first.
         }
       }
-      if (
-        !attempt.invalidated &&
-        replacementAttempts.get(attempt.domain) === attempt &&
-        currentWorldReplacement === attempt &&
-        attempt.hostId === connectionOptions.hostId
-      ) {
-        // A retry seed is local-only and bound to the exact caller/document/host. It is rebuilt
-        // from the captured values, never from staged or remote state.
-        replacementSeeds.set(attempt.domain, cloneSeed(attempt))
-        if (cut && gate) {
-          sharedWorldRecovery = {
-            hostId: attempt.hostId,
-            sourceEpoch: attempt.epoch,
-            worldGeneration: gate.worldGeneration,
-            world: cloneWorldIntent(attempt.world)
-          }
-        }
-      }
+      recordReplacementRetrySeed(attempt, gate, cut)
       throw error
     } finally {
       if (replacementAttempts.get(attempt.domain) === attempt) replacementAttempts.delete(attempt.domain)
@@ -1202,6 +1226,21 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     assertReleaseBarrierCurrent(barrier)
   }
 
+  /** A release barrier discards any pre-wait seed; otherwise a retained or shared seed wins. */
+  const resolveReplacementSeed = (
+    releaseBarrier: ReturnType<typeof captureActiveReleaseBarrier>,
+    retained: DualReplacementSeed | undefined,
+    shared: SharedWorldRecoveryEpoch | undefined,
+    reservation: ReplacementReservation
+  ): DualReplacementSeed | null => {
+    if (releaseBarrier.releases.length > 0) {
+      return captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
+    }
+    if (retained) return cloneSeed(retained)
+    if (shared) return captureSharedWorldRecoverySeed(shared, reservation.domain, reservation.tabId, reservation.documentUrl)
+    return captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
+  }
+
   const runReservedDualReplacement = async (
     reservation: ReplacementReservation,
     payload: RuntimePageCall
@@ -1224,14 +1263,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (shared && shared.hostId !== connectionOptions.hostId) {
         throw new Error('Shared World recovery epoch is no longer bound to this host')
       }
-      const captured =
-        releaseBarrier.releases.length > 0
-          ? captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
-          : retained
-            ? cloneSeed(retained)
-            : shared
-              ? captureSharedWorldRecoverySeed(shared, reservation.domain, reservation.tabId, reservation.documentUrl)
-              : captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
+      const captured = resolveReplacementSeed(releaseBarrier, retained, shared, reservation)
       if (!captured) return undefined
       if (
         releaseBarrier.releases.some((release) =>
