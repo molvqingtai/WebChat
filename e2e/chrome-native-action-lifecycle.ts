@@ -1674,6 +1674,26 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Classifies an undelivered bound wait when unresolved workers remain. */
+  const classifyUndeliveredBoundWait = (afterWait: number, beforeWait: number): 'stop' | 'continue' | 'sample' => {
+    if (unresolvedWorkers().length === 0) return 'sample'
+    if (afterWait >= lifecycleDeadlineMs) {
+      state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
+      return 'stop'
+    }
+    if (afterWait === beforeWait) {
+      state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
+      return 'stop'
+    }
+    return 'continue'
+  }
+
+  /** Records the unresolved-worker terminal failure when another bound failure is already set. */
+  const applyUnresolvedWorkerTerminalFailure = (): void => {
+    if (unresolvedWorkers().length === 0 || !hasNonExtensionBoundFailure()) return
+    state.extensionFailure ??= 'A later Service Worker remained unresolved before the terminal decision'
+  }
+
   /** Whether a bound-phase failure state other than the extension failure is set. */
   const hasNonExtensionBoundFailure = (): boolean =>
     Boolean(
@@ -2196,9 +2216,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       if (hasLocalBoundFailure()) break
     }
 
-    if (unresolvedWorkers().length > 0 && hasNonExtensionBoundFailure()) {
-      state.extensionFailure ??= 'A later Service Worker remained unresolved before the terminal decision'
-    }
+    applyUnresolvedWorkerTerminalFailure()
 
     if (hasBoundFailure()) break
 
@@ -2216,17 +2234,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
     const afterWait = timeline.now()
     if (!resolveBoundWaitEvidenceOutcome(delivered, afterWait)) break
     if (!delivered) {
-      if (unresolvedWorkers().length > 0) {
-        if (afterWait >= lifecycleDeadlineMs) {
-          state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
-          break
-        }
-        if (afterWait === beforeWait) {
-          state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
-          break
-        }
-        continue
-      }
+      const undelivered = classifyUndeliveredBoundWait(afterWait, beforeWait)
+      if (undelivered === 'stop') break
+      if (undelivered === 'continue') continue
       const sample = await sampleDom()
       if (!resolveBoundSampleOutcome(sample, afterWait, beforeWait)) break
     }
