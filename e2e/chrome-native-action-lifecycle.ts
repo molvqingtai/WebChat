@@ -1674,6 +1674,23 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Whether a bound-phase failure state other than the extension failure is set. */
+  const hasNonExtensionBoundFailure = (): boolean =>
+    Boolean(
+      state.targetFailure ??
+      state.unexpectedFailure ??
+      state.sharedRuntimeUnavailable ??
+      timeline.overflow ??
+      timeline.clockFailure
+    )
+
+  /** Whether any bound-phase failure state is set. */
+  const hasLocalBoundFailure = (): boolean =>
+    Boolean(state.extensionFailure ?? state.targetFailure ?? state.unexpectedFailure ?? state.sharedRuntimeUnavailable)
+
+  /** Whether any bound-phase failure state, including the shared timeline failures, is set. */
+  const hasBoundFailure = (): boolean => hasLocalBoundFailure() || Boolean(timeline.overflow ?? timeline.clockFailure)
+
   /** Applies the bound lifecycle post-sample checks; false stops the loop at the same conditions. */
   const resolveBoundSampleOutcome = (
     sample: ChromeLifecycleDomSample | undefined,
@@ -2176,31 +2193,14 @@ export const diagnoseChromeNativeActionLifecycle = async (
     while (pendingEvents.length > 0) {
       const pending = pendingEvents.shift()!
       await processEvent(pending.event, pending.atMs)
-      if (state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
-        break
+      if (hasLocalBoundFailure()) break
     }
 
-    if (
-      unresolvedWorkers().length > 0 &&
-      (state.targetFailure ||
-        state.unexpectedFailure ||
-        state.sharedRuntimeUnavailable ||
-        timeline.overflow ||
-        timeline.clockFailure)
-    ) {
+    if (unresolvedWorkers().length > 0 && hasNonExtensionBoundFailure()) {
       state.extensionFailure ??= 'A later Service Worker remained unresolved before the terminal decision'
     }
 
-    if (
-      state.extensionFailure ||
-      state.targetFailure ||
-      state.unexpectedFailure ||
-      state.sharedRuntimeUnavailable ||
-      timeline.overflow ||
-      timeline.clockFailure
-    ) {
-      break
-    }
+    if (hasBoundFailure()) break
 
     const beforeWait = timeline.now()
     if (!mayWaitForLifecycleEvidence(beforeWait)) break
@@ -2232,13 +2232,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
-  while (
-    pendingEvents.length > 0 &&
-    !state.extensionFailure &&
-    !state.targetFailure &&
-    !state.unexpectedFailure &&
-    !state.sharedRuntimeUnavailable
-  ) {
+  while (pendingEvents.length > 0 && !hasLocalBoundFailure()) {
     const pending = pendingEvents.shift()!
     await processEvent(pending.event, pending.atMs)
   }
