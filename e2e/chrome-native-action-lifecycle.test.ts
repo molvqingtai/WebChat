@@ -396,12 +396,12 @@ const expectPrivateSentinelAbsent = (
   sentinel: string
 ) => {
   const diffs = result.timeline.flatMap(({ detail }) => {
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a raw protocol value
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the lifecycle timeline entry
     if (detail === null || Array.isArray(detail) || typeof detail !== 'object' || !Object.hasOwn(detail, 'diff')) {
       return []
     }
-    // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     return [(detail as Record<string, unknown>).diff]
   })
 
@@ -508,8 +508,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
         workerEntry: 'background.js'
       }
     })
-    // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     const workerEvidenceDetail = workerEvidence!.detail as Record<string, unknown>
     expect(workerEvidenceDetail.packagedManifestDigest).toBe(workerEvidenceDetail.runtimeManifestDigest)
     expect(result.timeline.map(({ sequence }) => sequence)).toEqual(result.timeline.map((_, index) => index + 1))
@@ -589,11 +589,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
       result.timeline
         .filter(({ type }) => type === 'worker-observed')
         .map(({ detail }) => ({
-          // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           appearedAfterMs: (detail as Record<string, unknown>).appearedAfterMs,
-          // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           targetId: (detail as Record<string, unknown>).targetId
         }))
     ).toEqual([
@@ -735,19 +735,19 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const foreignEvidence = result.timeline.find(
       ({ type, detail }) =>
         type === 'worker-classified' &&
-        // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
         (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
     )
-    // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     const detail = foreignEvidence?.detail as Record<string, unknown>
 
     expect(result.outcome, result.reason).toBe('mounted')
     expect(detail.diffOverflow).toBe(true)
     expect(detail.diff).toHaveLength(CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES)
-    // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     const paths = (detail.diff as Array<Record<string, unknown>>).map(({ path }) => path)
     expect(paths).toEqual([...paths].toSorted())
     expect(JSON.stringify(detail)).not.toContain('secret-value')
@@ -851,8 +851,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
       result.timeline.some(
         ({ type, detail }) =>
           type === 'worker-classified' &&
-          // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           (detail as Record<string, unknown> | undefined)?.targetId === laterWorker.targetId
       )
     ).toBe(true)
@@ -890,11 +890,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
       const foreignWorkerWasClassified = result.timeline.some(
         ({ type, detail }) =>
           type === 'worker-classified' &&
-          // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId &&
-          // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           (detail as Record<string, unknown>).exact === false
       )
 
@@ -1123,8 +1123,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
       const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
       const evidence = result.timeline.find(({ type }) => type === `event:${testCase.event.type}`)
-      // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+      // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
       const detail = evidence?.detail as Record<string, unknown> | undefined
 
       expect.soft(result.outcome, testCase.name).toBe('unexpected-content-failure')
@@ -1171,13 +1171,13 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
         const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
         const evidence = result.timeline.find(({ type: entryType, detail }) => {
-          // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           const fields = detail as Record<string, unknown> | undefined
           return entryType === `event:${type}` && fields?.targetId === target.targetId
         })
-        // SAFETY: the harness narrows this raw protocol value to the shape it forwards.
-        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP protocol record
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
         const detail = evidence?.detail as Record<string, unknown> | undefined
 
         expect.soft(result.outcome, name).toBe(targetCase.expectedOutcome)
