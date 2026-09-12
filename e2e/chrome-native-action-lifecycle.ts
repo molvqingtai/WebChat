@@ -219,6 +219,7 @@ export interface ChromeNativeActionLifecycleResult {
 
 class EvidenceLimitError extends Error {}
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- catch reasons are arbitrary by language contract; this formats any rejection reason
 const errorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
   return message.length <= MAX_VALUE_STRING_LENGTH ? message : 'Error message exceeded the evidence limit'
@@ -227,6 +228,7 @@ const errorMessage = (error: unknown): string => {
 // oxlint-disable-next-line anti-slop/no-runtime-typeof -- this predicate defines the string domain for untrusted evidence values
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- assertJson is the JSON boundary parser for untrusted values
 const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof establishes the primitive domain
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
@@ -263,6 +265,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   throw new Error(`Unsupported JSON value: ${typeof value}`)
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- delegates straight to assertJson, the JSON boundary parser
 const canonicalJson = (value: unknown): string => JSON.stringify(assertJson(value))
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -291,6 +294,7 @@ type ManifestDiffEntry = {
 const MISSING_MANIFEST_VALUE = Symbol('missing-manifest-value')
 type ComparableManifestValue = JsonValue | typeof MISSING_MANIFEST_VALUE
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parses untrusted manifest input at the manifest boundary
 const asPackagedManifest = (value: unknown): PackagedManifest => {
   const parsed = assertJson(value)
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- asPackagedManifest parses untrusted manifest input at its boundary
@@ -435,6 +439,7 @@ const boundedString = (value: string): string => {
   return value
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalizes untrusted evidence values at the evidence boundary
 const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()): JsonValue => {
   if (depth > MAX_VALUE_DEPTH) throw new EvidenceLimitError(`Evidence exceeds depth ${MAX_VALUE_DEPTH}`)
   if (value === null) return null
@@ -475,6 +480,7 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
   )
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- measures untrusted evidence before it is recorded
 const assertBoundedEvidence = (value: unknown): void => {
   const normalized = normalizeEvidence(value)
   if (canonicalJson(normalized).length > MAX_EVENT_BYTES) {
@@ -522,6 +528,7 @@ class Timeline {
     return current
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the recorded evidence detail is an arbitrary JSON payload by design
   record(type: string, detail?: unknown, atMs?: number): void {
     if (this.entries.length >= MAX_NONTERMINAL_ENTRIES) {
       this.markOverflow(`Timeline exceeds ${MAX_TIMELINE_ENTRIES} entries`)
@@ -549,6 +556,7 @@ class Timeline {
     return terminal
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the appended evidence detail is an arbitrary JSON payload by design
   private append(type: string, detail?: unknown, atMs?: number): void {
     let normalized: JsonValue | undefined
     try {
@@ -877,6 +885,7 @@ const validateDomSample = (sample: ChromeLifecycleDomSample, binding: ChromeLife
   return null
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- scans untrusted evidence values for the shared-runtime marker
 const containsSharedRuntimeUnavailable = (value: unknown): boolean => {
   try {
     return canonicalJson(normalizeEvidence(value)).includes('Shared runtime unavailable')
