@@ -435,13 +435,16 @@ const boundedString = (value: string): string => {
 const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()): JsonValue => {
   if (depth > MAX_VALUE_DEPTH) throw new EvidenceLimitError(`Evidence exceeds depth ${MAX_VALUE_DEPTH}`)
   if (value === null) return null
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- normalizeEvidence dispatches on the runtime type of untrusted evidence values at their boundary
   if (typeof value === 'string') return boundedString(value)
   if (typeof value === 'boolean') return value
+  /* oxlint-disable anti-slop/no-runtime-typeof -- the evidence normalizer maps each remaining runtime type of an untrusted value onto its bounded evidence form */
   if (typeof value === 'number') return Number.isFinite(value) ? value : boundedString(String(value))
   if (typeof value === 'bigint') return boundedString(`${value}n`)
   if (typeof value === 'undefined') return '[undefined]'
   if (typeof value === 'symbol') return boundedString(String(value))
   if (typeof value === 'function') return boundedString(`[function ${value.name || 'anonymous'}]`)
+  /* oxlint-enable anti-slop/no-runtime-typeof */
 
   if (seen.has(value)) throw new EvidenceLimitError('Evidence contains a cycle')
 
