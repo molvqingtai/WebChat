@@ -3,7 +3,6 @@ import { WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { NativeWireCodec, SessionMessageSchema, WorldRoomMessageSchema } from '@/protocol'
 import type {
   RoomTransport,
-  RoomMessageTerminal,
   RoomTransportRecovery,
   WorldTransportRecovery,
   WorldTransportRecoveryFact
@@ -52,6 +51,7 @@ export interface TransportService {
     recovery: RoomTransportRecovery['rooms'][number]
   ) => Promise<void>
   rebind: (
+    // oxlint-disable-next-line anti-slop/no-unknown-returns -- handlers may return void, a terminal, or a promise
     onMessage: (roomId: string, handle: string, sourcePeerId: string, payload: string) => unknown,
     onPeerJoin: (roomId: string, handle: string, peerId: string) => void,
     onPeerLeave: (roomId: string, handle: string, peerId: string) => void,
@@ -60,7 +60,7 @@ export interface TransportService {
   ) => Promise<TransportBinding>
 }
 
-const report = (callback: () => unknown) => {
+const report = (callback: () => void) => {
   try {
     void Promise.resolve(callback()).catch((error) => console.error(error))
   } catch (error) {
@@ -90,6 +90,7 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
     number,
     TransportRecoveryFrame & { valid: boolean; ownerCommitted: boolean; ownerInvalid: boolean; task: Promise<void> }
   >()
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- handlers may return void, a terminal, or a promise
   let onMessage: ((roomId: string, handle: string, sourcePeerId: string, payload: string) => unknown) | null = null
   let onPeerJoin: ((roomId: string, handle: string, peerId: string) => void) | null = null
   let onPeerLeave: ((roomId: string, handle: string, peerId: string) => void) | null = null
@@ -108,19 +109,17 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
       presences: worldRecovery.presences.filter(
         ({ sourcePeerId, sourceGeneration }) => worldMembers.get(sourcePeerId) === sourceGeneration
       ),
-      ...(worldRecovery.local
+      local: worldRecovery.local
         ? {
-            local: {
-              peerId: worldRecovery.local.peerId,
-              handle: worldRecovery.local.handle,
-              registrations: worldRecovery.local.registrations.map(({ domain, user, site }) => ({
-                domain,
-                user: { ...user },
-                site: { ...site }
-              }))
-            }
+            peerId: worldRecovery.local.peerId,
+            handle: worldRecovery.local.handle,
+            registrations: worldRecovery.local.registrations.map(({ domain, user, site }) => ({
+              domain,
+              user: { ...user },
+              site: { ...site }
+            }))
           }
-        : {})
+        : undefined
     },
     roomRecovery: {
       rooms: [...roomRecoveries.values()].map((recovery) => {
@@ -338,19 +337,17 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
           sourceGeneration,
           presence: { ...presence, user: { ...presence.user }, sites: presence.sites.map((site) => ({ ...site })) }
         })),
-        ...(recovery.local
+        local: recovery.local
           ? {
-              local: {
-                peerId: recovery.local.peerId,
-                handle: worldRoom!.handle,
-                registrations: recovery.local.registrations.map(({ domain, user, site }) => ({
-                  domain,
-                  user: { ...user },
-                  site: { ...site }
-                }))
-              }
+              peerId: recovery.local.peerId,
+              handle: worldRoom!.handle,
+              registrations: recovery.local.registrations.map(({ domain, user, site }) => ({
+                domain,
+                user: { ...user },
+                site: { ...site }
+              }))
             }
-          : {})
+          : undefined
       }
     },
     rememberRoomRecovery: async (roomId, handle, recoveryAdmission, recovery) => {

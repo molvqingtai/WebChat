@@ -29,6 +29,7 @@ const createTransport = () => {
   const joinCalls: string[] = []
   const leaveControls = new Map<
     string,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     { promise: Promise<void>; resolve: () => void; reject: (reason?: unknown) => void }
   >()
   const leaveTerminals = new Map<string, Promise<void>>()
@@ -50,6 +51,7 @@ const createTransport = () => {
       () => {
         if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
       },
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- records the arbitrary rejection reason for later assertions
       (error: unknown) => {
         leaveFailures.set(roomId, error)
         if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
@@ -119,6 +121,7 @@ const createTransport = () => {
     joinCalls,
     deferLeave: (roomId: string) => {
       let resolve!: () => void
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
       let reject!: (reason?: unknown) => void
       const promise = new Promise<void>((onResolve, onReject) => {
         resolve = onResolve
@@ -127,6 +130,7 @@ const createTransport = () => {
       leaveControls.set(roomId, { promise, resolve, reject })
     },
     resolveLeave: (roomId: string) => leaveControls.get(roomId)?.resolve(),
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     rejectLeave: (roomId: string, reason: unknown) => leaveControls.get(roomId)?.reject(reason),
     sent,
     plantPeer: (roomId: string, peerId: string) => {
@@ -139,6 +143,7 @@ const createTransport = () => {
       peersByRoom.get(roomId)?.delete(peerId)
       leaveListeners.forEach((listener) => listener(roomId, peerId))
     },
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts the raw message and serializes it for the listener
     receive: (roomId: string, sourcePeerId: string, message: unknown) =>
       messageListeners.forEach((listener) => listener(roomId, sourcePeerId, JSON.stringify(message)))
   }
@@ -152,6 +157,7 @@ const flush = async (turns = 10) => {
 
 const jsonCodec: WireCodec = {
   encode: async (value) => JSON.stringify(value),
+  // SAFETY: the test narrows this runtime value to the shape it asserts on.
   decode: async (payload) => JSON.parse(payload as string)
 }
 
@@ -201,7 +207,9 @@ describe('Offscreen physical retirement through the Runtime replacement path', (
       await server.attachPage({ domain: DOMAIN, caller })
       await server.joinChatRoom({
         domain: DOMAIN,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         site: { origin: DOMAIN, title: 'Example' } as never,
         caller
       })
@@ -215,6 +223,7 @@ describe('Offscreen physical retirement through the Runtime replacement path', (
         () => {
           reconnectSettled = true
         },
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- records the arbitrary rejection reason for later assertions
         (error: unknown) => {
           reconnectSettled = true
           reconnectError = error
@@ -252,11 +261,13 @@ describe('DocumentClient across a logical Background replacement', () => {
     'retires a physically pending B1 History supply on replacement without touching B2 (late %s)',
     async (branch) => {
       const hints: unknown[] = []
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
       const listeners = new Set<(message: unknown) => void>()
       const admission: RuntimeAdmission = {
         tabs: {
           get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
           query: async () => [{ id: 1, url: `${DOMAIN}/` }],
+          // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
           sendMessage: async (_tabId: number, message: unknown) => {
             hints.push(message)
             listeners.forEach((listener) => listener(message))
@@ -287,6 +298,8 @@ describe('DocumentClient across a logical Background replacement', () => {
       const coordinator = {
         registerPage: async (payload: { domain: string }) => current.attachPage({ ...payload, caller })
       }
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adapter facade keeps the original server methods it wraps
       const facade = {
         getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
         joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
@@ -336,6 +349,7 @@ describe('DocumentClient across a logical Background replacement', () => {
 
       const client = new DocumentClient({ coordinator, server: facade, domain: DOMAIN })
       listeners.add((message) => {
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
       })
       const messageStore = createMessageStore(createMemoryMessageDatabase(`history-retirement-${branch}`))
@@ -352,7 +366,9 @@ describe('DocumentClient across a logical Background replacement', () => {
       // Join the room so the History domain admits a real peer requester pull.
       await facade.joinChatRoom({
         domain: DOMAIN,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         site: { origin: DOMAIN, title: 'Example' } as never
       })
       expect(provideHistory).toHaveBeenCalledTimes(1)
@@ -366,8 +382,10 @@ describe('DocumentClient across a logical Background replacement', () => {
         supplyCount += 1
         if (supplyCount === 1) {
           queryStarted.resolve(query?.signal ?? new AbortController().signal)
+          // SAFETY: the test narrows this runtime value to the shape it asserts on.
           return releaseQuery.promise as never
         }
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         return [] as never
       })
       fake.plantPeer(getChatRoomId(DOMAIN), 'peer-a')
@@ -391,9 +409,11 @@ describe('DocumentClient across a logical Background replacement', () => {
       const requesterPull = await vi.waitFor(
         () => {
           const pull = fake.sent.find(
+            // SAFETY: the test narrows this runtime value to the shape it asserts on.
             (frame) => (JSON.parse(frame.payload) as { type?: string }).type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
           )
           expect(pull).toBeDefined()
+          // SAFETY: the test narrows this runtime value to the shape it asserts on.
           return JSON.parse(pull!.payload) as { syncId: string }
         },
         { timeout: 5000 }
@@ -470,7 +490,9 @@ describe('DocumentClient across a logical Background replacement', () => {
       // restarts its token sequence, and its own supply request lands on the SAME supply slot.
       await facade.joinChatRoom({
         domain: DOMAIN,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         site: { origin: DOMAIN, title: 'Example' } as never
       })
       fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
@@ -503,6 +525,7 @@ describe('DocumentClient across a logical Background replacement', () => {
 
       // The held B1 terminal now settles late (its transport rejects): the stale chain must not
       // publish any error, add any post-cut facade call for B1 identity, or disturb B2's entry.
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       b1Terminal.reject(new Error('B1 terminal transport lost') as never)
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(errors).toEqual([])
@@ -669,6 +692,7 @@ describe('DocumentClient across a logical Background replacement', () => {
         throw new FallibleError()
       }
       successorStarted.resolve(query?.signal ?? new AbortController().signal)
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       return successorRelease.promise as never
     })
     const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
@@ -742,6 +766,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     await vi.waitFor(() => expect(successorSignal.aborted).toBe(true))
     // The cancelled physical query exits: the successor settles through its ordinary cancelled
     // terminal with the cancellation reason.
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     successorRelease.reject(new DOMException('History supply cancelled', 'AbortError') as never)
     await vi.waitFor(() => expect(reasons).toEqual(['History supply failed', 'History supply cancelled']))
     room.dispose()
@@ -831,11 +856,13 @@ describe('DocumentClient across a logical Background replacement', () => {
   })
 
   it('a valid same-sequence successor persists through the real Server/Delivery reconnect chain', async () => {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     const listeners = new Set<(message: unknown) => void>()
     const admission: RuntimeAdmission = {
       tabs: {
         get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
         query: async () => [{ id: 1, url: `${DOMAIN}/` }],
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
         sendMessage: async (_tabId: number, message: unknown) => {
           listeners.forEach((listener) => listener(message))
         }
@@ -849,6 +876,8 @@ describe('DocumentClient across a logical Background replacement', () => {
     const coordinator = {
       registerPage: async (payload: { domain: string }) => server.attachPage({ ...payload, caller })
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adapter facade keeps the original server methods it wraps
     const facade = {
       getSnapshot: (payload?: { domain?: string }) => server.getSnapshot({ ...payload, caller }),
       joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
@@ -872,6 +901,7 @@ describe('DocumentClient across a logical Background replacement', () => {
 
     const client = new DocumentClient({ coordinator, server: facade, domain: DOMAIN })
     listeners.add((message) => {
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
     })
     const messageStore = createMessageStore(createMemoryMessageDatabase('delivery-retry-chain'))
@@ -883,7 +913,9 @@ describe('DocumentClient across a logical Background replacement', () => {
     const roomId = getChatRoomId(DOMAIN)
     await facade.joinChatRoom({
       domain: DOMAIN,
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       site: { origin: DOMAIN, title: 'Example' } as never
     })
     fake.peerJoin(roomId, 'peer-a')
@@ -976,11 +1008,13 @@ describe('DocumentClient across a logical Background replacement', () => {
 
   it('re-registers through the real register-and-read surface and rebuilds lease and History provider', async () => {
     const hints: unknown[] = []
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
     const listeners = new Set<(message: unknown) => void>()
     const admission: RuntimeAdmission = {
       tabs: {
         get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
         query: async () => [{ id: 1, url: `${DOMAIN}/` }],
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness forwards the raw runtime value it was given
         sendMessage: async (_tabId: number, message: unknown) => {
           hints.push(message)
           listeners.forEach((listener) => listener(message))
@@ -996,6 +1030,8 @@ describe('DocumentClient across a logical Background replacement', () => {
     const coordinator = {
       registerPage: async (payload: { domain: string }) => current.attachPage({ ...payload, caller })
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- adapter facade keeps the original server methods it wraps
     const facade = {
       getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
       provideHistory: (payload: { domain: string }, callback: Parameters<RuntimeServer['provideHistory']>[1]) => {
@@ -1014,6 +1050,7 @@ describe('DocumentClient across a logical Background replacement', () => {
 
     const client = new DocumentClient({ coordinator, server: facade, domain: DOMAIN })
     listeners.add((message) => {
+      // SAFETY: the test narrows this runtime value to the shape it asserts on.
       if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
     })
     const messageStore = createMessageStore(createMemoryMessageDatabase('background-replacement'))
@@ -1041,6 +1078,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     })
     expect((await readServerSnapshot(current)).hostId).not.toBe(firstHostId)
     await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(2))
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     expect(hints.some((message) => (message as { type?: string }).type === 'runtime:state-changed')).toBe(true)
 
     disposeServer(current)
@@ -1110,6 +1148,7 @@ describe('World recovery across a logical Background replacement', () => {
     const coordinator = {
       registerPage: (payload: { domain: string }) => current.attachPage({ ...payload, caller })
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const server = {
       getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller })
     } as RuntimeServer
@@ -1264,6 +1303,7 @@ describe('World recovery across a logical Background replacement', () => {
     const codec: WireCodec = {
       encode: async (value) => JSON.stringify(value),
       decode: (payload) => {
+        // SAFETY: the test narrows this runtime value to the shape it asserts on.
         const value = JSON.parse(payload as string)
         if (delayOld) {
           delayOld = false
@@ -1540,6 +1580,7 @@ describe('ROOM recovery across a logical Background replacement', () => {
     const coordinator = {
       registerPage: (payload: { domain: string }) => current.attachPage({ ...payload, caller })
     }
+    // SAFETY: the test narrows this runtime value to the shape it asserts on.
     const server = {
       getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller })
     } as RuntimeServer

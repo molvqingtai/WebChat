@@ -213,21 +213,26 @@ export interface ChromeNativeActionLifecycleResult {
   readonly lifecycleDeadlineMs: number | null
   readonly evidenceDigest: string
   readonly timeline: readonly ChromeLifecycleTimelineEntry[]
-  readonly finalDom: ChromeLifecycleDomSample | { readonly unavailable: string }
+  readonly finalDom: ChromeLifecycleDomSample | UnavailableDom
   readonly actionAuthorization: ChromeNativeActionAuthorization | null
 }
 
 class EvidenceLimitError extends Error {}
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- catch reasons are arbitrary by language contract; this formats any rejection reason
 const errorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
   return message.length <= MAX_VALUE_STRING_LENGTH ? message : 'Error message exceeded the evidence limit'
 }
 
+// oxlint-disable-next-line anti-slop/no-runtime-typeof -- this predicate defines the string domain for untrusted evidence values
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- assertJson is the JSON boundary parser for untrusted values
 const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof establishes the primitive domain
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof establishes the finite number domain
   if (typeof value === 'number' && Number.isFinite(value)) return value
 
   if (Array.isArray(value)) {
@@ -238,6 +243,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
     return value.map((entry) => assertJson(entry, childSeen))
   }
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertJson is the JSON boundary parser: typeof separates the object domain from the returned primitives
   if (typeof value === 'object') {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     const childSeen = new Set([...seen, value])
@@ -245,16 +251,22 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
       .toSorted()
       .reduce(
         (acc, key) => {
+          // SAFETY: value is a non-null object here (null and arrays returned above), so its own
+          // enumerable keys form a record whose entries the assertJson recursion validates.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the member values are re-validated by the assertJson recursion, so their domain is not yet established as JsonValue
           acc[key] = assertJson((value as Record<string, unknown>)[key], childSeen)
           return acc
         },
+        // SAFETY: the accumulator starts empty and every assignment stores an assertJson result.
         {} as Record<string, JsonValue>
       )
   }
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the diagnostic reports the runtime type of a value that failed the JSON boundary parse
   throw new Error(`Unsupported JSON value: ${typeof value}`)
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- delegates straight to assertJson, the JSON boundary parser
 const canonicalJson = (value: unknown): string => JSON.stringify(assertJson(value))
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -283,17 +295,21 @@ type ManifestDiffEntry = {
 const MISSING_MANIFEST_VALUE = Symbol('missing-manifest-value')
 type ComparableManifestValue = JsonValue | typeof MISSING_MANIFEST_VALUE
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parses untrusted manifest input at the manifest boundary
 const asPackagedManifest = (value: unknown): PackagedManifest => {
   const parsed = assertJson(value)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- asPackagedManifest parses untrusted manifest input at its boundary
   if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
     throw new Error('Packaged manifest must be a JSON object')
   }
   if (parsed.manifest_version !== 3) throw new Error('Packaged manifest must use manifest_version 3')
   const background = parsed.background
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted background field at the same manifest boundary
   if (background === null || Array.isArray(background) || typeof background !== 'object') {
     throw new Error('Packaged manifest background must be a JSON object')
   }
   if (
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted service worker entry at the manifest boundary
     typeof background.service_worker !== 'string' ||
     !nonEmpty(background.service_worker) ||
     background.service_worker.length > MAX_VALUE_STRING_LENGTH
@@ -311,9 +327,9 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
 
 const manifestProjection = (manifest: JsonObject): JsonObject =>
   Object.fromEntries(
-    (['manifest_version', 'name', 'version', 'background'] as const)
-      .filter((key) => Object.hasOwn(manifest, key))
-      .map((key) => [key, manifest[key]!])
+    (['manifest_version', 'name', 'version', 'background'] as const).flatMap((key) =>
+      Object.hasOwn(manifest, key) ? [[key, manifest[key]!] as const] : []
+    )
   )
 
 const pointerSegment = (value: string): string => value.replaceAll('~', '~0').replaceAll('/', '~1')
@@ -323,7 +339,9 @@ const manifestValueDescriptor = (value: ComparableManifestValue): ManifestDiffVa
     return { type: 'missing', length: 0, digest: digest('missing') }
   }
   const canonical = JSON.stringify(value)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- manifestValueDescriptor labels the runtime type of an already validated manifest value for the difference report
   const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+  /* oxlint-disable anti-slop/no-runtime-typeof -- the descriptor length follows the same already validated manifest value's runtime type */
   const length =
     typeof value === 'string'
       ? value.length
@@ -332,6 +350,7 @@ const manifestValueDescriptor = (value: ComparableManifestValue): ManifestDiffVa
         : value !== null && typeof value === 'object'
           ? Object.keys(value).length
           : canonical.length
+  /* oxlint-enable anti-slop/no-runtime-typeof */
   return { type, length, digest: digest(canonical) }
 }
 
@@ -345,10 +364,16 @@ const manifestDiffValue = (path: string, value: ComparableManifestValue): Manife
   return value
 }
 
-const manifestDiff = (
-  packaged: JsonValue,
-  runtime: JsonValue
-): { readonly entries: readonly ManifestDiffEntry[]; readonly overflow: boolean } => {
+type UnavailableDom = { readonly unavailable: string }
+type TerminalDecision = { readonly outcome: ChromeNativeActionLifecycleOutcome; readonly reason: string }
+type DeadlineFence = { readonly atMs: number; readonly failure?: string }
+
+type ManifestDiffReport = {
+  readonly entries: readonly ManifestDiffEntry[]
+  readonly overflow: boolean
+}
+
+const manifestDiff = (packaged: JsonValue, runtime: JsonValue): ManifestDiffReport => {
   const differences: ManifestDiffEntry[] = []
 
   const visit = (path: string, left: ComparableManifestValue, right: ComparableManifestValue): void => {
@@ -359,23 +384,14 @@ const manifestDiff = (
       const bothObjects =
         left !== null &&
         right !== null &&
+        /* oxlint-disable anti-slop/no-runtime-typeof -- compares two already validated manifest values and must confirm both are objects before recursing */
         typeof left === 'object' &&
         typeof right === 'object' &&
+        /* oxlint-enable anti-slop/no-runtime-typeof */
         !Array.isArray(left) &&
         !Array.isArray(right)
       if (bothArrays) {
-        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) =>
-          String(index)
-        ).toSorted()
-        for (const index of indexes) {
-          const numericIndex = Number(index)
-          visit(
-            `${path}/${index}`,
-            numericIndex < left.length ? left[numericIndex]! : MISSING_MANIFEST_VALUE,
-            numericIndex < right.length ? right[numericIndex]! : MISSING_MANIFEST_VALUE
-          )
-          if (differences.length > CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES) return
-        }
+        visitArrayEntries(path, left, right)
         return
       }
       if (bothObjects) {
@@ -398,6 +414,22 @@ const manifestDiff = (
       runtime: manifestDiffValue(path, right)
     })
   }
+  function visitArrayEntries(
+    path: string,
+    left: readonly ComparableManifestValue[],
+    right: readonly ComparableManifestValue[]
+  ): void {
+    const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) => String(index)).toSorted()
+    for (const index of indexes) {
+      const numericIndex = Number(index)
+      visit(
+        `${path}/${index}`,
+        numericIndex < left.length ? left[numericIndex]! : MISSING_MANIFEST_VALUE,
+        numericIndex < right.length ? right[numericIndex]! : MISSING_MANIFEST_VALUE
+      )
+      if (differences.length > CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES) return
+    }
+  }
 
   visit('', packaged, runtime)
   const overflow = differences.length > CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES
@@ -414,16 +446,21 @@ const boundedString = (value: string): string => {
   return value
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalizes untrusted evidence values at the evidence boundary
 const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()): JsonValue => {
   if (depth > MAX_VALUE_DEPTH) throw new EvidenceLimitError(`Evidence exceeds depth ${MAX_VALUE_DEPTH}`)
   if (value === null) return null
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- normalizeEvidence dispatches on the runtime type of untrusted evidence values at their boundary
   if (typeof value === 'string') return boundedString(value)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- normalizeEvidence dispatches on the runtime type of untrusted evidence values
   if (typeof value === 'boolean') return value
+  /* oxlint-disable anti-slop/no-runtime-typeof -- the evidence normalizer maps each remaining runtime type of an untrusted value onto its bounded evidence form */
   if (typeof value === 'number') return Number.isFinite(value) ? value : boundedString(String(value))
   if (typeof value === 'bigint') return boundedString(`${value}n`)
   if (typeof value === 'undefined') return '[undefined]'
   if (typeof value === 'symbol') return boundedString(String(value))
   if (typeof value === 'function') return boundedString(`[function ${value.name || 'anonymous'}]`)
+  /* oxlint-enable anti-slop/no-runtime-typeof */
 
   if (seen.has(value)) throw new EvidenceLimitError('Evidence contains a cycle')
 
@@ -441,13 +478,18 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
   }
   return keys.reduce(
     (acc, key) => {
+      // SAFETY: value is a non-null object here (null and arrays returned above), so its own
+      // enumerable keys form a record whose entries normalizeEvidence validates.
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the member values are normalized by the normalizeEvidence recursion, so their domain is not yet established as JsonValue
       acc[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, childSeen)
       return acc
     },
+    // SAFETY: the accumulator starts empty and every assignment stores a normalizeEvidence result.
     {} as Record<string, JsonValue>
   )
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- measures untrusted evidence before it is recorded
 const assertBoundedEvidence = (value: unknown): void => {
   const normalized = normalizeEvidence(value)
   if (canonicalJson(normalized).length > MAX_EVENT_BYTES) {
@@ -469,6 +511,7 @@ const TERMINAL_EVIDENCE_FAILURE = normalizeTerminal(
 )
 
 const deepFreeze = <Value>(value: Value): Value => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- deepFreeze only recurses into objects, so the runtime type decides whether to freeze
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value).forEach(deepFreeze)
     Object.freeze(value)
@@ -495,6 +538,7 @@ class Timeline {
     return current
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the recorded evidence detail is an arbitrary JSON payload by design
   record(type: string, detail?: unknown, atMs?: number): void {
     if (this.entries.length >= MAX_NONTERMINAL_ENTRIES) {
       this.markOverflow(`Timeline exceeds ${MAX_TIMELINE_ENTRIES} entries`)
@@ -522,6 +566,7 @@ class Timeline {
     return terminal
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the appended evidence detail is an arbitrary JSON payload by design
   private append(type: string, detail?: unknown, atMs?: number): void {
     let normalized: JsonValue | undefined
     try {
@@ -534,12 +579,8 @@ class Timeline {
       return
     }
 
-    this.entries.push({
-      sequence: this.entries.length + 1,
-      atMs: atMs ?? this.now(),
-      type,
-      ...(normalized === undefined ? {} : { detail: normalized })
-    })
+    const base = { sequence: this.entries.length + 1, atMs: atMs ?? this.now(), type }
+    this.entries.push(normalized === undefined ? base : { ...base, detail: normalized })
   }
 
   admitExternalEvent(): boolean {
@@ -651,14 +692,14 @@ const extensionOrigin = (extensionId: string): string => `chrome-extension://${e
 
 const workerUrlIdentity = (
   target: ChromeLifecycleTarget
-): { readonly host: string; readonly entry: string; readonly exactShape: boolean } | null => {
+): { readonly host: string; readonly entry: string; readonly exactWorkerUrl: boolean } | null => {
   try {
     const url = new URL(target.url)
     if (target.type !== 'service_worker' || url.protocol !== 'chrome-extension:') return null
     return {
       host: url.host,
       entry: url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname,
-      exactShape: nonEmpty(url.host) && url.search === '' && url.hash === ''
+      exactWorkerUrl: nonEmpty(url.host) && url.search === '' && url.hash === ''
     }
   } catch {
     return null
@@ -680,80 +721,22 @@ const observeStartupContinuity = (
   }
 
   if (event.type === 'target-created' || event.type === 'target-changed') {
-    if (event.target.targetId === acceptedTargetId) return
-    if (event.target.targetId === continuity.pageTarget.targetId) {
-      if (event.target.type !== 'page' || event.target.url !== 'about:blank') {
-        fail('The startup about:blank page changed identity or URL')
-      } else if (event.type === 'target-created') {
-        if (continuity.pageCreateObserved) fail('The startup about:blank page was created more than once')
-        continuity.pageCreateObserved = true
-      }
-      return
-    }
-    if (event.target.type === 'page') {
-      fail('A replacement or second page target appeared during startup continuity')
-    }
+    observeStartupPageIdentity(continuity, event, acceptedTargetId, fail)
     return
   }
 
   if (event.type === 'target-attached') {
-    if (event.target.targetId === acceptedTargetId) return
-    if (event.target.targetId === continuity.pageTarget.targetId) {
-      if (
-        event.target.type !== 'page' ||
-        event.target.url !== 'about:blank' ||
-        event.sessionId !== continuity.pageSession.sessionId ||
-        continuity.pageAttachObserved
-      ) {
-        fail('The startup about:blank page attached with an extra or divergent session')
-      }
-      continuity.pageAttachObserved = true
-      return
-    }
-    if (event.target.type === 'page') {
-      fail('A replacement page session attached during startup continuity')
-    }
+    observeStartupPageAttached(continuity, event, acceptedTargetId, fail)
     return
   }
 
-  if (event.type === 'target-destroyed') {
-    if (event.targetId === acceptedTargetId) return
-    if (event.targetId === continuity.pageTarget.targetId) {
-      fail('The startup about:blank page was destroyed')
-    }
-    return
-  }
-
-  if (event.type === 'target-detached') {
-    if (event.targetId === acceptedTargetId) return
-    if (event.targetId === continuity.pageTarget.targetId) {
-      fail('The startup about:blank page session detached')
-    }
+  if (event.type === 'target-destroyed' || event.type === 'target-detached') {
+    observeStartupPageInactive(continuity, event, acceptedTargetId, fail)
     return
   }
 
   if (event.type === 'frame-navigated') {
-    if (event.targetId === acceptedTargetId) return
-    if (event.targetId !== continuity.pageTarget.targetId) return
-    if (
-      event.sessionId !== continuity.pageSession.sessionId ||
-      event.parentFrameId !== undefined ||
-      event.url !== 'about:blank' ||
-      !nonEmpty(event.frameId) ||
-      !nonEmpty(event.navigationId)
-    ) {
-      fail('The startup about:blank main frame redirected or changed session')
-      return
-    }
-    if (
-      (continuity.pageFrameId !== undefined && continuity.pageFrameId !== event.frameId) ||
-      (continuity.pageNavigationId !== undefined && continuity.pageNavigationId !== event.navigationId)
-    ) {
-      fail('The startup about:blank main-frame identity was replaced')
-      return
-    }
-    continuity.pageFrameId = event.frameId
-    continuity.pageNavigationId = event.navigationId
+    observeStartupPageFrameNavigated(continuity, event, acceptedTargetId, fail)
     return
   }
 
@@ -767,6 +750,100 @@ const observeStartupContinuity = (
       fail('Startup page observation failed')
     }
   }
+}
+
+/** Startup continuity for the about:blank page's created/changed identity events. */
+const observeStartupPageIdentity = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'target-created' | 'target-changed' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.target.targetId === acceptedTargetId) return
+  if (event.target.targetId === continuity.pageTarget.targetId) {
+    if (event.target.type !== 'page' || event.target.url !== 'about:blank') {
+      fail('The startup about:blank page changed identity or URL')
+    } else if (event.type === 'target-created') {
+      if (continuity.pageCreateObserved) fail('The startup about:blank page was created more than once')
+      continuity.pageCreateObserved = true
+    }
+    return
+  }
+  if (event.target.type === 'page') {
+    fail('A replacement or second page target appeared during startup continuity')
+  }
+}
+
+/** Startup continuity for the about:blank page's attach event. */
+const observeStartupPageAttached = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'target-attached' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.target.targetId === acceptedTargetId) return
+  if (event.target.targetId === continuity.pageTarget.targetId) {
+    if (
+      event.target.type !== 'page' ||
+      event.target.url !== 'about:blank' ||
+      event.sessionId !== continuity.pageSession.sessionId ||
+      continuity.pageAttachObserved
+    ) {
+      fail('The startup about:blank page attached with an extra or divergent session')
+    }
+    continuity.pageAttachObserved = true
+    return
+  }
+  if (event.target.type === 'page') {
+    fail('A replacement page session attached during startup continuity')
+  }
+}
+
+/** Startup continuity for the about:blank page's destroyed/detached events. */
+const observeStartupPageInactive = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'target-destroyed' | 'target-detached' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.targetId === acceptedTargetId) return
+  if (event.targetId === continuity.pageTarget.targetId) {
+    fail(
+      event.type === 'target-destroyed'
+        ? 'The startup about:blank page was destroyed'
+        : 'The startup about:blank page session detached'
+    )
+  }
+}
+
+/** Startup continuity for the about:blank main-frame navigation event. */
+const observeStartupPageFrameNavigated = (
+  continuity: StartupContinuity,
+  event: Extract<ChromeLifecycleEvent, { type: 'frame-navigated' }>,
+  acceptedTargetId: string | undefined,
+  fail: (reason: string, setupFailure?: boolean) => void
+): void => {
+  if (event.targetId === acceptedTargetId) return
+  if (event.targetId !== continuity.pageTarget.targetId) return
+  if (
+    event.sessionId !== continuity.pageSession.sessionId ||
+    event.parentFrameId !== undefined ||
+    event.url !== 'about:blank' ||
+    !nonEmpty(event.frameId) ||
+    !nonEmpty(event.navigationId)
+  ) {
+    fail('The startup about:blank main frame redirected or changed session')
+    return
+  }
+  if (
+    (continuity.pageFrameId !== undefined && continuity.pageFrameId !== event.frameId) ||
+    (continuity.pageNavigationId !== undefined && continuity.pageNavigationId !== event.navigationId)
+  ) {
+    fail('The startup about:blank main-frame identity was replaced')
+    return
+  }
+  continuity.pageFrameId = event.frameId
+  continuity.pageNavigationId = event.navigationId
 }
 
 const contextValues = (context: ChromeLifecycleContext): readonly string[] => [
@@ -797,6 +874,7 @@ const validateDomSample = (sample: ChromeLifecycleDomSample, binding: ChromeLife
   if (!['loading', 'interactive', 'complete'].includes(sample.readyState)) {
     return 'DOM sample has an invalid readiness state'
   }
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- validates the untrusted DOM sample fields before they are used as evidence
   if (typeof sample.bodyPresent !== 'boolean' || typeof sample.runtimeUnavailable !== 'boolean') {
     return 'DOM sample has invalid structural flags'
   }
@@ -814,6 +892,7 @@ const validateDomSample = (sample: ChromeLifecycleDomSample, binding: ChromeLife
   return null
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- scans untrusted evidence values for the shared-runtime marker
 const containsSharedRuntimeUnavailable = (value: unknown): boolean => {
   try {
     return canonicalJson(normalizeEvidence(value)).includes('Shared runtime unavailable')
@@ -822,7 +901,13 @@ const containsSharedRuntimeUnavailable = (value: unknown): boolean => {
   }
 }
 
-const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): JsonObject => {
+type TargetUrlEvidence =
+  | { readonly targetUrl: string }
+  | {
+      readonly targetUrlClassification: 'other-target' | 'startup-page' | 'accepted-page' | 'unexpected-page'
+    }
+
+const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): TargetUrlEvidence => {
   if (target.type === 'service_worker') return { targetUrl: target.url }
   if (target.type === 'other') return { targetUrlClassification: 'other-target' }
   if (target.url === 'about:blank') return { targetUrlClassification: 'startup-page' }
@@ -830,7 +915,84 @@ const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): JsonObject
   return { targetUrlClassification: 'unexpected-page' }
 }
 
-const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
+/** Classifies an execution-context origin for the privacy-safe evidence record. */
+const originKind = (origin: string): 'extension' | 'other' =>
+  origin.startsWith('chrome-extension://') ? 'extension' : 'other'
+
+type TargetUrlClassification = 'other-target' | 'startup-page' | 'accepted-page' | 'unexpected-page'
+type TargetIdentityEvidence = {
+  readonly targetId: string
+  readonly targetType: ChromeLifecycleTargetType
+}
+
+type LifecycleEventEvidence =
+  | ({ readonly type: 'target-created' | 'target-changed' } & TargetIdentityEvidence & { readonly targetUrl: string })
+  | ({
+      readonly type: 'target-created' | 'target-changed'
+    } & TargetIdentityEvidence & { readonly targetUrlClassification: TargetUrlClassification })
+  | ({
+      readonly type: 'target-attached'
+      readonly sessionId: string
+    } & TargetIdentityEvidence & { readonly targetUrl: string })
+  | ({
+      readonly type: 'target-attached'
+      readonly sessionId: string
+    } & TargetIdentityEvidence & { readonly targetUrlClassification: TargetUrlClassification })
+  | { readonly type: 'target-destroyed'; readonly targetId: string }
+  | { readonly type: 'target-detached'; readonly sessionId: string; readonly targetId: string }
+  | {
+      readonly type: 'frame-navigated'
+      readonly frameId: string
+      readonly navigationId: string
+      readonly parentFrameId: string | null
+      readonly sessionId: string
+      readonly targetId: string
+      readonly urlMatchesAccepted: boolean
+    }
+  | {
+      readonly type: 'page-lifecycle'
+      readonly frameId: string
+      readonly name: string
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'execution-context-created'
+      readonly contextId: number
+      readonly frameId: string
+      readonly originType: 'extension' | 'other'
+      readonly sessionId: string
+      readonly targetId: string
+      readonly world: 'isolated' | 'main' | 'other'
+    }
+  | {
+      readonly type: 'execution-context-destroyed'
+      readonly contextId: number
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'console'
+      readonly classification: 'shared-runtime-unavailable' | 'unexpected-error' | 'diagnostic'
+      readonly contextId: number
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'exception'
+      readonly classification: 'shared-runtime-unavailable' | 'unexpected-exception'
+      readonly contextId: number | null
+      readonly sessionId: string
+      readonly targetId: string
+    }
+  | {
+      readonly type: 'observation-error'
+      readonly classification: 'observation-error'
+      readonly sessionId: string | null
+      readonly targetId: string | null
+    }
+
+const privacySafeEventEvidence = (event: ChromeLifecycleEvent): LifecycleEventEvidence => {
   switch (event.type) {
     case 'target-created':
     case 'target-changed':
@@ -875,7 +1037,7 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
         contextId: event.contextId,
         frameId: event.frameId,
         type: event.type,
-        originType: event.origin.startsWith('chrome-extension://') ? 'extension' : 'other',
+        originType: originKind(event.origin),
         sessionId: event.sessionId,
         targetId: event.targetId,
         world: event.world
@@ -919,6 +1081,25 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
   }
 }
 
+/** The worker discovery window fields; all null when no worker was bound. */
+const workerDiscoverySnapshot = (worker: BoundWorker | undefined) => ({
+  workerDiscoveryStartedAtMs: worker?.discoveryStartedAtMs ?? null,
+  workerDiscoveryCompletedAtMs: worker?.discoveryCompletedAtMs ?? null,
+  workerDiscoveryDeadlineMs: worker?.discoveryDeadlineMs ?? null
+})
+
+/** The observed worker-side binding fields; all null when no worker was bound. */
+const workerBindingSnapshot = (worker: BoundWorker | undefined) => ({
+  extensionId: worker?.runtimeId ?? null,
+  packagedWorkerEntry: worker?.packagedWorkerEntry ?? null,
+  packagedManifestDigest: worker?.packagedManifestDigest ?? null,
+  workerTargetId: worker?.targetId ?? null,
+  workerSessionId: worker?.sessionId ?? null,
+  workerEntry: worker?.workerEntry ?? null,
+  runtimeManifestDigest: worker?.runtimeManifestDigest ?? null,
+  ...workerDiscoverySnapshot(worker)
+})
+
 const bindingSnapshot = (
   context: ChromeLifecycleContext,
   worker: BoundWorker | undefined,
@@ -932,16 +1113,7 @@ const bindingSnapshot = (
   processGeneration: context.processGeneration,
   browserVersion: context.browserVersion,
   browserExecutable: context.browserExecutable,
-  extensionId: worker?.runtimeId ?? null,
-  packagedWorkerEntry: worker?.packagedWorkerEntry ?? null,
-  packagedManifestDigest: worker?.packagedManifestDigest ?? null,
-  workerTargetId: worker?.targetId ?? null,
-  workerSessionId: worker?.sessionId ?? null,
-  workerEntry: worker?.workerEntry ?? null,
-  runtimeManifestDigest: worker?.runtimeManifestDigest ?? null,
-  workerDiscoveryStartedAtMs: worker?.discoveryStartedAtMs ?? null,
-  workerDiscoveryCompletedAtMs: worker?.discoveryCompletedAtMs ?? null,
-  workerDiscoveryDeadlineMs: worker?.discoveryDeadlineMs ?? null,
+  ...workerBindingSnapshot(worker),
   acceptedUrl: CHROME_NATIVE_ACTION_ACCEPTED_URL,
   pageTargetId: state?.targetId ?? null,
   pageSessionId: state?.pageSessionId ?? null,
@@ -957,7 +1129,7 @@ const finish = (
   timeline: Timeline,
   outcome: ChromeNativeActionLifecycleOutcome,
   reason: string,
-  finalDom: ChromeLifecycleDomSample | { readonly unavailable: string },
+  finalDom: ChromeLifecycleDomSample | UnavailableDom,
   worker?: BoundWorker,
   state?: BoundState,
   lifecycleStartedAtMs: number | null = null,
@@ -1043,8 +1215,9 @@ const finish = (
   })
 }
 
-const unavailableDom = (reason: string): { readonly unavailable: string } => ({ unavailable: reason })
+const unavailableDom = (reason: string): UnavailableDom => ({ unavailable: reason })
 
+// oxlint-disable-next-line eslint/complexity -- keeps the discovery and bound observation loops' await order and phase clock reads inline; the async phase extraction was shown by the depth=3 case to change the createTarget deadline
 export const diagnoseChromeNativeActionLifecycle = async (
   adapter: ChromeNativeActionLifecycleAdapter,
   context: ChromeLifecycleContext
@@ -1053,13 +1226,49 @@ export const diagnoseChromeNativeActionLifecycle = async (
   const pendingEvents: Array<{ readonly event: ChromeLifecycleEvent; readonly atMs: number }> = []
   let packagedManifest: PackagedManifest
 
-  try {
-    if (contextValues(context).some((value) => !nonEmpty(value) || value.length > MAX_VALUE_STRING_LENGTH)) {
+  /** Throws unless the lifecycle context carries bounded identities and a full candidate object ID. */
+  const assertContextIdentitiesUsable = (values: ChromeLifecycleContext): void => {
+    if (contextValues(values).some((value) => !nonEmpty(value) || value.length > MAX_VALUE_STRING_LENGTH)) {
       throw new Error('Chrome lifecycle context identities must not be empty')
     }
-    if (!/^[a-f0-9]{40}$/.test(context.candidateExact)) {
+    if (!/^[a-f0-9]{40}$/.test(values.candidateExact)) {
       throw new Error('Chrome lifecycle candidate exact must be a full Git object ID')
     }
+  }
+
+  /** Whether the bound target can still be addressed for a final DOM sample. */
+  const isFinalSampleAddressable = (): boolean =>
+    Boolean(state.pageSessionId && state.pageObservationReady && state.mainFrameId && !state.targetDestroyed)
+
+  /** Throws unless the startup inventory holds valid, uniquely identified targets. */
+  const assertStartupInventoryValid = (targets: readonly ChromeLifecycleTarget[]): void => {
+    if (targets.some((target) => !validateTarget(target))) {
+      throw new Error('Chrome startup target inventory is invalid')
+    }
+    const targetIds = targets.map(({ targetId }) => targetId)
+    if (new Set(targetIds).size !== targetIds.length) {
+      throw new Error('Chrome startup target identities must be unique')
+    }
+  }
+
+  /** Throws unless target creation returned a fresh, usable target identity. */
+  const assertCreatedTargetIdentityUsable = (created: { readonly targetId: string }): void => {
+    if (
+      !nonEmpty(created.targetId) ||
+      created.targetId.length > MAX_VALUE_STRING_LENGTH ||
+      startupTargets.some(({ targetId }) => targetId === created.targetId) ||
+      workerRecords.has(created.targetId)
+    ) {
+      throw new Error('Target.createTarget returned an invalid or pre-existing target identity')
+    }
+  }
+
+  /** Whether the startup inventory holds exactly one about:blank page. */
+  const isUsableStartupPageSet = (pages: readonly ChromeLifecycleTarget[]): boolean =>
+    pages.length === 1 && pages[0]?.url === 'about:blank'
+
+  try {
+    assertContextIdentitiesUsable(context)
     packagedManifest = asPackagedManifest(context.packagedManifest)
     timeline.record('packaged-manifest-authority', {
       manifestDigest: packagedManifest.digest,
@@ -1134,13 +1343,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     startupTargets = await adapter.listStartupTargets(workerDiscoveryDeadlineMs)
     discoveryFence('Chrome startup inventory')
     startupInventoryAtMs = timeline.now()
-    if (startupTargets.some((target) => !validateTarget(target))) {
-      throw new Error('Chrome startup target inventory is invalid')
-    }
-    const targetIds = startupTargets.map(({ targetId }) => targetId)
-    if (new Set(targetIds).size !== targetIds.length) {
-      throw new Error('Chrome startup target identities must be unique')
-    }
+    assertStartupInventoryValid(startupTargets)
     timeline.record('startup-inventory', {
       pageCount: startupTargets.filter(({ type }) => type === 'page').length,
       targetCount: startupTargets.length,
@@ -1157,7 +1360,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   }
 
   const startupPages = startupTargets.filter(({ type }) => type === 'page')
-  if (startupPages.length !== 1 || startupPages[0]?.url !== 'about:blank') {
+  if (!isUsableStartupPageSet(startupPages)) {
     return finish(
       context,
       timeline,
@@ -1251,8 +1454,56 @@ export const diagnoseChromeNativeActionLifecycle = async (
   ].toSorted((left, right) => left.atMs - right.atMs || left.order - right.order)
   initialWorkerSightings.forEach(({ target, atMs }) => addWorker(target, atMs))
 
+  /** Applies the first creation event for a Service Worker target record. */
+  const recordWorkerCreated = (record: WorkerRecord): boolean => {
+    record.createEvents += 1
+    if (record.createEvents > 1) {
+      failWorker('A Service Worker target was created more than once')
+      return true
+    }
+    if (worker?.targetId === record.target.targetId) {
+      failWorker('The bound exact worker was created more than once')
+      return true
+    }
+
+    return false
+  }
+
+  /** Applies the first attach event for a Service Worker target record. */
+  const recordWorkerAttached = (
+    record: WorkerRecord,
+    event: Extract<ChromeLifecycleEvent, { type: 'target-attached' }>
+  ): boolean => {
+    record.attachEvents += 1
+    if (record.attachEvents > 1) {
+      failWorker('A Service Worker target attached more than once')
+      return true
+    }
+    if (!nonEmpty(event.sessionId) || event.sessionId.length > MAX_VALUE_STRING_LENGTH) {
+      failWorker('Observed Service Worker session identity is invalid')
+      return true
+    }
+    if (record.sessionId !== undefined && record.sessionId !== event.sessionId) {
+      failWorker('A Service Worker attached with a divergent session identity')
+      return true
+    }
+    if (worker?.targetId === record.target.targetId) {
+      failWorker('The bound exact worker attached again after binding')
+      return true
+    }
+    record.sessionId = event.sessionId
+
+    return false
+  }
+
+  /** Whether the event carries a target identity the worker records track. */
+  const isWorkerTargetIdentityEvent = (
+    event: ChromeLifecycleEvent
+  ): event is Extract<ChromeLifecycleEvent, { type: 'target-created' | 'target-changed' | 'target-attached' }> =>
+    event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached'
+
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
-    if (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') {
+    if (isWorkerTargetIdentityEvent(event)) {
       const known = workerRecords.get(event.target.targetId)
       if (event.target.type !== 'service_worker' && !known) return false
       if (event.target.type !== 'service_worker') {
@@ -1269,37 +1520,8 @@ export const diagnoseChromeNativeActionLifecycle = async (
       const record = known ?? addWorker(event.target, eventAtMs)
       if (!record) return true
 
-      if (event.type === 'target-created') {
-        record.createEvents += 1
-        if (record.createEvents > 1) {
-          failWorker('A Service Worker target was created more than once')
-          return true
-        }
-        if (worker?.targetId === record.target.targetId) {
-          failWorker('The bound exact worker was created more than once')
-          return true
-        }
-      }
-      if (event.type === 'target-attached') {
-        record.attachEvents += 1
-        if (record.attachEvents > 1) {
-          failWorker('A Service Worker target attached more than once')
-          return true
-        }
-        if (!nonEmpty(event.sessionId) || event.sessionId.length > MAX_VALUE_STRING_LENGTH) {
-          failWorker('Observed Service Worker session identity is invalid')
-          return true
-        }
-        if (record.sessionId !== undefined && record.sessionId !== event.sessionId) {
-          failWorker('A Service Worker attached with a divergent session identity')
-          return true
-        }
-        if (worker?.targetId === record.target.targetId) {
-          failWorker('The bound exact worker attached again after binding')
-          return true
-        }
-        record.sessionId = event.sessionId
-      }
+      if (event.type === 'target-created' && recordWorkerCreated(record)) return true
+      if (event.type === 'target-attached' && recordWorkerAttached(record, event)) return true
       if (worker?.targetId === record.target.targetId && event.target.url !== worker.targetUrl) {
         failWorker('The bound exact worker changed URL or entry')
         return true
@@ -1312,44 +1534,104 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return true
     }
 
-    if (event.type === 'target-destroyed' || event.type === 'target-detached') {
-      const record = workerRecords.get(event.targetId)
-      if (!record) return false
-      if (event.type === 'target-detached' && record.sessionId !== undefined && event.sessionId !== record.sessionId) {
-        failWorker('A Service Worker detached with a divergent session identity')
-        return true
-      }
-      record.active = false
-      record.needsProbe = false
-      record.classification = undefined
-      if (worker?.targetId === event.targetId) failWorker('The bound exact worker disappeared')
-      timeline.record('worker-inactive', {
-        appearanceOrder: record.appearanceOrder,
-        targetId: record.target.targetId,
-        reason: event.type
-      })
-      return true
-    }
+    if (event.type === 'target-destroyed' || event.type === 'target-detached') return recordWorkerInactive(event)
 
-    if (event.type === 'observation-error') {
-      const record = [...workerRecords.values()].find(
-        ({ target, sessionId }) => event.targetId === target.targetId || event.sessionId === sessionId
-      )
-      if (!record) return false
-      record.classification = undefined
-      record.needsProbe = false
-      record.unresolvedReason = event.message
-      if (worker?.targetId === record.target.targetId) failWorker('Bound worker observation failed')
-      return true
-    }
+    if (event.type === 'observation-error') return recordWorkerObservationError(event)
 
     return false
+  }
+
+  /** Applies a destroyed/detached event to the matching Service Worker record. */
+  const recordWorkerInactive = (
+    event: Extract<ChromeLifecycleEvent, { type: 'target-destroyed' | 'target-detached' }>
+  ): boolean => {
+    const record = workerRecords.get(event.targetId)
+    if (!record) return false
+    if (event.type === 'target-detached' && record.sessionId !== undefined && event.sessionId !== record.sessionId) {
+      failWorker('A Service Worker detached with a divergent session identity')
+      return true
+    }
+    record.active = false
+    record.needsProbe = false
+    record.classification = undefined
+    if (worker?.targetId === event.targetId) failWorker('The bound exact worker disappeared')
+    timeline.record('worker-inactive', {
+      appearanceOrder: record.appearanceOrder,
+      targetId: record.target.targetId,
+      reason: event.type
+    })
+    return true
+  }
+
+  /** Applies an observation failure to the worker record it belongs to. */
+  const recordWorkerObservationError = (
+    event: Extract<ChromeLifecycleEvent, { type: 'observation-error' }>
+  ): boolean => {
+    const record = [...workerRecords.values()].find(
+      ({ target, sessionId }) => event.targetId === target.targetId || event.sessionId === sessionId
+    )
+    if (!record) return false
+    record.classification = undefined
+    record.needsProbe = false
+    record.unresolvedReason = event.message
+    if (worker?.targetId === record.target.targetId) failWorker('Bound worker observation failed')
+    return true
   }
 
   const workerFence = (deadlineMs: number, operation: string): string | undefined => {
     const atMs = timeline.now()
     if (timeline.clockFailure) return timeline.clockFailure
     return atMs >= deadlineMs ? `${operation} reached or exceeded its absolute deadline` : undefined
+  }
+
+  /** Validates the evaluated worker identity and records the bounded classification evidence. */
+  const classifyWorkerEvidence = (
+    record: WorkerRecord,
+    session: ChromeLifecycleSession,
+    identity: ChromeLifecycleWorkerIdentity
+  ): void => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- validates the untrusted worker identity before classification
+    if (typeof identity.runtimeId !== 'string' || identity.runtimeId.length > MAX_VALUE_STRING_LENGTH) {
+      throw new EvidenceLimitError('Evaluated chrome.runtime.id is not a bounded string')
+    }
+    const runtimeManifest = assertJson(identity.manifest)
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted runtime manifest at the worker boundary
+    if (runtimeManifest === null || Array.isArray(runtimeManifest) || typeof runtimeManifest !== 'object') {
+      throw new EvidenceLimitError('Evaluated worker manifest is not a JSON object')
+    }
+    const runtimeCanonical = JSON.stringify(runtimeManifest)
+    const runtimeManifestDigest = digest(runtimeCanonical)
+    const difference = manifestDiff(packagedManifest.value, runtimeManifest)
+    const urlIdentity = workerUrlIdentity(record.target)
+    const workerEntry = urlIdentity?.entry ?? ''
+    const exact =
+      urlIdentity !== null &&
+      urlIdentity.exactWorkerUrl &&
+      nonEmpty(identity.runtimeId) &&
+      urlIdentity.host === identity.runtimeId &&
+      workerEntry === packagedManifest.workerEntry &&
+      runtimeManifestDigest === packagedManifest.digest
+    const evidence = {
+      appearanceOrder: record.appearanceOrder,
+      diff: difference.entries,
+      diffOverflow: difference.overflow,
+      entryMatches: workerEntry === packagedManifest.workerEntry,
+      exact,
+      manifestProjection: manifestProjection(runtimeManifest),
+      packagedManifestDigest: packagedManifest.digest,
+      runtimeId: identity.runtimeId,
+      runtimeIdMatchesHost: urlIdentity !== null && urlIdentity.host === identity.runtimeId,
+      runtimeManifestDigest,
+      sessionId: session.sessionId,
+      targetId: record.target.targetId,
+      targetUrl: record.target.url,
+      workerEntry
+    }
+    assertBoundedEvidence(evidence)
+    record.classification = { runtimeId: identity.runtimeId, workerEntry, runtimeManifestDigest, exact }
+    record.needsProbe = false
+    record.unresolvedReason = undefined
+    timeline.record('worker-classified', evidence)
   }
 
   const probeWorker = async (record: WorkerRecord, deadlineMs: number): Promise<void> => {
@@ -1404,46 +1686,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
         record.unresolvedReason = 'Worker identity evaluation reached or exceeded its absolute deadline'
         return
       }
-      if (typeof identity.runtimeId !== 'string' || identity.runtimeId.length > MAX_VALUE_STRING_LENGTH) {
-        throw new EvidenceLimitError('Evaluated chrome.runtime.id is not a bounded string')
-      }
-      const runtimeManifest = assertJson(identity.manifest)
-      if (runtimeManifest === null || Array.isArray(runtimeManifest) || typeof runtimeManifest !== 'object') {
-        throw new EvidenceLimitError('Evaluated worker manifest is not a JSON object')
-      }
-      const runtimeCanonical = JSON.stringify(runtimeManifest)
-      const runtimeManifestDigest = digest(runtimeCanonical)
-      const difference = manifestDiff(packagedManifest.value, runtimeManifest)
-      const urlIdentity = workerUrlIdentity(record.target)
-      const workerEntry = urlIdentity?.entry ?? ''
-      const exact =
-        urlIdentity !== null &&
-        urlIdentity.exactShape &&
-        nonEmpty(identity.runtimeId) &&
-        urlIdentity.host === identity.runtimeId &&
-        workerEntry === packagedManifest.workerEntry &&
-        runtimeManifestDigest === packagedManifest.digest
-      const evidence = {
-        appearanceOrder: record.appearanceOrder,
-        diff: difference.entries,
-        diffOverflow: difference.overflow,
-        entryMatches: workerEntry === packagedManifest.workerEntry,
-        exact,
-        manifestProjection: manifestProjection(runtimeManifest),
-        packagedManifestDigest: packagedManifest.digest,
-        runtimeId: identity.runtimeId,
-        runtimeIdMatchesHost: urlIdentity !== null && urlIdentity.host === identity.runtimeId,
-        runtimeManifestDigest,
-        sessionId: session.sessionId,
-        targetId: record.target.targetId,
-        targetUrl: record.target.url,
-        workerEntry
-      }
-      assertBoundedEvidence(evidence)
-      record.classification = { runtimeId: identity.runtimeId, workerEntry, runtimeManifestDigest, exact }
-      record.needsProbe = false
-      record.unresolvedReason = undefined
-      timeline.record('worker-classified', evidence)
+      classifyWorkerEvidence(record, session, identity)
     } catch (error) {
       record.classification = undefined
       record.needsProbe = false
@@ -1478,57 +1721,232 @@ export const diagnoseChromeNativeActionLifecycle = async (
     observeStartupContinuity(startupContinuity, event)
   }
 
-  while (!worker && !workerFailure && !startupContinuity.failure) {
+  /**
+   * Decides the exact-worker binding at the discovery fence. 'retry' means the loop observes
+   * another turn; every other outcome already recorded its failure or the bound worker.
+   */
+  const resolveWorkerBindingDecision = (): 'retry' | 'failed' | BoundWorker => {
+    const exactWorkers = activeExactWorkers()
+    if (exactWorkers.length > 1) {
+      failWorker('More than one exact packaged Service Worker exists at the decision fence')
+      return 'failed'
+    }
+    if (exactWorkers.length !== 1 || unresolvedWorkers().length > 0) return 'retry'
+    const discoveryCompletedAtMs = timeline.now()
+    if (timeline.clockFailure || discoveryCompletedAtMs >= workerDiscoveryDeadlineMs) {
+      failWorker(
+        timeline.clockFailure ?? 'The final worker discovery decision reached or exceeded the worker discovery deadline'
+      )
+      return 'failed'
+    }
+    const record = exactWorkers[0]!
+    const classification = record.classification!
+    if (!record.sessionId) {
+      failWorker('The exact packaged Service Worker has no attached session')
+      return 'failed'
+    }
+    const bound: BoundWorker = {
+      targetId: record.target.targetId,
+      sessionId: record.sessionId,
+      targetUrl: record.target.url,
+      runtimeId: classification.runtimeId,
+      workerEntry: classification.workerEntry,
+      packagedWorkerEntry: packagedManifest.workerEntry,
+      packagedManifestDigest: packagedManifest.digest,
+      runtimeManifestDigest: classification.runtimeManifestDigest,
+      discoveryStartedAtMs: workerDiscoveryStartedAtMs,
+      discoveryCompletedAtMs,
+      discoveryDeadlineMs: workerDiscoveryDeadlineMs
+    }
+    timeline.record('worker-bound', bound, discoveryCompletedAtMs)
+    return bound
+  }
+
+  /** Applies the post-wait evidence, deadline and monotonic-progress checks; false stops the loop. */
+  const resolveWorkerDiscoveryWaitOutcome = (delivered: boolean, beforeWait: number, afterWait: number): boolean => {
+    if (delivered && pendingEvents.length === 0) {
+      failWorker('Worker discovery adapter reported an event without delivering it to the sink')
+      return false
+    }
+    if (timeline.clockFailure || afterWait > workerDiscoveryDeadlineMs) {
+      failWorker(timeline.clockFailure ?? 'Worker discovery evidence arrived after the absolute deadline')
+      return false
+    }
+    if (!delivered && afterWait === beforeWait) {
+      failWorker('Worker discovery adapter made no monotonic progress')
+      return false
+    }
+    return true
+  }
+
+  /** The terminal outcome and reason for the accepted-target lifecycle, in priority order. */
+  const resolveTerminalDecision = (
+    finalDom: ChromeLifecycleDomSample | UnavailableDom,
+    finalDomMissing: boolean
+  ): TerminalDecision => {
+    if (state.extensionFailure) return { outcome: 'extension-setup-failed', reason: state.extensionFailure }
+    if (state.targetFailure) return { outcome: 'target-lifecycle-failed', reason: state.targetFailure }
+    if (!state.pageSessionId || !state.mainFrameId || !state.navigationId) {
+      return {
+        outcome: 'target-lifecycle-failed',
+        reason: 'The sole accepted target did not complete its bound attach and navigation lifecycle'
+      }
+    }
+    if (timeline.overflow || timeline.clockFailure || finalDomMissing || state.unexpectedFailure) {
+      return {
+        outcome: 'unexpected-content-failure',
+        reason:
+          timeline.overflow ?? timeline.clockFailure ?? state.unexpectedFailure ?? 'Final DOM evidence is unavailable'
+      }
+    }
+    if (state.sharedRuntimeUnavailable) {
+      return { outcome: 'shared-runtime-unavailable', reason: state.sharedRuntimeUnavailable }
+    }
+    if (state.isolatedContextId === undefined) {
+      return {
+        outcome: 'content-context-absent',
+        reason: 'No exact page-bound extension isolated context appeared within the lifecycle budget'
+      }
+    }
+    if ('unavailable' in finalDom) {
+      return { outcome: 'unexpected-content-failure', reason: finalDom.unavailable }
+    }
+    if (finalDom.extensionRootCount !== 1) {
+      return {
+        outcome: 'content-mount-absent',
+        reason: 'The exact isolated context appeared without an extension shadow root'
+      }
+    }
+    if (state.deadlineFailure) return { outcome: 'unexpected-content-failure', reason: state.deadlineFailure }
+    return {
+      outcome: 'mounted',
+      reason: 'The exact page-bound isolated context mounted one clean extension shadow root'
+    }
+  }
+
+  /** Classifies an undelivered bound wait when unresolved workers remain. */
+  const classifyUndeliveredBoundWait = (afterWait: number, beforeWait: number): 'stop' | 'continue' | 'sample' => {
+    if (unresolvedWorkers().length === 0) return 'sample'
+    if (afterWait >= lifecycleDeadlineMs) {
+      state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
+      return 'stop'
+    }
+    if (afterWait === beforeWait) {
+      state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
+      return 'stop'
+    }
+    return 'continue'
+  }
+
+  /** Records the unresolved-worker terminal failure when another bound failure is already set. */
+  const applyUnresolvedWorkerTerminalFailure = (): void => {
+    if (unresolvedWorkers().length === 0 || !hasNonExtensionBoundFailure()) return
+    state.extensionFailure ??= 'A later Service Worker remained unresolved before the terminal decision'
+  }
+
+  /** Whether a bound-phase failure state other than the extension failure is set. */
+  const hasNonExtensionBoundFailure = (): boolean =>
+    Boolean(
+      state.targetFailure ||
+      state.unexpectedFailure ||
+      state.sharedRuntimeUnavailable ||
+      timeline.overflow ||
+      timeline.clockFailure
+    )
+
+  /** Whether any bound-phase failure state is set. */
+  const hasLocalBoundFailure = (): boolean =>
+    Boolean(state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
+
+  /** Whether any bound-phase failure state, including the shared timeline failures, is set. */
+  const hasBoundFailure = (): boolean => hasLocalBoundFailure() || Boolean(timeline.overflow || timeline.clockFailure)
+
+  /** Applies the bound lifecycle post-sample checks; false stops the loop at the same conditions. */
+  const resolveBoundSampleOutcome = (
+    sample: ChromeLifecycleDomSample | undefined,
+    afterWait: number,
+    beforeWait: number
+  ): boolean => {
+    if (finalDom || state.unexpectedFailure || state.sharedRuntimeUnavailable || finalDomMissing) return false
+    if (afterWait >= lifecycleDeadlineMs) return false
+    if (afterWait === beforeWait && sample?.extensionRootCount !== 1) {
+      state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
+      return false
+    }
+    return true
+  }
+
+  /** Applies the bound lifecycle post-wait evidence and deadline checks; false stops the loop. */
+  const resolveBoundWaitEvidenceOutcome = (delivered: boolean, afterWait: number): boolean => {
+    if (delivered && pendingEvents.length === 0) {
+      state.unexpectedFailure = 'Lifecycle adapter reported an event without delivering it to the sink'
+      return false
+    }
+    if (timeline.clockFailure || afterWait >= lifecycleDeadlineMs) {
+      state.deadlineFailure ??= timeline.clockFailure ?? 'Lifecycle observation reached the absolute deadline'
+      if (delivered) {
+        state.unexpectedFailure = 'Lifecycle evidence arrived at or after the absolute deadline'
+        return false
+      }
+    }
+    return true
+  }
+
+  /** Whether the bound lifecycle may still wait for evidence, recording a deadline failure first. */
+  const mayWaitForLifecycleEvidence = (beforeWait: number): boolean => {
+    if (timeline.clockFailure) return false
+    if (beforeWait < lifecycleDeadlineMs) return true
+    if (unresolvedWorkers().length > 0) {
+      state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
+    }
+    return false
+  }
+
+  /** Drains the queued pre-target events through the worker and continuity observers. */
+  const drainPreTargetEvents = (): void => {
     while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
       const pending = pendingEvents.shift()!
       processPreTargetEvent(pending.event, pending.atMs)
     }
-    await probePendingWorkers(workerDiscoveryDeadlineMs)
-    if (pendingEvents.length > 0) continue
+  }
+
+  /** Records the failure for a discovery phase that ended without a bound exact worker. */
+  const recordUnresolvedDiscoveryFailure = (): void => {
+    if (worker || workerFailure || startupContinuity.failure) return
+    const unresolved = unresolvedWorkers()
+    workerFailure =
+      unresolved.length > 0
+        ? `Worker discovery ended with ${unresolved.length} unresolved candidate(s)`
+        : 'No exact packaged Service Worker appeared before the discovery deadline'
+  }
+
+  /** Applies the overflow or clock failure before any further discovery work; false stops the loop. */
+  const resolveDiscoveryOverflowFailure = (): boolean => {
     if (timeline.overflow || timeline.clockFailure) {
       failWorker(timeline.overflow ?? timeline.clockFailure!)
-      break
+      return false
     }
+    return true
+  }
 
-    const exactWorkers = activeExactWorkers()
-    if (exactWorkers.length > 1) {
-      failWorker('More than one exact packaged Service Worker exists at the decision fence')
-      break
-    }
-    if (exactWorkers.length === 1 && unresolvedWorkers().length === 0) {
-      const discoveryCompletedAtMs = timeline.now()
-      if (timeline.clockFailure || discoveryCompletedAtMs >= workerDiscoveryDeadlineMs) {
-        failWorker(
-          timeline.clockFailure ??
-            'The final worker discovery decision reached or exceeded the worker discovery deadline'
-        )
-        break
-      }
-      const record = exactWorkers[0]!
-      const classification = record.classification!
-      if (!record.sessionId) {
-        failWorker('The exact packaged Service Worker has no attached session')
-        break
-      }
-      worker = {
-        targetId: record.target.targetId,
-        sessionId: record.sessionId,
-        targetUrl: record.target.url,
-        runtimeId: classification.runtimeId,
-        workerEntry: classification.workerEntry,
-        packagedWorkerEntry: packagedManifest.workerEntry,
-        packagedManifestDigest: packagedManifest.digest,
-        runtimeManifestDigest: classification.runtimeManifestDigest,
-        discoveryStartedAtMs: workerDiscoveryStartedAtMs,
-        discoveryCompletedAtMs,
-        discoveryDeadlineMs: workerDiscoveryDeadlineMs
-      }
-      timeline.record('worker-bound', worker, discoveryCompletedAtMs)
+  /** Whether the discovery loop may still wait for evidence at the given clock reading. */
+  const mayWaitForDiscoveryEvidence = (beforeWait: number): boolean =>
+    !timeline.clockFailure && beforeWait < workerDiscoveryDeadlineMs
+
+  while (!worker && !workerFailure && !startupContinuity.failure) {
+    drainPreTargetEvents()
+    await probePendingWorkers(workerDiscoveryDeadlineMs)
+    if (pendingEvents.length > 0) continue
+    if (!resolveDiscoveryOverflowFailure()) break
+
+    const bindingDecision = resolveWorkerBindingDecision()
+    if (bindingDecision !== 'retry') {
+      if (bindingDecision !== 'failed') worker = bindingDecision
       break
     }
 
     const beforeWait = timeline.now()
-    if (timeline.clockFailure || beforeWait >= workerDiscoveryDeadlineMs) break
+    if (!mayWaitForDiscoveryEvidence(beforeWait)) break
     let delivered: boolean
     try {
       delivered = await adapter.waitForEvent(workerDiscoveryDeadlineMs)
@@ -1537,27 +1955,11 @@ export const diagnoseChromeNativeActionLifecycle = async (
       break
     }
     const afterWait = timeline.now()
-    if (delivered && pendingEvents.length === 0) {
-      failWorker('Worker discovery adapter reported an event without delivering it to the sink')
-      break
-    }
-    if (timeline.clockFailure || afterWait > workerDiscoveryDeadlineMs) {
-      failWorker(timeline.clockFailure ?? 'Worker discovery evidence arrived after the absolute deadline')
-      break
-    }
-    if (!delivered && afterWait === beforeWait) {
-      failWorker('Worker discovery adapter made no monotonic progress')
-      break
-    }
+    if (!resolveWorkerDiscoveryWaitOutcome(delivered, beforeWait, afterWait)) break
   }
 
-  if (!worker && !workerFailure && !startupContinuity.failure) {
-    const unresolved = unresolvedWorkers()
-    workerFailure =
-      unresolved.length > 0
-        ? `Worker discovery ended with ${unresolved.length} unresolved candidate(s)`
-        : 'No exact packaged Service Worker appeared before the discovery deadline'
-  }
+  recordUnresolvedDiscoveryFailure()
+
   if (startupContinuity.failure) {
     return finish(
       context,
@@ -1599,7 +2001,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     lifecycleDeadlineMs
   })
 
-  const deadlineFenceAfter = (operation: string): { readonly atMs: number; readonly failure?: string } => {
+  const deadlineFenceAfter = (operation: string): DeadlineFence => {
     const atMs = timeline.now()
     if (timeline.clockFailure) return { atMs, failure: timeline.clockFailure }
     if (atMs >= lifecycleDeadlineMs) {
@@ -1611,14 +2013,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   let state: BoundState
   try {
     const created = await adapter.createTarget(CHROME_NATIVE_ACTION_ACCEPTED_URL, lifecycleDeadlineMs)
-    if (
-      !nonEmpty(created.targetId) ||
-      created.targetId.length > MAX_VALUE_STRING_LENGTH ||
-      startupTargets.some(({ targetId }) => targetId === created.targetId) ||
-      workerRecords.has(created.targetId)
-    ) {
-      throw new Error('Target.createTarget returned an invalid or pre-existing target identity')
-    }
+    assertCreatedTargetIdentityUsable(created)
     state = { targetId: created.targetId, targetDestroyed: false }
     const createFence = deadlineFenceAfter('Target.createTarget')
     if (createFence.failure) state.deadlineFailure = createFence.failure
@@ -1661,74 +2056,123 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  /** Applies a created/changed event to the bound-target continuity state. */
+  const observeBoundTargetIdentity = (
+    event: Extract<ChromeLifecycleEvent, { type: 'target-created' | 'target-changed' }>
+  ): void => {
+    if (event.target.targetId === state.targetId) {
+      if (event.target.type !== 'page' || event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL) {
+        state.targetFailure = 'The bound target changed type or URL'
+      }
+      return
+    }
+    if (event.target.type === 'page') {
+      if (event.target.targetId === startupPages[0]!.targetId) {
+        if (event.target.url !== 'about:blank') {
+          state.targetFailure = 'The startup about:blank page was navigated or reused during the bound lifecycle'
+        }
+      } else {
+        state.targetFailure = 'A replacement or second page target appeared during the bound lifecycle'
+      }
+    }
+  }
+
+  /** Applies a destroyed event to the bound-target continuity state. */
+  const observeBoundTargetDestroyed = (event: Extract<ChromeLifecycleEvent, { type: 'target-destroyed' }>): void => {
+    if (event.targetId === state.targetId) {
+      state.targetDestroyed = true
+      state.targetFailure = 'The sole accepted target was destroyed'
+    }
+  }
+
+  /** Resolves the accepted page session for an attach event, or null when the event is rejected. */
+  const resolveAcceptedPageSession = (
+    event: Extract<ChromeLifecycleEvent, { type: 'target-attached' }>
+  ): ChromeLifecycleSession | null => {
+    if (event.target.targetId !== state.targetId) {
+      if (event.target.type === 'page' && event.target.targetId !== startupPages[0]!.targetId) {
+        state.targetFailure = 'A replacement page session attached during the bound lifecycle'
+      }
+      return null
+    }
+    if (
+      event.target.type !== 'page' ||
+      event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL ||
+      !nonEmpty(event.sessionId) ||
+      state.pageSessionId !== undefined
+    ) {
+      state.targetFailure = 'The accepted target attached with a divergent session binding'
+      return null
+    }
+    state.pageSessionId = event.sessionId
+    return { targetId: state.targetId, sessionId: event.sessionId, targetType: 'page' }
+  }
+
+  /** Applies the accepted target's owned main-frame navigation to the continuity state. */
+  const observeAcceptedFrameNavigated = (event: Extract<ChromeLifecycleEvent, { type: 'frame-navigated' }>): void => {
+    if (event.parentFrameId !== undefined) return
+    if (!state.pageSessionId || event.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL || !nonEmpty(event.navigationId)) {
+      state.targetFailure = 'The accepted target did not bind its planned main-frame navigation'
+      return
+    }
+    if (
+      (state.mainFrameId !== undefined && state.mainFrameId !== event.frameId) ||
+      (state.navigationId !== undefined && state.navigationId !== event.navigationId)
+    ) {
+      state.targetFailure = 'The bound main frame or navigation was replaced'
+      return
+    }
+    state.mainFrameId = event.frameId
+    state.navigationId = event.navigationId
+  }
+
+  /** Records the post-operation deadline fence failure and reports whether the caller must stop. */
+  const recordDeadlineFence = (label: string): boolean => {
+    const fence = deadlineFenceAfter(label)
+    if (!fence.failure) return false
+    state.deadlineFailure = fence.failure
+    return true
+  }
+
+  /** Applies the bound-worker outcome of a consumed worker event; false stops the dispatch. */
+  const applyWorkerEventOutcome = (event: ChromeLifecycleEvent): boolean => {
+    if (workerFailure) state.extensionFailure ??= workerFailure
+    validateBoundWorker()
+    const workerWasReclassifiedAsPage = isWorkerTargetIdentityEvent(event) && event.target.type === 'page'
+    return workerWasReclassifiedAsPage
+  }
+
+  /** Whether the startup-continuity observation lets the accepted-target dispatch continue. */
+  const startupContinuityAllowsEvent = (): boolean => {
+    if (startupContinuity.failure) {
+      state.targetFailure = startupContinuity.failure.reason
+      return false
+    }
+    return !(state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
+  }
+
   const processEvent = async (event: ChromeLifecycleEvent, eventAtMs: number): Promise<void> => {
     if (observeWorkerEvent(event, eventAtMs)) {
       await probePendingWorkers(lifecycleDeadlineMs)
-      if (workerFailure) state.extensionFailure ??= workerFailure
-      validateBoundWorker()
-      const workerWasReclassifiedAsPage =
-        (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') &&
-        event.target.type === 'page'
-      if (!workerWasReclassifiedAsPage) return
+      if (!applyWorkerEventOutcome(event)) return
     }
 
     observeStartupContinuity(startupContinuity, event, state.targetId)
-    if (startupContinuity.failure) {
-      state.targetFailure = startupContinuity.failure.reason
-      return
-    }
-    if (state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
-      return
+    if (!startupContinuityAllowsEvent()) return
 
     if (event.type === 'target-created' || event.type === 'target-changed') {
-      if (event.target.targetId === state.targetId) {
-        if (event.target.type !== 'page' || event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL) {
-          state.targetFailure = 'The bound target changed type or URL'
-        }
-        return
-      }
-      if (event.target.type === 'page') {
-        if (event.target.targetId === startupPages[0]!.targetId) {
-          if (event.target.url !== 'about:blank') {
-            state.targetFailure = 'The startup about:blank page was navigated or reused during the bound lifecycle'
-          }
-        } else {
-          state.targetFailure = 'A replacement or second page target appeared during the bound lifecycle'
-        }
-      }
+      observeBoundTargetIdentity(event)
       return
     }
 
     if (event.type === 'target-destroyed') {
-      if (event.targetId === state.targetId) {
-        state.targetDestroyed = true
-        state.targetFailure = 'The sole accepted target was destroyed'
-      }
+      observeBoundTargetDestroyed(event)
       return
     }
 
     if (event.type === 'target-attached') {
-      if (event.target.targetId !== state.targetId) {
-        if (event.target.type === 'page' && event.target.targetId !== startupPages[0]!.targetId) {
-          state.targetFailure = 'A replacement page session attached during the bound lifecycle'
-        }
-        return
-      }
-      if (
-        event.target.type !== 'page' ||
-        event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL ||
-        !nonEmpty(event.sessionId) ||
-        state.pageSessionId !== undefined
-      ) {
-        state.targetFailure = 'The accepted target attached with a divergent session binding'
-        return
-      }
-      state.pageSessionId = event.sessionId
-      const session: ChromeLifecycleSession = {
-        targetId: state.targetId,
-        sessionId: event.sessionId,
-        targetType: 'page'
-      }
+      const session = resolveAcceptedPageSession(event)
+      if (!session) return
       try {
         const beforeObservationFailure =
           state.deadlineFailure ?? deadlineFenceAfter('Accepted session observation').failure
@@ -1737,11 +2181,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
           return
         }
         await adapter.enableSessionObservation(session, sessionDomains('page'), lifecycleDeadlineMs)
-        const observationFence = deadlineFenceAfter('Accepted session observation')
-        if (observationFence.failure) {
-          state.deadlineFailure = observationFence.failure
-          return
-        }
+        if (recordDeadlineFence('Accepted session observation')) return
         await adapter.resumeSession(session.sessionId, lifecycleDeadlineMs)
         const resumeFence = deadlineFenceAfter('Accepted session resume')
         if (resumeFence.failure) {
@@ -1766,12 +2206,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     if (event.type === 'target-detached') {
-      if (event.targetId === state.targetId) {
-        state.targetFailure =
-          event.sessionId === state.pageSessionId
-            ? 'The accepted target session detached'
-            : 'The accepted target emitted a divergent detached session'
-      }
+      observeBoundTargetDetached(event)
       return
     }
 
@@ -1787,68 +2222,92 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
+    observeAcceptedTargetContentEvent(event)
+  }
+
+  /** Applies the post-guard content events (frame/context/console/exception) for the accepted target. */
+  const observeAcceptedTargetContentEvent = (event: ChromeLifecycleEvent): void => {
     if (event.type === 'frame-navigated') {
-      if (event.parentFrameId !== undefined) return
-      if (!state.pageSessionId || event.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL || !nonEmpty(event.navigationId)) {
-        state.targetFailure = 'The accepted target did not bind its planned main-frame navigation'
-        return
-      }
-      if (
-        (state.mainFrameId !== undefined && state.mainFrameId !== event.frameId) ||
-        (state.navigationId !== undefined && state.navigationId !== event.navigationId)
-      ) {
-        state.targetFailure = 'The bound main frame or navigation was replaced'
-        return
-      }
-      state.mainFrameId = event.frameId
-      state.navigationId = event.navigationId
+      observeAcceptedFrameNavigated(event)
       return
     }
 
     if (event.type === 'execution-context-created') {
-      const exactContext =
-        state.mainFrameId !== undefined &&
-        event.frameId === state.mainFrameId &&
-        event.world === 'isolated' &&
-        event.origin === extensionOrigin(worker.runtimeId)
-      if (!exactContext) return
-      if (state.isolatedContextId !== undefined && state.isolatedContextId !== event.contextId) {
-        state.unexpectedFailure = 'Multiple exact page-bound isolated contexts appeared'
-        return
-      }
-      state.isolatedContextId = event.contextId
+      observeIsolatedContextCreated(event)
       return
     }
 
     if (event.type === 'execution-context-destroyed') {
-      if (event.contextId === state.isolatedContextId) {
-        state.unexpectedFailure = 'The exact page-bound isolated context was destroyed'
-      }
+      observeIsolatedContextDestroyed(event)
       return
     }
 
     if (event.type === 'console') {
-      if (event.contextId !== state.isolatedContextId) return
-      if (containsSharedRuntimeUnavailable(event.args)) {
-        state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
-      } else if (event.level.toLowerCase() === 'error') {
-        state.unexpectedFailure = 'The exact isolated context reported an unexpected console error'
-      }
+      observeIsolatedConsoleEvent(event)
       return
     }
 
     if (event.type === 'exception') {
-      if (event.contextId !== state.isolatedContextId) return
-      if (containsSharedRuntimeUnavailable([event.message, event.stack])) {
-        state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
-      } else {
-        state.unexpectedFailure = 'The exact isolated context reported an unexpected exception'
-      }
-      return
+      observeIsolatedExceptionEvent(event)
     }
   }
 
-  let finalDom: ChromeLifecycleDomSample | { readonly unavailable: string } | undefined
+  /** Applies a console event from the exact page-bound isolated context. */
+  const observeIsolatedConsoleEvent = (event: Extract<ChromeLifecycleEvent, { type: 'console' }>): void => {
+    if (event.contextId !== state.isolatedContextId) return
+    if (containsSharedRuntimeUnavailable(event.args)) {
+      state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
+    } else if (event.level.toLowerCase() === 'error') {
+      state.unexpectedFailure = 'The exact isolated context reported an unexpected console error'
+    }
+  }
+
+  /** Applies an exception event from the exact page-bound isolated context. */
+  const observeIsolatedExceptionEvent = (event: Extract<ChromeLifecycleEvent, { type: 'exception' }>): void => {
+    if (event.contextId !== state.isolatedContextId) return
+    if (containsSharedRuntimeUnavailable([event.message, event.stack])) {
+      state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
+    } else {
+      state.unexpectedFailure = 'The exact isolated context reported an unexpected exception'
+    }
+  }
+
+  /** Applies a detached event to the accepted target continuity state. */
+  const observeBoundTargetDetached = (event: Extract<ChromeLifecycleEvent, { type: 'target-detached' }>): void => {
+    if (event.targetId !== state.targetId) return
+    state.targetFailure =
+      event.sessionId === state.pageSessionId
+        ? 'The accepted target session detached'
+        : 'The accepted target emitted a divergent detached session'
+  }
+
+  /** Applies an execution-context creation event for the exact page-bound isolated world. */
+  const observeIsolatedContextCreated = (
+    event: Extract<ChromeLifecycleEvent, { type: 'execution-context-created' }>
+  ): void => {
+    const exactContext =
+      state.mainFrameId !== undefined &&
+      event.frameId === state.mainFrameId &&
+      event.world === 'isolated' &&
+      event.origin === extensionOrigin(worker.runtimeId)
+    if (!exactContext) return
+    if (state.isolatedContextId !== undefined && state.isolatedContextId !== event.contextId) {
+      state.unexpectedFailure = 'Multiple exact page-bound isolated contexts appeared'
+      return
+    }
+    state.isolatedContextId = event.contextId
+  }
+
+  /** Applies an execution-context destruction event for the exact isolated context. */
+  const observeIsolatedContextDestroyed = (
+    event: Extract<ChromeLifecycleEvent, { type: 'execution-context-destroyed' }>
+  ): void => {
+    if (event.contextId === state.isolatedContextId) {
+      state.unexpectedFailure = 'The exact page-bound isolated context was destroyed'
+    }
+  }
+
+  let finalDom: ChromeLifecycleDomSample | UnavailableDom | undefined
   let finalDomMissing = false
 
   const sampleDom = async (): Promise<ChromeLifecycleDomSample | undefined> => {
@@ -1902,40 +2361,15 @@ export const diagnoseChromeNativeActionLifecycle = async (
     while (pendingEvents.length > 0) {
       const pending = pendingEvents.shift()!
       await processEvent(pending.event, pending.atMs)
-      if (state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
-        break
+      if (hasLocalBoundFailure()) break
     }
 
-    if (
-      unresolvedWorkers().length > 0 &&
-      (state.targetFailure ||
-        state.unexpectedFailure ||
-        state.sharedRuntimeUnavailable ||
-        timeline.overflow ||
-        timeline.clockFailure)
-    ) {
-      state.extensionFailure ??= 'A later Service Worker remained unresolved before the terminal decision'
-    }
+    applyUnresolvedWorkerTerminalFailure()
 
-    if (
-      state.extensionFailure ||
-      state.targetFailure ||
-      state.unexpectedFailure ||
-      state.sharedRuntimeUnavailable ||
-      timeline.overflow ||
-      timeline.clockFailure
-    ) {
-      break
-    }
+    if (hasBoundFailure()) break
 
     const beforeWait = timeline.now()
-    if (timeline.clockFailure) break
-    if (beforeWait >= lifecycleDeadlineMs) {
-      if (unresolvedWorkers().length > 0) {
-        state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
-      }
-      break
-    }
+    if (!mayWaitForLifecycleEvidence(beforeWait)) break
 
     let delivered: boolean
     try {
@@ -1946,53 +2380,23 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     const afterWait = timeline.now()
-    if (delivered && pendingEvents.length === 0) {
-      state.unexpectedFailure = 'Lifecycle adapter reported an event without delivering it to the sink'
-      break
-    }
-    if (timeline.clockFailure || afterWait >= lifecycleDeadlineMs) {
-      state.deadlineFailure ??= timeline.clockFailure ?? 'Lifecycle observation reached the absolute deadline'
-      if (delivered) {
-        state.unexpectedFailure = 'Lifecycle evidence arrived at or after the absolute deadline'
-        break
-      }
-    }
+    if (!resolveBoundWaitEvidenceOutcome(delivered, afterWait)) break
     if (!delivered) {
-      if (unresolvedWorkers().length > 0) {
-        if (afterWait >= lifecycleDeadlineMs) {
-          state.extensionFailure = 'A later Service Worker remained unresolved at the lifecycle deadline'
-          break
-        }
-        if (afterWait === beforeWait) {
-          state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
-          break
-        }
-        continue
-      }
+      const undelivered = classifyUndeliveredBoundWait(afterWait, beforeWait)
+      if (undelivered === 'stop') break
+      if (undelivered === 'continue') continue
       const sample = await sampleDom()
-      if (finalDom || state.unexpectedFailure || state.sharedRuntimeUnavailable || finalDomMissing) break
-      if (afterWait >= lifecycleDeadlineMs) break
-      if (afterWait === beforeWait && sample?.extensionRootCount !== 1) {
-        state.unexpectedFailure = 'Lifecycle adapter made no monotonic progress'
-        break
-      }
+      if (!resolveBoundSampleOutcome(sample, afterWait, beforeWait)) break
     }
   }
 
-  while (
-    pendingEvents.length > 0 &&
-    !state.extensionFailure &&
-    !state.targetFailure &&
-    !state.unexpectedFailure &&
-    !state.sharedRuntimeUnavailable
-  ) {
+  while (pendingEvents.length > 0 && !hasLocalBoundFailure()) {
     const pending = pendingEvents.shift()!
     await processEvent(pending.event, pending.atMs)
   }
 
   if (!finalDom) {
-    const addressable = state.pageSessionId && state.pageObservationReady && state.mainFrameId && !state.targetDestroyed
-    if (addressable) {
+    if (isFinalSampleAddressable()) {
       const sample = await sampleDom()
       if (sample) finalDom = sample
     } else {
@@ -2009,40 +2413,16 @@ export const diagnoseChromeNativeActionLifecycle = async (
     finalDom = unavailableDom('Final DOM evidence is unavailable')
   }
 
-  let outcome: ChromeNativeActionLifecycleOutcome
-  let reason: string
-  if (state.extensionFailure) {
-    outcome = 'extension-setup-failed'
-    reason = state.extensionFailure
-  } else if (state.targetFailure) {
-    outcome = 'target-lifecycle-failed'
-    reason = state.targetFailure
-  } else if (!state.pageSessionId || !state.mainFrameId || !state.navigationId) {
-    outcome = 'target-lifecycle-failed'
-    reason = 'The sole accepted target did not complete its bound attach and navigation lifecycle'
-  } else if (timeline.overflow || timeline.clockFailure || finalDomMissing || state.unexpectedFailure) {
-    outcome = 'unexpected-content-failure'
-    reason =
-      timeline.overflow ?? timeline.clockFailure ?? state.unexpectedFailure ?? 'Final DOM evidence is unavailable'
-  } else if (state.sharedRuntimeUnavailable) {
-    outcome = 'shared-runtime-unavailable'
-    reason = state.sharedRuntimeUnavailable
-  } else if (state.isolatedContextId === undefined) {
-    outcome = 'content-context-absent'
-    reason = 'No exact page-bound extension isolated context appeared within the lifecycle budget'
-  } else if ('unavailable' in finalDom) {
-    outcome = 'unexpected-content-failure'
-    reason = finalDom.unavailable
-  } else if (finalDom.extensionRootCount !== 1) {
-    outcome = 'content-mount-absent'
-    reason = 'The exact isolated context appeared without an extension shadow root'
-  } else if (state.deadlineFailure) {
-    outcome = 'unexpected-content-failure'
-    reason = state.deadlineFailure
-  } else {
-    outcome = 'mounted'
-    reason = 'The exact page-bound isolated context mounted one clean extension shadow root'
-  }
-
-  return finish(context, timeline, outcome, reason, finalDom, worker, state, lifecycleStartedAtMs, lifecycleDeadlineMs)
+  const decision = resolveTerminalDecision(finalDom, finalDomMissing)
+  return finish(
+    context,
+    timeline,
+    decision.outcome,
+    decision.reason,
+    finalDom,
+    worker,
+    state,
+    lifecycleStartedAtMs,
+    lifecycleDeadlineMs
+  )
 }

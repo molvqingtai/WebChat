@@ -84,11 +84,14 @@ describe('IndexedDB output realm boundary', () => {
     const name = `database-foreign-realm-${databaseId++}`
     const definition = portableDefinition(name)
     const database = createIndexedDBDatabase(definition)
+    // SAFETY: the scripted value is created from the literal shape this test asserts on.
     const foreignValue = runInNewContext('({ group: "foreign" })') as { group: string }
     const nativeStructuredClone = globalThis.structuredClone.bind(globalThis)
     let passThroughForeignValue = false
 
     names.add(name)
+    // SAFETY: the stub keeps the native structuredClone signature it replaces.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the structuredClone stub mirrors the platform signature
     vi.stubGlobal('structuredClone', ((value: unknown, options?: StructuredSerializeOptions) => {
       if (value === foreignValue && passThroughForeignValue) {
         passThroughForeignValue = false
@@ -154,15 +157,20 @@ describe.each(backends)('$name Database contract', (backend) => {
   it('enforces non-empty duplicate-free scope and enlisted store access', async () => {
     const database = create(backend)
 
+    // SAFETY: the deliberately unsupported scope inputs are forwarded to the boundary.
     await expect(database.read([] as never, async () => null)).rejects.toThrow('must not be empty')
+    // SAFETY: the deliberately unsupported scope inputs are forwarded to the boundary.
     await expect(database.read(['records', 'records'] as never, async () => null)).rejects.toThrow(
       'must not contain duplicates'
     )
     await expect(
       database.read(['records'], async (transaction) =>
+        // SAFETY: the test reads an out-of-scope store through the narrowest possible view of the transaction.
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/no-unknown-returns -- deliberately out-of-scope access probe
         (transaction as unknown as { get(store: string, key: string): Promise<unknown> }).get('conflicts', 'key')
       )
     ).rejects.toThrow('outside transaction scope')
+    // SAFETY: the deliberately unknown store name is forwarded to the boundary.
     await expect(database.read(['missing'] as never, async () => null)).rejects.toThrow('Unknown database store')
   })
 
@@ -335,7 +343,9 @@ describe.each(backends)('$name Database contract', (backend) => {
     const winner = await first.read(['records'], (transaction) => transaction.get('records', 'same'))
     expect(loser).toEqual({ inserted: false, existing: winner })
     if (loser && !loser.inserted) {
-      ;(loser.existing as { nested: { count: number } }).nested.count = 99
+      // SAFETY: the inserted record's nested shape is the one built by the test above.
+      const existing = loser.existing as { nested: { count: number } }
+      existing.nested.count = 99
     }
     await expect(first.read(['records'], (transaction) => transaction.get('records', 'same'))).resolves.toEqual(winner)
   })
@@ -402,23 +412,63 @@ describe.each(backends)('$name Database contract', (backend) => {
     await database.close()
   })
 
+  it('resolves an empty-string index to the default key for range validation', async () => {
+    const name = `database-empty-index-${backend.name}-${databaseId++}`
+    names.add(name)
+    const definition: DatabaseDefinition<{
+      items: { key: string | number; value: { group: string; count: number }; indexes: { '': number } }
+    }> = {
+      name,
+      version: 1,
+      channelName: `${name}:WATCH`,
+      stores: {
+        items: {
+          key: 'string-or-number',
+          introducedIn: 1,
+          indexes: { '': { key: 'number', keyPath: 'count', introducedIn: 1 } }
+        }
+      }
+    }
+    const database = backend.name === 'Memory' ? createMemoryDatabase(definition) : createIndexedDBDatabase(definition)
+
+    await database.write(['items'], async (transaction) => {
+      await Promise.all([
+        transaction.insert('items', 'a', { group: 'x', count: 2 }),
+        transaction.insert('items', 'b', { group: 'y', count: 1 })
+      ])
+    })
+    // SAFETY: a miscast caller forwards a string range against the number-typed empty index; the
+    // empty-string index falls back to the default key type, so the string bounds are accepted
+    // and the scan uses the default key order rather than the empty index's count keyPath.
+    await expect(
+      database.read(['items'], (transaction) =>
+        transaction.scan('items', { index: '', range: { lower: 'b', upper: 'z' } } as never)
+      )
+    ).resolves.toMatchObject([{ key: 'b' }])
+    await database.close()
+  })
+
   it('rejects invalid keys, indexes, ranges, limits, and canonical values', async () => {
     const database = create(backend)
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the test builds a cyclic value deliberately
     const cyclic: { self?: unknown } = {}
     cyclic.self = cyclic
     const sparse = Array(2)
     sparse[1] = 'value'
 
     await expect(
+      // SAFETY: the deliberately unsupported input is forwarded to the boundary.
       database.write(['records'], (transaction) => transaction.insert('records', Number.NaN as never, record('x')))
     ).rejects.toThrow('finite numbers')
     await expect(
+      // SAFETY: the deliberately unsupported input is forwarded to the boundary.
       database.read(['records'], (transaction) => transaction.scan('records', { index: 'missing' } as never))
     ).rejects.toThrow('Unknown database index')
     await expect(
       database.read(['records'], (transaction) => transaction.scan('records', { range: { lower: 'z', upper: 'a' } }))
     ).rejects.toThrow('lower bound exceeds')
     await expect(
+      // SAFETY: the deliberately unsupported input is forwarded to the boundary.
       database.read(['records'], (transaction) => transaction.scan('records', { range: { lowerOpen: true } } as never))
     ).rejects.toThrow('lowerOpen requires lower')
     await expect(
@@ -426,10 +476,12 @@ describe.each(backends)('$name Database contract', (backend) => {
     ).rejects.toThrow('non-negative safe integer')
     await expect(
       database.read(['records'], (transaction) =>
+        // SAFETY: the deliberately unsupported input is forwarded to the boundary.
         transaction.scan('records', { range: { lower: 'a', lowerOpen: 'yes' } } as never)
       )
     ).rejects.toThrow('lowerOpen must be a boolean')
     await expect(
+      // SAFETY: the deliberately unsupported input is forwarded to the boundary.
       database.read(['records'], (transaction) => transaction.scan('records', { unexpected: true } as never))
     ).rejects.toThrow('unknown field')
 
@@ -445,6 +497,7 @@ describe.each(backends)('$name Database contract', (backend) => {
     const database = create(backend)
     await database.write(['records'], (transaction) => transaction.insert('records', 'record-1', record('first')))
 
+    // SAFETY: the stored record is the shape this test inserted above.
     const value = (await database.read(['records'], (transaction) => transaction.get('records', 'record-1'))) as {
       value: string
       nested: { count: number }

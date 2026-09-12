@@ -6,6 +6,7 @@ describe('ConnectionLifecycle exact task-identity correlation', () => {
     const { value, report } = createConnectionLifecycle()
 
     const token = value.mint()
+    // SAFETY: the test task is a settled promise used only to bind the token.
     const task = Promise.resolve() as Promise<void>
     value.bindTask(task, token)
     report(token, 'cancelled')
@@ -19,10 +20,12 @@ describe('ConnectionLifecycle exact task-identity correlation', () => {
     const { value, report } = createConnectionLifecycle()
 
     const tokenA = value.mint()
+    // SAFETY: the test task is a settled promise used only to bind token A.
     const taskA = Promise.resolve() as Promise<void>
     value.bindTask(taskA, tokenA)
     // Overlapping invocation B mints its own token and task.
     const tokenB = value.mint()
+    // SAFETY: the test task is a settled promise used only to bind token B.
     const taskB = Promise.resolve() as Promise<void>
     value.bindTask(taskB, tokenB)
 
@@ -37,6 +40,7 @@ describe('ConnectionLifecycle exact task-identity correlation', () => {
   it('consumes (releases) a terminal result even when the caller would otherwise branch on staleness', () => {
     const { value, report } = createConnectionLifecycle()
     const token = value.mint()
+    // SAFETY: the test task is a settled promise used only to bind the token.
     const task = Promise.resolve() as Promise<void>
     value.bindTask(task, token)
     report(token, 'succeeded')

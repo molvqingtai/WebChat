@@ -4,6 +4,7 @@ export interface ChromiumTransportStatus {
 }
 
 interface RebindableTransport {
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the rebind settlement value is ignored
   rebind: () => Promise<unknown>
 }
 

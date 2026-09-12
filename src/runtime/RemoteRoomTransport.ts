@@ -24,6 +24,7 @@ type PendingJoin = {
 /** Background-side facade over Offscreen's physical transport; its rooms are callback-aligned projections. */
 export class RemoteRoomTransport implements RoomTransport {
   private readonly rooms = new Map<string, TransportRoomState>()
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- callbacks may return void, a terminal, or a promise
   private readonly messages = new Set<(roomId: string, sourcePeerId: string, payload: string) => unknown>()
   private readonly joins = new Set<(roomId: string, peerId: string) => void>()
   private readonly leaves = new Set<(roomId: string, peerId: string) => void>()
@@ -132,10 +133,12 @@ export class RemoteRoomTransport implements RoomTransport {
     )
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- callbacks may return void, a terminal, or a promise
   private invokeIngress(callback: () => unknown): Promise<RoomMessageTerminal> {
     return Promise.resolve(callback()).then((terminal) => (terminal === 'invalid' ? 'invalid' : 'committed'))
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- callbacks may return void, a terminal, or a promise
   private settleIngress(generation: number, callback: () => unknown) {
     return Promise.race([this.invokeIngress(callback), this.invalidationFor(generation).promise])
   }
@@ -144,6 +147,7 @@ export class RemoteRoomTransport implements RoomTransport {
     generation: number,
     roomId: string,
     handle: string,
+    // oxlint-disable-next-line anti-slop/no-unknown-returns -- callbacks may return void, a terminal, or a promise
     callback: () => unknown
   ): Promise<RoomMessageTerminal> {
     if (!this.isCurrent(generation)) return Promise.resolve('invalid')
@@ -173,19 +177,17 @@ export class RemoteRoomTransport implements RoomTransport {
       sourceGeneration,
       presence
     })),
-    ...(this.worldRecoveryState.local
+    local: this.worldRecoveryState.local
       ? {
-          local: {
-            peerId: this.worldRecoveryState.local.peerId,
-            handle: this.worldRecoveryState.local.handle,
-            registrations: this.worldRecoveryState.local.registrations.map(({ domain, user, site }) => ({
-              domain,
-              user: { ...user },
-              site: { ...site }
-            }))
-          }
+          peerId: this.worldRecoveryState.local.peerId,
+          handle: this.worldRecoveryState.local.handle,
+          registrations: this.worldRecoveryState.local.registrations.map(({ domain, user, site }) => ({
+            domain,
+            user: { ...user },
+            site: { ...site }
+          }))
         }
-      : {})
+      : undefined
   })
   roomRecovery = (): RoomTransportRecovery => ({
     rooms: this.roomRecoveryState.rooms.map((recovery) => ({
@@ -201,6 +203,7 @@ export class RemoteRoomTransport implements RoomTransport {
   mintRecoveryBindingCapability = (roomId: string): RecoveryBindingCapability | null => {
     const room = this.rooms.get(roomId)
     if (!room || !this.isCurrent(this.generation) || this.admission === 0) return null
+    // SAFETY: the capability is an opaque frozen null-prototype token used as a map key only.
     const capability = Object.freeze(Object.create(null)) as RecoveryBindingCapability
     this.recoveryCapabilities.set(capability, {
       roomId,
@@ -329,9 +332,10 @@ export class RemoteRoomTransport implements RoomTransport {
   }
   retireRoomsForPreparation = async (roomIds: readonly string[]) => {
     const generation = this.generation
-    const selected = [...new Set(roomIds)]
-      .map((roomId) => ({ roomId, room: this.rooms.get(roomId) }))
-      .filter((item): item is { roomId: string; room: TransportRoomState } => item.room !== undefined)
+    const selected = [...new Set(roomIds)].flatMap((roomId) => {
+      const room = this.rooms.get(roomId)
+      return room === undefined ? [] : [{ roomId, room }]
+    })
     await this.binding
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
     let failed = false
@@ -367,6 +371,7 @@ export class RemoteRoomTransport implements RoomTransport {
       throw new Error('Room transport generation is no longer current')
     }
   }
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- callbacks may return void, a terminal, or a promise
   onMessage = (callback: (roomId: string, sourcePeerId: string, payload: string) => unknown) => {
     this.messages.add(callback)
     return () => this.messages.delete(callback)

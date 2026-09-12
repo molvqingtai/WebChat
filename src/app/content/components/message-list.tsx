@@ -80,6 +80,8 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
 
   useEffect(() => {
     atEndRef.current = atEnd
+    // The pending count is cleared in the effect in response to the committed at-bottom state.
+    // oxlint-disable-next-line react-hooks/set-state-in-effect -- retires the count on bottom reach
     if (atEnd) setNewMessageCount(0)
   }, [atEnd])
 
@@ -107,6 +109,7 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     // the scrollbar element itself at mount would miss every later drag. Only pointerdowns
     // originating inside the repository scrollbar subtree cancel; every other pointer target
     // (messages, content, viewport, selection, clicks) leaves the authorization untouched.
+    // SAFETY: pointerdown events carry an EventTarget; only Element targets carry closest().
     const onPointerDown = (event: PointerEvent) => {
       if ((event.target as HTMLElement | null)?.closest('[data-slot="scroll-area-scrollbar"]')) {
         cancelAuthorization()
@@ -196,7 +199,11 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     }
   }, [scrollToEnd, recomputeScrollGate])
 
+  // The arrival counter accumulates across committed tail changes by comparing the previous tail
+  // props; the effect is the point where those committed changes are observed. See the PR's
+  // retained-exception list.
   useEffect(() => {
+    // oxlint-disable-next-line react-hooks/set-state-in-effect -- counter accumulates across commits
     recomputeScrollGate()
     const previousTailKey = previousTailKeyRef.current
     const previousCount = previousCountRef.current

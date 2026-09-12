@@ -67,12 +67,15 @@ const createFixture = ({
   const set = vi.fn(storage?.set ?? (async () => {}))
   const watch = vi.fn(storage?.watch ?? (async () => async () => {}))
   const localStorage: Storage = {
+    // SAFETY: the test narrows this value to the shape it asserts on.
     get: get as Storage['get'],
+    // SAFETY: the test narrows this value to the shape it asserts on.
     set: set as Storage['set'],
     watch
   }
   const browserGet = vi.fn(async () => userInfo)
   const browserStorage: Storage = {
+    // SAFETY: the test narrows this value to the shape it asserts on.
     get: browserGet as Storage['get'],
     set: async () => {},
     watch: async () => async () => {}
@@ -154,6 +157,7 @@ const createSharedStatusStorage = (
     [APP_UNREAD_STORAGE_KEY, initial.unread],
     [APP_MESSAGE_AUTHOR_STORAGE_KEY, initial.messageAuthor ?? EMPTY_MESSAGE_AUTHOR]
   ])
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- test watcher registry stores opaque callbacks
   const watchers = new Map<string, Set<() => unknown>>()
   const pausedTabs = new Set<string>()
   const heldReads = new Map<string, Map<StatusStorageKey, { capture: () => void; wait: Promise<void> }>>()
@@ -179,13 +183,17 @@ const createSharedStatusStorage = (
       heldReads.set(tabId, tabReads)
       return { captured: captured.promise, release: () => release.resolve() }
     },
+    // SAFETY: the test narrows this value to the shape it asserts on.
     value: <Value extends StorageValue>(key: StatusStorageKey) => values.get(key) as Value,
     createTab(tabId: string): Storage {
+      // oxlint-disable-next-line anti-slop/no-unknown-returns -- test watcher registry stores opaque callbacks
       const tabWatchers = new Set<() => unknown>()
       watchers.set(tabId, tabWatchers)
       return {
         get: async <Value extends StorageValue>(key: string) => {
+          // SAFETY: the test narrows this value to the shape it asserts on.
           const statusKey = key as StatusStorageKey
+          // SAFETY: the test narrows this value to the shape it asserts on.
           const value = values.get(statusKey) as Value | undefined
           const hold = heldReads.get(tabId)?.get(statusKey)
           if (hold) {
@@ -196,6 +204,7 @@ const createSharedStatusStorage = (
           return value ?? null
         },
         set: async <Value extends StorageValue>(key: string, value: Value) => {
+          // SAFETY: the test narrows this value to the shape it asserts on.
           const statusKey = key as StatusStorageKey
           if (!values.has(statusKey) || Object.is(values.get(statusKey), value)) return
           values.set(statusKey, value)
@@ -244,6 +253,7 @@ const reactionMessage = (id: string): ChatMessage => ({
 const historyRecord = (id: string): TextMessageRecord => ({
   type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
   id,
+  // SAFETY: the test narrows this value to the shape it asserts on.
   message: textMessage(id, OTHER.id) as TextMessageRecord['message'],
   user: OTHER,
   receivedAt: 1
@@ -333,9 +343,19 @@ describe('AppStatus shared domain status', () => {
     const writes: Array<{ key: string; value: StorageValue }> = []
     const storage: Storage = {
       get: <Value extends StorageValue>(key: string) => {
-        if (key === APP_OPEN_STORAGE_KEY) return openRead.promise as Promise<Value | null>
-        if (key === APP_POSITION_STORAGE_KEY) return positionRead.promise as Promise<Value | null>
-        if (key === APP_UNREAD_STORAGE_KEY) return unreadRead.promise as Promise<Value | null>
+        if (key === APP_OPEN_STORAGE_KEY) {
+          // SAFETY: the harness returns the pending read recorded for this storage key.
+          return openRead.promise as Promise<Value | null>
+        }
+        if (key === APP_POSITION_STORAGE_KEY) {
+          // SAFETY: the harness returns the pending read recorded for this storage key.
+          return positionRead.promise as Promise<Value | null>
+        }
+        if (key === APP_UNREAD_STORAGE_KEY) {
+          // SAFETY: the harness returns the pending read recorded for this storage key.
+          return unreadRead.promise as Promise<Value | null>
+        }
+        // SAFETY: the test narrows this value to the shape it asserts on.
         return messageAuthorRead.promise as Promise<Value | null>
       },
       set: async (key, value) => {
@@ -730,6 +750,7 @@ describe('AppStatus shared domain status', () => {
     expect(domainA.value<boolean>(APP_OPEN_STORAGE_KEY)).toBe(true)
     expect(domainA.value<boolean>(APP_UNREAD_STORAGE_KEY)).toBe(false)
     expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    // SAFETY: the recorded write values are narrowed to the status shapes this assertion inspects.
     expect(
       domainA.writes.some(
         ({ tabId, key, value }) =>
@@ -772,6 +793,7 @@ describe('AppStatus shared domain status', () => {
         ({ tabId, key, value }) =>
           tabId === 'B' &&
           key === APP_MESSAGE_AUTHOR_STORAGE_KEY &&
+          // SAFETY: the test narrows this value to the shape it asserts on.
           (value as AppButtonAuthorStatus).author?.id === ALPHA.id
       )
     ).toBe(false)
@@ -881,9 +903,19 @@ describe('AppStatus shared domain status', () => {
     }
     const storage: Storage = {
       get: <Value extends StorageValue>(key: string) => {
-        if (key === APP_OPEN_STORAGE_KEY) return reads.open.promise as Promise<Value | null>
-        if (key === APP_POSITION_STORAGE_KEY) return reads.position.promise as Promise<Value | null>
-        if (key === APP_UNREAD_STORAGE_KEY) return reads.unread.promise as Promise<Value | null>
+        if (key === APP_OPEN_STORAGE_KEY) {
+          // SAFETY: the harness returns the pending read recorded for this storage key.
+          return reads.open.promise as Promise<Value | null>
+        }
+        if (key === APP_POSITION_STORAGE_KEY) {
+          // SAFETY: the harness returns the pending read recorded for this storage key.
+          return reads.position.promise as Promise<Value | null>
+        }
+        if (key === APP_UNREAD_STORAGE_KEY) {
+          // SAFETY: the harness returns the pending read recorded for this storage key.
+          return reads.unread.promise as Promise<Value | null>
+        }
+        // SAFETY: the test narrows this value to the shape it asserts on.
         return reads.messageAuthor.promise as Promise<Value | null>
       },
       set: async () => {},

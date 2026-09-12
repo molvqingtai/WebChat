@@ -47,6 +47,7 @@ const AvatarSelect = ({
         onSuccess?.(base64)
         onChange?.(base64)
       } catch (error) {
+        // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
         onError?.(error as Error)
       }
     }

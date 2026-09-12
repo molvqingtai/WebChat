@@ -30,9 +30,11 @@ describe('presence store', () => {
   })
 
   it('strictly persists and reloads browser session-storage records', async () => {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
     const values: Record<string, unknown> = {}
     const storage = {
       get: async (key: string) => ({ [key]: values[key] }),
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
       set: async (items: Record<string, unknown>) => {
         Object.assign(values, items)
       }
@@ -46,6 +48,7 @@ describe('presence store', () => {
   })
 
   it('does not compare the requested domain with the stored record domain', async () => {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
     const values: Record<string, unknown> = {}
     const store = createBrowserPresenceStore({
       get: async (_key) => values,
@@ -65,12 +68,15 @@ describe('presence store', () => {
     const store = createMemoryPresenceStore()
     // Typed save trusts its input; the memory store never parses, so an invalid status value
     // round-trips as-is.
+    // SAFETY: the test constructs a deliberately malformed record to exercise the durable load boundary.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately malformed record for the durable-load boundary test
     const invalid = { ...record, local: { ...record.local!, status: 'unknown' } } as unknown as PresenceDomainRecord
     await store.save(invalid)
     await expect(store.load(DOMAIN)).resolves.toEqual(invalid)
   })
 
   it('enforces the bounded observer ledger at the durable load boundary', async () => {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
     const values: Record<string, unknown> = {}
     const store = createBrowserPresenceStore({
       get: async (_key) => values,
@@ -98,6 +104,7 @@ describe('presence store', () => {
   })
 
   it('trusts typed saves and isolates an invalid generation at the durable load boundary', async () => {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
     const values: Record<string, unknown> = {}
     const store = createBrowserPresenceStore({
       get: async (_key) => values,
@@ -108,16 +115,20 @@ describe('presence store', () => {
     await store.save(record)
     // Typed save trusts its input; the invalid status value is stored but is omitted at load by
     // the declarative schema (no typed write is rejected).
+    // SAFETY: the test constructs a deliberately malformed record to exercise the durable load boundary.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately malformed record for the durable-load boundary test
     await store.save({ ...record, local: { ...record.local!, status: 'unknown' } } as unknown as PresenceDomainRecord)
     await expect(store.load(DOMAIN)).resolves.toBeNull()
   })
 
   it('serializes per-domain saves and the newest record wins after a held first write', async () => {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
     const values: Record<string, unknown> = {}
     const releaseFirst = Promise.withResolvers<void>()
     let writeCount = 0
     const storage = {
       get: vi.fn(async (key: string) => ({ [key]: values[key] })),
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser storage records
       set: vi.fn(async (items: Record<string, unknown>) => {
         writeCount += 1
         if (writeCount === 1) await releaseFirst.promise

@@ -220,6 +220,7 @@ describe('MessageList Database-backed pipeline', () => {
     const releaseHeldRead = deferred<void>()
     const read = database.read.bind(database)
     const failingDatabase: Database<MessageDatabaseSchema> = {
+      // SAFETY: the harness casts its database double to the real read/write surface.
       read: (async (stores, operation, signal) => {
         if (failNextRead) {
           failNextRead = false
@@ -281,6 +282,7 @@ describe('MessageList Database-backed pipeline', () => {
     const heldReads: Array<ReturnType<typeof deferred<void>>> = []
     let watchListener: (() => void) | undefined
     const controlledDatabase: Database<MessageDatabaseSchema> = {
+      // SAFETY: the harness casts its database double to the real read/write surface.
       read: (async (stores, operation, signal) => {
         const held = heldReads.shift()
         const result = await read(stores, operation, signal)
@@ -290,6 +292,7 @@ describe('MessageList Database-backed pipeline', () => {
         }
         return result
       }) as typeof database.read,
+      // SAFETY: the harness casts its database double to the real read/write surface.
       write: (async (stores, operation, signal) => {
         const result = await write(stores, operation, signal)
         watchListener?.()
@@ -367,6 +370,7 @@ describe('MessageList Database-backed pipeline', () => {
     let failNextWrite = false
     const failingDatabase: Database<MessageDatabaseSchema> = {
       read: database.read.bind(database),
+      // SAFETY: the harness casts its database double to the real read/write surface.
       write: (async (stores, operation, signal) => {
         if (failNextWrite) {
           failNextWrite = false

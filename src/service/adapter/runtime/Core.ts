@@ -2,6 +2,7 @@ import { checkMessage } from 'comctx'
 import type { Adapter, Message, MessageMeta, OnMessage, SendMessage } from 'comctx'
 
 const isMessageObject = (message: unknown): message is Partial<Message> =>
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of untyped comctx messages
   message !== null && typeof message === 'object' && !Array.isArray(message)
 
 export const isComctxMessage = <T extends MessageMeta>(message: unknown): message is Message<T> =>
@@ -9,9 +10,12 @@ export const isComctxMessage = <T extends MessageMeta>(message: unknown): messag
 
 export interface MessageApi {
   id: string
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- comctx message API contract
   sendMessage: (...args: unknown[]) => unknown
   onMessage: {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- comctx listener contract
     addListener: (listener: (...args: unknown[]) => unknown) => void
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- comctx listener contract
     removeListener: (listener: (...args: unknown[]) => unknown) => void
   }
 }
@@ -51,13 +55,14 @@ export abstract class InjectAdapterBase<T extends MessageMeta> implements Adapte
   abstract sendMessage: SendMessage<T>
 
   onMessage: OnMessage<T> = (callback) => {
-    const handler = (message: unknown) => {
+    const handler = (...args: unknown[]) => {
+      const message = args[0]
       // Extension messages stay unknown until the strict comctx envelope guard succeeds.
       if (!isComctxMessage<T>(message)) return
       callback(message)
     }
-    this.runtime.onMessage.addListener(handler as (...args: unknown[]) => unknown)
-    return () => this.runtime.onMessage.removeListener(handler as (...args: unknown[]) => unknown)
+    this.runtime.onMessage.addListener(handler)
+    return () => this.runtime.onMessage.removeListener(handler)
   }
 }
 

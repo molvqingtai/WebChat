@@ -10,10 +10,13 @@ const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout
 describe('content Runtime rejection ownership', () => {
   it('settles the first registration failure as unavailable without terminal classification', async () => {
     const nativeError = new Error('Extension context invalidated.')
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
     const listeners = new Set<(...args: unknown[]) => unknown>()
     const runtime: MessageApi = {
       id: 'test-extension',
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- messaging stub mirrors the runtime send contract
       sendMessage: vi.fn((_extensionId: unknown, payload: unknown) => {
+        // SAFETY: the comctx send contract passes the message as the payload argument.
         const message = payload as Message
         if (message.type === 'apply') return Promise.reject(nativeError)
         const response: Message = {
@@ -35,6 +38,7 @@ describe('content Runtime rejection ownership', () => {
       unhandled.push(event.reason)
     }
     window.addEventListener('unhandledrejection', onUnhandled)
+    // SAFETY: the proxy factory placeholder is replaced by the injected RuntimeCoordinator implementation.
     const [, injectCoordinator] = defineProxy(() => ({}) as RuntimeCoordinator, {
       namespace: 'content-initial-rejection-ownership',
       heartbeatInterval: 5,
@@ -43,6 +47,7 @@ describe('content Runtime rejection ownership', () => {
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
     const failures: Error[] = []
     const phases: HostPhase[] = []
+    // SAFETY: the client never reads this stubbed server in the rejection scenario.
     const client = new DocumentClient({
       coordinator,
       server: {
@@ -77,6 +82,7 @@ describe('content Runtime rejection ownership', () => {
 
   it('does not expose ignored heartbeat send failures as unhandled rejections', async () => {
     const nativeError = new Error('Extension context invalidated.')
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
     const listeners = new Set<(...args: unknown[]) => unknown>()
     const snapshot: RuntimeSnapshot = {
       hostId: 'host-a',
@@ -99,8 +105,10 @@ describe('content Runtime rejection ownership', () => {
     let invalidated = false
     const runtime: MessageApi = {
       id: 'test-extension',
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- messaging stub mirrors the runtime send contract
       sendMessage: vi.fn((_extensionId: unknown, payload: unknown) => {
         if (invalidated) return Promise.reject(nativeError)
+        // SAFETY: the comctx send contract passes the message as the payload argument.
         const message = payload as Message
         const response: Message = {
           ...message,
@@ -122,6 +130,7 @@ describe('content Runtime rejection ownership', () => {
       unhandled.push(event.reason)
     }
     window.addEventListener('unhandledrejection', onUnhandled)
+    // SAFETY: the proxy factory placeholder is replaced by the injected RuntimeCoordinator implementation.
     const [, injectCoordinator] = defineProxy(() => ({}) as RuntimeCoordinator, {
       namespace: 'content-rejection-ownership',
       heartbeatInterval: 5,
@@ -130,6 +139,7 @@ describe('content Runtime rejection ownership', () => {
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
     const failures: string[] = []
     const phases: HostPhase[] = []
+    // SAFETY: the proxy factory placeholder is replaced by the injected RuntimeServer implementation.
     const [, injectServer] = defineProxy(() => ({}) as RuntimeServer, {
       namespace: 'content-heartbeat-rejection-server',
       heartbeatInterval: 5,

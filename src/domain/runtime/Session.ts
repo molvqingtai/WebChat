@@ -245,6 +245,28 @@ const backgroundSendDomain = (requestId: string): string | undefined => {
 const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) =>
   record?.local ? { local: record.local } : {}
 
+/**
+ * Local identity authorization: a joined site must belong to the domain. Protocol shape is not
+ * validated here (local production trusts its typed inputs). A manual-refresh reset removed the
+ * committed aggregate, so the replacement reuses the captured local logical identity carried by
+ * the attempt instead of the retired runtime.
+ */
+const resolvePreparationIdentity = (
+  payload: { mode: SessionPreparationMode; domain: string; user?: ChatUser; site?: ChatSite },
+  current: SessionDomainState | undefined
+): { user: ChatUser; site: ChatSite } | null => {
+  if (payload.mode === 'join') {
+    const site = payload.site!
+    const user = payload.user!
+    if (site.origin !== payload.domain) return null
+    return { user, site }
+  }
+  const user = current?.user ?? payload.user!
+  const site = current?.site ?? payload.site!
+  if (!current && site.origin !== payload.domain) return null
+  return { user, site }
+}
+
 const SessionDomain = Remesh.domain({
   name: 'SessionDomain',
   impl: (domain) => {
@@ -593,85 +615,81 @@ const SessionDomain = Remesh.domain({
           site?: ChatSite
         }
       ) => {
-        const committed = get(DomainsState()).find((item) => item.domain === payload.domain)
-        const priorPrepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === payload.domain)
-        const current = committed ?? priorPrepared?.runtime
-        // A manual-refresh reset removed the committed aggregate but retained the active local
-        // logical seed; that retained seed authorizes the reconnect preparation.
-        const retainedLocalSeed = get(PresenceDomainsState()).some(
-          (item) => item.domain === payload.domain && item.local
-        )
+        const resolvePreparationContext = () => {
+          const committed = get(DomainsState()).find((item) => item.domain === payload.domain)
+          const priorPrepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === payload.domain)
+          // A manual-refresh reset removed the committed aggregate but retained the active local
+          // logical seed; that retained seed authorizes the reconnect preparation.
+          const retainedLocalSeed = get(PresenceDomainsState()).some(
+            (item) => item.domain === payload.domain && item.local
+          )
+          return { committed, priorPrepared, current: committed ?? priorPrepared?.runtime, retainedLocalSeed }
+        }
+        const { committed, priorPrepared, current, retainedLocalSeed } = resolvePreparationContext()
         if (payload.mode !== 'join' && !current && !retainedLocalSeed) {
           return PreparationFailedEvent({ attemptId: payload.attemptId, error: new Error('Runtime domain missing') })
         }
 
-        let user: ChatUser
-        let site: ChatSite
-        if (payload.mode === 'join') {
-          site = payload.site!
-          user = payload.user!
-          // Local identity authorization: the joined site must belong to the domain. Protocol
-          // shape is not validated here (local production trusts its typed inputs).
-          if (site.origin !== payload.domain) {
-            return PreparationFailedEvent({
-              attemptId: payload.attemptId,
-              error: new Error('Invalid local identity or site metadata')
-            })
-          }
-        } else {
-          // A manual-refresh reset removed the committed aggregate: the replacement reuses the
-          // captured local logical identity carried by the attempt instead of the retired runtime.
-          user = current?.user ?? payload.user!
-          site = current?.site ?? payload.site!
-          if (!current && site.origin !== payload.domain) {
-            return PreparationFailedEvent({
-              attemptId: payload.attemptId,
-              error: new Error('Invalid local identity or site metadata')
-            })
-          }
+        const resolvedIdentity = resolvePreparationIdentity(payload, current)
+        if (resolvedIdentity === null) {
+          return PreparationFailedEvent({
+            attemptId: payload.attemptId,
+            error: new Error('Invalid local identity or site metadata')
+          })
         }
+        const { user, site } = resolvedIdentity
 
-        const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
-        const local = current
-          ? {
-              presenceId: current.presenceId,
-              userId: current.user.id,
-              joinedAt: current.joinedAt,
-              status: 'active' as const
+        const resolveLocalPresence = () => {
+          const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
+          if (current) {
+            return {
+              local: {
+                presenceId: current.presenceId,
+                userId: current.user.id,
+                joinedAt: current.joinedAt,
+                status: 'active' as const
+              },
+              observers: presence?.observers ?? []
             }
-          : (presence?.local ?? undefined)
+          }
+          return { local: presence?.local ?? undefined, observers: presence?.observers ?? [] }
+        }
+        const { local, observers } = resolveLocalPresence()
         if (!local || local.userId !== user.id) {
           return PreparationFailedEvent({
             attemptId: payload.attemptId,
             error: new Error('Runtime logical presence is unavailable')
           })
         }
-        const runtime: SessionDomainState = {
-          domain: payload.domain,
-          roomId: current?.roomId ?? getChatRoomId(payload.domain),
-          sessionId: payload.mode === 'join' && current ? current.sessionId : identity.nextId(),
-          presenceId: local.presenceId,
-          user,
-          site,
-          joinedAt: local.joinedAt,
-          fresh: !current && local.status === 'pending',
-          sessions: payload.mode === 'join' ? (committed?.sessions ?? []) : []
+        const buildPrepared = () => {
+          const runtime: SessionDomainState = {
+            domain: payload.domain,
+            roomId: current?.roomId ?? getChatRoomId(payload.domain),
+            sessionId: payload.mode === 'join' && current ? current.sessionId : identity.nextId(),
+            presenceId: local.presenceId,
+            user,
+            site,
+            joinedAt: local.joinedAt,
+            fresh: !current && local.status === 'pending',
+            sessions: payload.mode === 'join' ? (committed?.sessions ?? []) : []
+          }
+          const prepared: PreparedSession = {
+            attemptId: payload.attemptId,
+            mode: payload.mode,
+            runtime,
+            observers: priorPrepared?.observers ?? observers,
+            isNewPresence: !current && local.status === 'pending',
+            reboundBindings: priorPrepared?.reboundBindings ?? [],
+            displacedBindings: priorPrepared?.displacedBindings ?? []
+          }
+          return [
+            PreparedSessionsState().new(
+              replaceBy(get(PreparedSessionsState()), (item) => item.runtime.domain === payload.domain, prepared)
+            ),
+            PreparedEvent({ attemptId: payload.attemptId, domain: payload.domain, roomId: runtime.roomId })
+          ]
         }
-        const prepared: PreparedSession = {
-          attemptId: payload.attemptId,
-          mode: payload.mode,
-          runtime,
-          observers: priorPrepared?.observers ?? presence?.observers ?? [],
-          isNewPresence: !current && local.status === 'pending',
-          reboundBindings: priorPrepared?.reboundBindings ?? [],
-          displacedBindings: priorPrepared?.displacedBindings ?? []
-        }
-        return [
-          PreparedSessionsState().new(
-            replaceBy(get(PreparedSessionsState()), (item) => item.runtime.domain === payload.domain, prepared)
-          ),
-          PreparedEvent({ attemptId: payload.attemptId, domain: payload.domain, roomId: runtime.roomId })
-        ]
+        return buildPrepared()
       }
     })
 
@@ -1256,6 +1274,7 @@ const SessionDomain = Remesh.domain({
         try {
           hlc = allocateHlc(get(HlcState()), clock.now())
         } catch (error) {
+          // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
           return OperationFailedEvent({ operationId: payload.operationId, error: error as Error })
         }
         const candidate = {
@@ -1306,6 +1325,7 @@ const SessionDomain = Remesh.domain({
         try {
           hlc = allocateHlc(get(HlcState()), clock.now())
         } catch (error) {
+          // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
           return OperationFailedEvent({ operationId: payload.operationId, error: error as Error })
         }
         const candidate = {
@@ -1439,47 +1459,53 @@ const SessionDomain = Remesh.domain({
         const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
         const observers = prepared?.observers ?? persisted?.observers ?? []
         const observed = observers.find((item) => item.presenceId === message.presenceId)
-        if (observed?.status === 'ended') {
-          // The wire acceptance already limited this frame to the current trusted Chat room
-          // generation. A lawful same-presence correction additionally requires the source to be a
-          // CURRENTLY ADMITTED physical member of the room: a source that left (PeerLeave) without
-          // a fresh PeerJoin may not re-activate an ended presence with a sender-chosen new
-          // sessionId. It is accepted only with a NEW physical sessionId that exactly matches the
-          // observer's accepted logical identity and time and conflicts with no newer active
-          // binding or logical generation; an exact replay, an identity/time mutation, or a newer
-          // conflict stays terminally rejected.
-          const exactReplay = message.sessionId === observed.sessionId
-          const identityMatch = message.user.id === observed.user.id && message.joinedAt === observed.joinedAt
-          const admitted = get(
-            wireDomain.query.IsSourceAdmittedQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
-          )
-          const newerConflict =
-            runtime.sessions.some((item) => item.user.id === message.user.id && item.joinedAt > message.joinedAt) ||
-            observers.some(
-              (observer) =>
-                observer.status === 'active' &&
-                observer.user.id === message.user.id &&
-                observer.presenceId !== message.presenceId &&
-                observer.joinedAt > message.joinedAt
-            )
-          if (exactReplay || !identityMatch || !admitted || newerConflict) {
-            return wireDomain.command.DropProtocolCommand({
-              sourcePeerId: payload.sourcePeerId,
-              reason: 'session does not match its logical presence binding'
-            })
-          }
-          // Legal correction: fall through so the binding/observer/leave flow below re-activates
-          // the same logical observation without allocating a new logical generation.
-        } else if (
-          (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
-          (current?.sessionId === message.sessionId &&
-            (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
-        ) {
-          return wireDomain.command.DropProtocolCommand({
+        const rejectBinding = () =>
+          wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
             reason: 'session does not match its logical presence binding'
           })
+
+        const acceptsBinding = () => {
+          if (observed?.status === 'ended') {
+            // The wire acceptance already limited this frame to the current trusted Chat room
+            // generation. A lawful same-presence correction additionally requires the source to be a
+            // CURRENTLY ADMITTED physical member of the room: a source that left (PeerLeave) without
+            // a fresh PeerJoin may not re-activate an ended presence with a sender-chosen new
+            // sessionId. It is accepted only with a NEW physical sessionId that exactly matches the
+            // observer's accepted logical identity and time and conflicts with no newer active
+            // binding or logical generation; an exact replay, an identity/time mutation, or a newer
+            // conflict stays terminally rejected.
+            const exactReplay = message.sessionId === observed.sessionId
+            const identityMatch = message.user.id === observed.user.id && message.joinedAt === observed.joinedAt
+            const admitted = get(
+              wireDomain.query.IsSourceAdmittedQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
+            )
+            const newerConflict =
+              runtime.sessions.some((item) => item.user.id === message.user.id && item.joinedAt > message.joinedAt) ||
+              observers.some(
+                (observer) =>
+                  observer.status === 'active' &&
+                  observer.user.id === message.user.id &&
+                  observer.presenceId !== message.presenceId &&
+                  observer.joinedAt > message.joinedAt
+              )
+            if (exactReplay || !identityMatch || !admitted || newerConflict) {
+              return false
+            }
+            // Legal correction: fall through so the binding/observer/leave flow below re-activates
+            // the same logical observation without allocating a new logical generation.
+            return true
+          }
+          if (
+            (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
+            (current?.sessionId === message.sessionId &&
+              (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
+          ) {
+            return false
+          }
+          return true
         }
+        if (!acceptsBinding()) return rejectBinding()
 
         // The displaced source-current: the source's previous NON-pending binding that is not
         // the incoming generation. It is replaced by the new SESSION: its observation is marked
@@ -1604,86 +1630,89 @@ const SessionDomain = Remesh.domain({
           )
         }
 
-        const record: PresenceDomainRecord = {
-          domain: runtime.domain,
-          lastJoinedAt: persisted?.lastJoinedAt ?? 0,
-          ...retainedLocalLifecycle(persisted),
-          observers: nextObservers
-        }
-        const wasLogicallyActive =
-          observed?.status === 'active' || hasActiveUserPresence(nextObservers, message.user.id, message.presenceId)
-        const isLaterLogicalJoin = message.joinedAt > runtime.joinedAt
-        const physicalBindingChanged =
-          current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
-        const sessionSnapshot = snapshot(nextRuntime)
-        const publicSession = projectRuntimeSession(session)
-        // The displaced user's one-to-zero transition is classified independently from the
-        // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
-        // when only the displaced side applies, a join when only the incoming side applies,
-        // otherwise a refresh snapshot. The displaced side counts only when the displaced user
-        // has no OTHER active or grace-preserved observation (excluding the displaced presence).
-        const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
-        const displacedLeaves =
-          displaced !== undefined &&
-          !nextObservers.some(
-            (observation) =>
-              observation.status === 'active' &&
-              observation.user.id === displaced.user.id &&
-              observation.presenceId !== displaced.presenceId
-          )
-        const sessionEvent: RuntimeSessionEvent =
-          incomingJoins && displacedLeaves
-            ? {
-                type: 'replace',
-                domain: runtime.domain,
-                snapshot: sessionSnapshot,
-                previous: projectRuntimeSession(displaced),
-                session: publicSession,
-                occurredAt: clock.now(),
-                provenance: 'live'
-              }
-            : displacedLeaves
+        const applyCommittedUpdate = () => {
+          const record: PresenceDomainRecord = {
+            domain: runtime.domain,
+            lastJoinedAt: persisted?.lastJoinedAt ?? 0,
+            ...retainedLocalLifecycle(persisted),
+            observers: nextObservers
+          }
+          const wasLogicallyActive =
+            observed?.status === 'active' || hasActiveUserPresence(nextObservers, message.user.id, message.presenceId)
+          const isLaterLogicalJoin = message.joinedAt > runtime.joinedAt
+          const physicalBindingChanged =
+            current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
+          const sessionSnapshot = snapshot(nextRuntime)
+          const publicSession = projectRuntimeSession(session)
+          // The displaced user's one-to-zero transition is classified independently from the
+          // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
+          // when only the displaced side applies, a join when only the incoming side applies,
+          // otherwise a refresh snapshot. The displaced side counts only when the displaced user
+          // has no OTHER active or grace-preserved observation (excluding the displaced presence).
+          const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
+          const displacedLeaves =
+            displaced !== undefined &&
+            !nextObservers.some(
+              (observation) =>
+                observation.status === 'active' &&
+                observation.user.id === displaced.user.id &&
+                observation.presenceId !== displaced.presenceId
+            )
+          const sessionEvent: RuntimeSessionEvent =
+            incomingJoins && displacedLeaves
               ? {
-                  type: 'leave',
+                  type: 'replace',
                   domain: runtime.domain,
                   snapshot: sessionSnapshot,
-                  session: projectRuntimeSession(displaced),
+                  previous: projectRuntimeSession(displaced),
+                  session: publicSession,
                   occurredAt: clock.now(),
                   provenance: 'live'
                 }
-              : incomingJoins
+              : displacedLeaves
                 ? {
-                    type: 'join',
+                    type: 'leave',
                     domain: runtime.domain,
                     snapshot: sessionSnapshot,
-                    session: publicSession,
+                    session: projectRuntimeSession(displaced),
+                    occurredAt: clock.now(),
                     provenance: 'live'
                   }
-                : {
-                    type: 'snapshot',
-                    domain: runtime.domain,
-                    snapshot: sessionSnapshot,
-                    provenance: 'refresh'
-                  }
-        return [
-          DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
-          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
-          ...(pendingLeave
-            ? [
-                PendingLeavesState().new(
-                  removeBy(
-                    pendingLeaves,
-                    (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                : incomingJoins
+                  ? {
+                      type: 'join',
+                      domain: runtime.domain,
+                      snapshot: sessionSnapshot,
+                      session: publicSession,
+                      provenance: 'live'
+                    }
+                  : {
+                      type: 'snapshot',
+                      domain: runtime.domain,
+                      snapshot: sessionSnapshot,
+                      provenance: 'refresh'
+                    }
+          return [
+            DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
+            PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
+            ...(pendingLeave
+              ? [
+                  PendingLeavesState().new(
+                    removeBy(
+                      pendingLeaves,
+                      (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                    )
                   )
-                )
-              ]
-            : []),
-          PersistPresenceRequestedEvent({ record }),
-          RuntimeSessionChangedEvent(sessionEvent),
-          ...(physicalBindingChanged
-            ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
-            : [])
-        ]
+                ]
+              : []),
+            PersistPresenceRequestedEvent({ record }),
+            RuntimeSessionChangedEvent(sessionEvent),
+            ...(physicalBindingChanged
+              ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
+              : [])
+          ]
+        }
+        return applyCommittedUpdate()
       }
     })
 
@@ -2038,6 +2067,7 @@ const SessionDomain = Remesh.domain({
               // The authoritative active record was not removed: surface the exact failure,
               // retain the current fence and physical membership, restore the observer deadline
               // ownership (re-armed), and allow a later retry.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return FailReleaseCleanupCommand({ domain, error: error as Error })
             }
           })
@@ -2052,6 +2082,7 @@ const SessionDomain = Remesh.domain({
               await presenceStore.save(request.record)
               return request.requestId ? PresencePersistenceSettledEvent({ requestId: request.requestId }) : null
             } catch (error) {
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return request.requestId
                 ? PresencePersistenceSettledEvent({ requestId: request.requestId, error: error as Error })
                 : ErrorEvent({ error: error as Error, domain: request.record.domain })

@@ -211,6 +211,7 @@ describe('Trystero RoomTransport', () => {
       () => {
         settled = true
       },
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is recorded as-is
       (error: unknown) => {
         settled = true
         observed = error

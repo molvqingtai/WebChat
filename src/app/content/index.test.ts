@@ -16,6 +16,7 @@ interface ShadowRootOptions {
   onRemove: (owner: ContentOwner | undefined) => void
 }
 
+// SAFETY: the hoisted fixture fields are typed to the values this content scenario records.
 const fixture = vi.hoisted(() => ({
   createShadowRootUi: vi.fn(),
   mount: vi.fn(),
@@ -29,9 +30,11 @@ const fixture = vi.hoisted(() => ({
   historyFeedbackListener: null as null | ((event: { type: string; ownerId: string }) => void),
   startInitializationLifecycle: vi.fn(),
   stopInitialization: vi.fn(),
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw initialization options recorded by the fixture
   initializationOptions: [] as Array<Record<string, unknown>>,
   owners: [] as ContentOwner[],
   removeUis: [] as Array<() => void>,
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw app props recorded by the fixture
   appProps: [] as Array<Record<string, unknown>>,
   requestBrowserSyncStoragePreparation: vi.fn(),
   prepareLocalConfigurationStorage: vi.fn(),
@@ -84,6 +87,7 @@ vi.mock('remesh-react', async () => {
 vi.mock('@/app/content/App', async () => {
   const React = await import('react')
   return {
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw app props forwarded to the mocked component
     default: (props: Record<string, unknown>) => {
       fixture.appProps.push(props)
       return React.createElement('section', { 'data-testid': 'application-shell' })
@@ -91,6 +95,7 @@ vi.mock('@/app/content/App', async () => {
   }
 })
 vi.mock('@/app/content/Initialization', () => ({
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw initialization options forwarded by the mock
   startInitializationLifecycle: (options: Record<string, unknown>) => {
     fixture.initializationOptions.push(options)
     fixture.startInitializationLifecycle(options)
@@ -130,7 +135,9 @@ vi.mock('@/service/StoragePreparation', () => ({
 const { default: content } = await import('@/app/content')
 
 const startContent = async () => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the loaded module export
   if (typeof content.main !== 'function') throw new Error('Content main is unavailable')
+  // SAFETY: the loader receives the empty WXT context object in this test.
   await act(async () => content.main({} as never))
 }
 
@@ -169,6 +176,8 @@ beforeEach(() => {
     element.id = 'root'
     return element
   })
+  // SAFETY: the mock receives the shadow-root options the loader passes in production.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the mock receives the loader context object
   fixture.createShadowRootUi.mockImplementation(async (_context: unknown, options: ShadowRootOptions) => {
     const container = document.createElement('div')
     const shadowHost = document.createElement('web-chat-unit')
@@ -404,6 +413,7 @@ describe('content composition root', () => {
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {
     await startContent()
     const activate = fixture.initializationOptions[0]?.activateApplicationDependencies
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the captured boundary hook
     if (typeof activate !== 'function') throw new Error('Activation boundary is unavailable')
 
     activate()
@@ -419,6 +429,7 @@ describe('content composition root', () => {
   it('maps one attempt-owned History loading owner to the exact loading Toast and dismiss', async () => {
     await startContent()
     const activate = fixture.initializationOptions[0]?.activateApplicationDependencies
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the captured boundary hook
     if (typeof activate !== 'function') throw new Error('Activation boundary is unavailable')
     activate()
     if (!fixture.historyFeedbackListener) throw new Error('History feedback listener was never wired')

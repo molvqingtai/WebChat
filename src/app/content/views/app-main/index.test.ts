@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 
+// SAFETY: the hoisted fixture fields are typed to the values this render scenario inspects.
 const fixture = vi.hoisted(() => ({
   open: false,
   position: { x: 50, y: 22 },
@@ -43,9 +44,13 @@ vi.mock('framer-motion', async () => {
         exit: _exit,
         transition: _transition,
         ...props
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- mock props bag for the rendered component
       }: { children?: React.ReactNode } & Record<string, unknown>) => {
+        // SAFETY: the mock narrows the motion props it passes through to the fields this scenario records.
         fixture.initialX = (initial as { x?: string | number } | undefined)?.x ?? null
+        // SAFETY: the mock narrows the motion props it passes through to the fields this scenario records.
         fixture.animateX = (animate as { x?: string | number } | undefined)?.x ?? null
+        // SAFETY: the mock narrows the style prop it passes through to the translate field this scenario records.
         fixture.cssTranslate = (props.style as { translate?: string } | undefined)?.translate ?? null
         return React.createElement('div', props, children)
       }

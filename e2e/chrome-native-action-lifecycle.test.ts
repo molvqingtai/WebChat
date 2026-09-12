@@ -154,6 +154,9 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
   readonly sampleDeadlines: number[] = []
   readonly operationDeadlines: Array<{ readonly operation: string; readonly deadlineMs: number }> = []
   readonly phaseEffects = new Map<string, AdapterEffect[]>()
+  gapEffects: AdapterEffect[] | undefined
+  gapDepth = 0
+  gapAfterPhase: string | undefined
   readonly observedSessions: Array<{
     session: ChromeLifecycleSession
     domains: { runtime: true; log: true; page: boolean }
@@ -309,6 +312,19 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
     this.trace.push(`wait-event:${deadlineMs}`)
     this.waitDeadlines.push(deadlineMs)
     this.applyPhaseEffects('wait-event')
+    // Queued, not applied: the effects run after this observation resolves but before the awaiting
+    // caller resumes; measured, they land between this wait and the next discovery operation.
+    if (this.gapEffects) {
+      const queued = this.gapEffects
+      this.gapEffects = undefined
+      queueMicrotask(() => {
+        this.trace.push('gap')
+        queued.forEach((effect) => {
+          if ('advanceMs' in effect) this.nowMs += effect.advanceMs
+          else this.requireSink()(effect)
+        })
+      })
+    }
     const step = this.steps.shift()
 
     if (!step) {
@@ -365,6 +381,25 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
       if ('advanceMs' in effect) this.nowMs += effect.advanceMs
       else this.requireSink()(effect)
     })
+    if (this.gapAfterPhase === phase && this.gapEffects) {
+      const queued = this.gapEffects
+      this.gapEffects = undefined
+      this.gapAfterPhase = undefined
+      const enqueue = (depth: number) => {
+        queueMicrotask(() => {
+          if (depth > 0) {
+            enqueue(depth - 1)
+            return
+          }
+          this.trace.push('gap')
+          queued.forEach((effect) => {
+            if ('advanceMs' in effect) this.nowMs += effect.advanceMs
+            else this.requireSink()(effect)
+          })
+        })
+      }
+      enqueue(this.gapDepth)
+    }
   }
 }
 
@@ -396,9 +431,12 @@ const expectPrivateSentinelAbsent = (
   sentinel: string
 ) => {
   const diffs = result.timeline.flatMap(({ detail }) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the lifecycle timeline entry
     if (detail === null || Array.isArray(detail) || typeof detail !== 'object' || !Object.hasOwn(detail, 'diff')) {
       return []
     }
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     return [(detail as Record<string, unknown>).diff]
   })
 
@@ -505,6 +543,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
         workerEntry: 'background.js'
       }
     })
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     const workerEvidenceDetail = workerEvidence!.detail as Record<string, unknown>
     expect(workerEvidenceDetail.packagedManifestDigest).toBe(workerEvidenceDetail.runtimeManifestDigest)
     expect(result.timeline.map(({ sequence }) => sequence)).toEqual(result.timeline.map((_, index) => index + 1))
@@ -584,7 +624,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
       result.timeline
         .filter(({ type }) => type === 'worker-observed')
         .map(({ detail }) => ({
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           appearedAfterMs: (detail as Record<string, unknown>).appearedAfterMs,
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           targetId: (detail as Record<string, unknown>).targetId
         }))
     ).toEqual([
@@ -726,17 +770,115 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const foreignEvidence = result.timeline.find(
       ({ type, detail }) =>
         type === 'worker-classified' &&
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
         (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
     )
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     const detail = foreignEvidence?.detail as Record<string, unknown>
 
     expect(result.outcome, result.reason).toBe('mounted')
     expect(detail.diffOverflow).toBe(true)
     expect(detail.diff).toHaveLength(CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES)
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
     const paths = (detail.diff as Array<Record<string, unknown>>).map(({ path }) => path)
     expect(paths).toEqual([...paths].toSorted())
     expect(JSON.stringify(detail)).not.toContain('secret-value')
     expect(detail.exact).toBe(false)
+  })
+
+  it('caps an oversized array length difference and reports overflow', async () => {
+    const shortScripts = Array.from({ length: 10 }, (_, index) => `script-${index}.js`)
+    const longScripts = [...shortScripts, ...Array.from({ length: 6 }, (_, index) => `script-${10 + index}.js`)]
+    const arrayContext: ChromeLifecycleContext = {
+      ...context,
+      packagedManifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: longScripts }
+      }
+    }
+    const adapter = prepareAdapter()
+    adapter.registerWorker(foreignWorkerTarget, foreignWorkerSession, {
+      runtimeId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      manifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: shortScripts }
+      }
+    })
+    adapter.startupTargets = [blankTarget, foreignWorkerTarget, workerTarget]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, arrayContext)
+    const foreignEvidence = result.timeline.find(
+      ({ type, detail }) =>
+        type === 'worker-classified' &&
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+        (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
+    )
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const detail = foreignEvidence?.detail as Record<string, unknown>
+    expect(detail.diffOverflow).toBe(true)
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const diff = detail.diff as Array<Record<string, unknown>>
+    expect(diff).toHaveLength(CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES)
+    const paths = diff.map(({ path }) => path)
+    // Six length differences exceed the four-entry cap; the kept entries stay in lexicographic order.
+    expect(paths).toEqual([
+      '/background/scripts/10',
+      '/background/scripts/11',
+      '/background/scripts/12',
+      '/background/scripts/13'
+    ])
+    expect(paths).toEqual([...paths].toSorted())
+  })
+
+  it('reports array length differences under an allowlisted path with lexicographic index order', async () => {
+    const shortScripts = Array.from({ length: 10 }, (_, index) => `script-${index}.js`)
+    const longScripts = [...shortScripts, 'script-10.js']
+    const changedScripts = shortScripts.map((script, index) => (index === 2 ? 'script-2-changed.js' : script))
+    const arrayContext: ChromeLifecycleContext = {
+      ...context,
+      packagedManifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: longScripts }
+      }
+    }
+    const adapter = prepareAdapter()
+    adapter.registerWorker(foreignWorkerTarget, foreignWorkerSession, {
+      runtimeId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      manifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: changedScripts }
+      }
+    })
+    adapter.startupTargets = [blankTarget, foreignWorkerTarget, workerTarget]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, arrayContext)
+    const foreignEvidence = result.timeline.find(
+      ({ type, detail }) =>
+        type === 'worker-classified' &&
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+        (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
+    )
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const detail = foreignEvidence?.detail as Record<string, unknown>
+    expect(detail.diffOverflow).toBe(false)
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const diff = detail.diff as Array<Record<string, unknown>>
+    // String (lexicographic) index order: `/10` sorts before `/2`, matching the diff's own sort.
+    expect(diff.map(({ path }) => path)).toEqual(['/background/scripts/10', '/background/scripts/2'])
+    // SAFETY: the test narrows the diff entry's runtime descriptor it asserts on.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- manifest diff value descriptor read by the test
+    const missingSide = diff[0]!.runtime as Record<string, unknown>
+    expect(missingSide.type).toBe('missing')
+    expect(missingSide.length).toBe(0)
   })
 
   it('fails setup before target creation when total worker evidence capacity is exceeded', async () => {
@@ -812,6 +954,47 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.timeline.some(({ type }) => type === 'worker-bound')).toBe(false)
   })
 
+  it('keeps the pre-target terminal decision stable when the deadline lands in the same turn as the final observation', async () => {
+    // ADVANCE inside the observation await itself, so the turn that ends the pre-target phase both
+    // completes that await and crosses the discovery deadline. This pins the decision, the created
+    // target count and the caller's immediate clock reads across the phase-helper boundary; it is
+    // NOT a pre-creation case (one target is created before the bound phase fails).
+    const adapter = prepareAdapter()
+    adapter.phaseEffects.set('wait-event', [{ advanceMs: CHROME_NATIVE_ACTION_WORKER_DISCOVERY_BUDGET_MS }])
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    expect(result.outcome).toBe('target-lifecycle-failed')
+    expect(result.actionAuthorization).toBeNull()
+    expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
+    expect(result.lifecycleStartedAtMs).toBe(1000)
+    expect(result.lifecycleDeadlineMs).toBe(1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+  })
+
+  it('keeps the pre-target terminal decision stable when the observation gap delivers worker evidence', async () => {
+    // gapEffects run on a queued microtask from inside the awaited observation, so the delivered
+    // foreign worker arrives with no target created yet; measured, the callback lands between this
+    // wait and the next discovery operation, and the delivered evidence must still be recorded
+    // before the terminal decision.
+    const adapter = prepareAdapter([{ advanceMs: 10_000 }])
+    adapter.startupTargets = [blankTarget, foreignWorkerTarget]
+    adapter.gapEffects = [{ type: 'target-changed', target: foreignWorkerTarget }]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    const gapIndex = adapter.trace.indexOf('gap')
+    expect(gapIndex).toBeGreaterThanOrEqual(0)
+    expect(adapter.trace.slice(0, gapIndex).some((entry) => entry.startsWith('create-target'))).toBe(false)
+    expect(adapter.trace.some((entry) => entry.startsWith('create-target'))).toBe(false)
+
+    expect(result.outcome).toBe('extension-setup-failed')
+    expect(result.actionAuthorization).toBeNull()
+    expect(adapter.createdUrls).toEqual([])
+    const recordedTypes = result.timeline.map(({ type }) => type)
+    expect(recordedTypes).toContain('event:target-changed')
+    expect(recordedTypes.indexOf('event:target-changed')).toBeLessThan(recordedTypes.lastIndexOf('terminal'))
+  })
+
   it('keeps a fully classified unrelated worker after binding as evidence only', async () => {
     const laterWorker: ChromeLifecycleTarget = {
       targetId: 'later-foreign-worker',
@@ -836,6 +1019,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
       result.timeline.some(
         ({ type, detail }) =>
           type === 'worker-classified' &&
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           (detail as Record<string, unknown> | undefined)?.targetId === laterWorker.targetId
       )
     ).toBe(true)
@@ -873,7 +1058,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
       const foreignWorkerWasClassified = result.timeline.some(
         ({ type, detail }) =>
           type === 'worker-classified' &&
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId &&
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           (detail as Record<string, unknown>).exact === false
       )
 
@@ -1102,6 +1291,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
       const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
       const evidence = result.timeline.find(({ type }) => type === `event:${testCase.event.type}`)
+      // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
       const detail = evidence?.detail as Record<string, unknown> | undefined
 
       expect.soft(result.outcome, testCase.name).toBe('unexpected-content-failure')
@@ -1148,9 +1339,13 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
         const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
         const evidence = result.timeline.find(({ type: entryType, detail }) => {
+          // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+          // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
           const fields = detail as Record<string, unknown> | undefined
           return entryType === `event:${type}` && fields?.targetId === target.targetId
         })
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
         const detail = evidence?.detail as Record<string, unknown> | undefined
 
         expect.soft(result.outcome, name).toBe(targetCase.expectedOutcome)
@@ -1580,5 +1775,83 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.outcome).toBe('target-lifecycle-failed')
     expect(result.actionAuthorization).toBeNull()
     expect(Object.isFrozen(result)).toBe(true)
+  })
+
+  it('records the binding and the creation request after a clock advance scheduled from the worker read', async () => {
+    // The queued microtask is scheduled when the worker identity read runs, so it runs before the
+    // awaiting continuation of that read: the advance it applies therefore precedes the binding
+    // record and the creation request. This pins that ordering, which is all this scheduling can
+    // show; it does not place the callback after the binding record.
+    const adapter = prepareAdapter()
+    adapter.gapAfterPhase = 'read-worker:worker-session'
+    adapter.gapEffects = [{ advanceMs: 500 }]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    const gapIndex = adapter.trace.indexOf('gap')
+    expect(gapIndex).toBeGreaterThan(adapter.trace.lastIndexOf('read-worker:worker-session'))
+    expect(gapIndex).toBeLessThan(adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`))
+
+    const binding = result.timeline.find(({ type }) => type === 'worker-bound')
+    const creation = result.timeline.find(({ type }) => type === 'target-create-requested')
+    expect(binding?.atMs).toBe(1500)
+    expect(creation?.atMs).toBe(1500)
+
+    expect(result.lifecycleStartedAtMs).toBe(1500)
+    expect(result.lifecycleDeadlineMs).toBe(1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+    expect(adapter.operationDeadlines.find(({ operation }) => operation === 'create-target')?.deadlineMs).toBe(
+      1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
+    )
+    expect(result.outcome).toBe('mounted')
+    expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
+  })
+})
+
+describe('gap depth probe', () => {
+  it('documents the landing order of the queued probe for consecutive depths (recorded evidence)', async () => {
+    const rows: unknown[] = []
+    for (let depth = 0; depth <= 12; depth += 1) {
+      const adapter = prepareAdapter()
+      adapter.gapAfterPhase = 'read-worker:worker-session'
+      adapter.gapDepth = depth
+      adapter.gapEffects = [{ advanceMs: 500 }]
+      const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+      const binding = result.timeline.find(({ type }) => type === 'worker-bound')
+      rows.push({
+        depth,
+        gapIndex: adapter.trace.indexOf('gap'),
+        createIndex: adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`),
+        bindingAtMs: binding?.atMs,
+        started: result.lifecycleStartedAtMs,
+        outcome: result.outcome,
+        created: adapter.createdUrls.length
+      })
+    }
+    console.log('DEPTHSCAN ' + JSON.stringify(rows))
+    expect(rows.length).toBe(13)
+  })
+
+  it('keeps the caller reads and the creation request ahead of a callback queued from the worker read', async () => {
+    // Depth 3 is the regression guard for the pre-target phase connection: with the phase kept
+    // inline, a callback queued from the worker identity read lands after the binding record, and
+    // the caller has already read the clock and requested target creation by the time it runs. The
+    // recorded values are the pre-extraction ones; a phase-helper extraction made them differ.
+    const adapter = prepareAdapter()
+    adapter.gapAfterPhase = 'read-worker:worker-session'
+    adapter.gapDepth = 3
+    adapter.gapEffects = [{ advanceMs: 500 }]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    expect(result.timeline.find(({ type }) => type === 'worker-bound')?.atMs).toBe(1000)
+    expect(result.lifecycleStartedAtMs).toBe(1000)
+    expect(result.lifecycleDeadlineMs).toBe(1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+    expect(adapter.operationDeadlines.find(({ operation }) => operation === 'create-target')?.deadlineMs).toBe(
+      1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
+    )
+    expect(adapter.trace.indexOf('gap')).toBeGreaterThan(
+      adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`)
+    )
+    expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
   })
 })

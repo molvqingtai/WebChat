@@ -12,6 +12,7 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 
 const deferred = <Value>() => {
   let resolve!: (value: Value) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<Value>((onResolve, onReject) => {
     resolve = onResolve

@@ -35,6 +35,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+interface StoredVersionRecord {
+  exists: boolean
+  value: unknown
+}
+
 const deferred = () => {
   let resolve!: () => void
   const promise = new Promise<void>((settle) => {
@@ -390,9 +395,12 @@ describe('configuration storage version ownership', () => {
     const releaseFirstClear = deferred()
     const secondClearStarted = deferred()
     const releaseSecondClear = deferred()
-    let storedVersion: { exists: boolean; value: unknown } = { exists: true, value: 2 }
+    let storedVersion: StoredVersionRecord = { exists: true, value: 2 }
     const values = new Map<string, unknown>([['old', 'generation']])
-    const createOwnerStorage = (clearStarted: ReturnType<typeof deferred>, clearRelease: ReturnType<typeof deferred>) =>
+    const createOwnerStorage = (
+      clearStarted: ReturnType<typeof deferred>,
+      clearRelease: ReturnType<typeof deferred>
+    ): ConfigurationVersionStorage =>
       ({
         readVersion: vi.fn(async () => ({ ...storedVersion })),
         writeVersion: vi.fn(async (value: number) => {

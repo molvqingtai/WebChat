@@ -29,6 +29,7 @@ import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '
 export interface RuntimeTabsApi {
   get: (tabId: number) => Promise<RuntimeTab>
   query: (queryInfo: { url?: string | string[] }) => Promise<RuntimeTab[]>
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- tabs message API contract
   sendMessage: (tabId: number, message: unknown) => Promise<unknown>
 }
 
@@ -215,7 +216,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       worldDomain.command.RecoverTransportStateCommand({
         members: recoveredWorld.members.map(({ sourcePeerId }) => sourcePeerId),
         presences: recoveredWorld.presences.map(({ sourcePeerId, presence }) => ({ sourcePeerId, presence })),
-        ...(recoveredWorld.local ? { registrations: recoveredWorld.local.registrations } : {})
+        registrations: recoveredWorld.local ? recoveredWorld.local.registrations : undefined
       })
     )
   }
@@ -297,6 +298,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         try {
           const tabs = await admission.tabs.query({})
           for (const tab of tabs) {
+            // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the tabs query result
             if (typeof tab.id !== 'number' || typeof tab.url !== 'string') continue
             const url = canonicalNavigationUrl(tab.url)
             if (!url || !isEligibleContentUrl(url)) continue
@@ -393,14 +395,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       .rememberWorldRecovery({
         members: members.map(({ sourcePeerId, generation }) => ({ sourcePeerId, sourceGeneration: generation })),
         presences,
-        ...(store.query(worldDomain.query.RegistrationsQuery()).length > 0
-          ? {
-              local: {
+        local:
+          store.query(worldDomain.query.RegistrationsQuery()).length > 0
+            ? {
                 peerId: config.transport.peerIdOf(getWorldRoomId()),
                 registrations: store.query(worldDomain.query.RegistrationsQuery())
               }
-            }
-          : {})
+            : undefined
       })
       .catch(() => {})
   }
@@ -462,6 +463,27 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
+  /** The delivered tab must still match the caller and remain an eligible navigation target. */
+  const assertCallerTabEligible = (
+    current: RuntimeTab,
+    tabId: number,
+    callerUrl: string | undefined,
+    domain: string | undefined
+  ) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab record
+    const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
+    if (
+      current.id !== tabId ||
+      !url ||
+      !isEligibleContentUrl(url) ||
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller tab record
+      (typeof callerUrl === 'string' && !isSameNavigation(url, callerUrl)) ||
+      (domain !== undefined && new URL(url).origin !== domain)
+    ) {
+      throw new Error('Browser tab navigation is no longer eligible')
+    }
+  }
+
   const requireCallerTab = async (
     payload: RuntimePageCall,
     domain?: string,
@@ -474,6 +496,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
     const caller = payload.caller?.tab
     const tabId = caller?.id
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the caller tab id
     if (typeof tabId !== 'number' || !Number.isSafeInteger(tabId) || tabId < 0) {
       if (!config.admission) return null
       throw new Error('Current Page browser caller is required')
@@ -481,16 +504,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (!config.admission) return tabId
     await config.admission.ensureTransport()
     const current = await config.admission.tabs.get(tabId)
-    const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
-    if (
-      current.id !== tabId ||
-      !url ||
-      !isEligibleContentUrl(url) ||
-      (typeof caller?.url === 'string' && !isSameNavigation(url, caller.url)) ||
-      (domain !== undefined && new URL(url).origin !== domain)
-    ) {
-      throw new Error('Browser tab navigation is no longer eligible')
-    }
+    assertCallerTabEligible(current, tabId, caller?.url, domain)
     return tabId
   }
 
@@ -501,12 +515,21 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       domains: base.domains.map((domain) => ({
         ...domain,
         historyFeedback:
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional caller tab id
           typeof callerTabId === 'number' && pagePort.isHistoryProvider(callerTabId, domain.domain)
             ? domain.historyFeedback
             : []
       })),
       failures: [...retainedFailures]
     }
+  }
+
+  interface ReplacementGate {
+    epoch: string
+    domain: string
+    attemptId: string
+    chatGeneration: number
+    worldGeneration: number
   }
 
   interface DualReplacementRoomIntent {
@@ -560,6 +583,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   let currentWorldReplacement: DualReplacementAttempt | undefined
   let replacementSequence = 0
   const takeReplacementFailure = (stage: ReplacementFailureStage) => {
+    // SAFETY: the failure-test transport is attached by the test composition for this exact probe.
     const failure = (config.transport as ReplacementFailureTestTransport).takeReplacementFailure?.(stage)
     if (failure) throw failure
   }
@@ -591,6 +615,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }))
   const callerDocumentUrl = (payload: RuntimePageCall, tabId: number | null) => {
     const callerUrl = payload.caller?.tab?.url
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional caller tab url
     if (typeof callerUrl === 'string') return canonicalNavigationUrl(callerUrl) ?? callerUrl
     return tabId === null ? '' : (tabDomains.get(tabId)?.url ?? '')
   }
@@ -791,6 +816,67 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
+  /** The prepared Wire route must still carry both replacement rooms at their staged generations. */
+  const assertPreparedReplacementRoute = (gate: ReplacementGate, chatRoomId: string, worldRoomId: string) => {
+    const route = store.query(wireDomain.query.PreparedRouteQuery(gate.epoch))
+    if (
+      !route?.ready ||
+      !route.rooms.some((room) => room.roomId === chatRoomId && room.generation === gate.chatGeneration) ||
+      !route.rooms.some((room) => room.roomId === worldRoomId && room.generation === gate.worldGeneration)
+    ) {
+      throw new Error('Dual replacement prepared route is no longer current')
+    }
+  }
+
+  /** Public hints begin only after the shared terminal; local state is already complete. */
+  const publishCommittedReplacement = (attempt: DualReplacementAttempt, chatRoomId: string) => {
+    const committedRoom = store.query(sessionDomain.query.DomainQuery(attempt.domain))
+    if (committedRoom) {
+      for (const source of store.query(wireDomain.query.SourcesQuery(chatRoomId))) {
+        store.send(
+          wireDomain.command.SendMessageCommand({
+            requestId: `manual:session:${attempt.epoch}:${source.sourcePeerId}`,
+            roomId: chatRoomId,
+            targetPeerIds: [source.sourcePeerId],
+            message: {
+              type: MESSAGE_TYPE.SESSION,
+              sessionId: committedRoom.sessionId,
+              presenceId: committedRoom.presenceId,
+              joinedAt: committedRoom.joinedAt,
+              user: committedRoom.user
+            }
+          })
+        )
+      }
+    }
+    store.send(worldDomain.command.PublishCurrentCommand({ requestId: `manual:world:${attempt.epoch}` }))
+    notifyTabs()
+  }
+
+  /**
+   * A retry seed is local-only and bound to the exact caller/document/host of this attempt; it is
+   * rebuilt from the captured values, never from staged or remote state.
+   */
+  const recordReplacementRetrySeed = (
+    attempt: DualReplacementAttempt,
+    gate: ReplacementGate | undefined,
+    cut: boolean
+  ) => {
+    if (attempt.invalidated) return
+    if (replacementAttempts.get(attempt.domain) !== attempt) return
+    if (currentWorldReplacement !== attempt) return
+    if (attempt.hostId !== connectionOptions.hostId) return
+    replacementSeeds.set(attempt.domain, cloneSeed(attempt))
+    if (cut && gate) {
+      sharedWorldRecovery = {
+        hostId: attempt.hostId,
+        sourceEpoch: attempt.epoch,
+        worldGeneration: gate.worldGeneration,
+        world: cloneWorldIntent(attempt.world)
+      }
+    }
+  }
+
   const runDualReplacement = async (
     attempt: DualReplacementAttempt,
     payload: RuntimePageCall,
@@ -799,15 +885,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     const chatRoomId = getChatRoomId(attempt.domain)
     const worldRoomId = getWorldRoomId()
     let cut = false
-    let gate:
-      | {
-          epoch: string
-          domain: string
-          attemptId: string
-          chatGeneration: number
-          worldGeneration: number
-        }
-      | undefined
+    let gate: ReplacementGate | undefined
     try {
       assertReleaseBarrierCurrent(releaseBarrier)
       // This is the only physical destruction step. It resolves after each local routing owner
@@ -869,14 +947,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         roomIds: [chatRoomId, worldRoomId]
       })
       await assertReplacementCurrent(attempt, payload)
-      const route = store.query(wireDomain.query.PreparedRouteQuery(replacementGate.epoch))
-      if (
-        !route?.ready ||
-        !route.rooms.some((room) => room.roomId === chatRoomId && room.generation === replacementGate.chatGeneration) ||
-        !route.rooms.some((room) => room.roomId === worldRoomId && room.generation === replacementGate.worldGeneration)
-      ) {
-        throw new Error('Dual replacement prepared route is no longer current')
-      }
+      assertPreparedReplacementRoute(replacementGate, chatRoomId, worldRoomId)
       // Ordered recovery ingress may await decode/owner acceptance, so it belongs before the
       // synchronous commit. The prepared Wire route keeps every accepted frame private here.
       await config.transport.activateIngress?.()
@@ -897,27 +968,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       recoveryReady = undefined
       // Public hints begin only after the shared terminal. The initial local state is already
       // complete, while outbound presence/session catch-up remains ordinary post-commit work.
-      const committedRoom = store.query(sessionDomain.query.DomainQuery(attempt.domain))
-      if (committedRoom) {
-        for (const source of store.query(wireDomain.query.SourcesQuery(chatRoomId))) {
-          store.send(
-            wireDomain.command.SendMessageCommand({
-              requestId: `manual:session:${attempt.epoch}:${source.sourcePeerId}`,
-              roomId: chatRoomId,
-              targetPeerIds: [source.sourcePeerId],
-              message: {
-                type: MESSAGE_TYPE.SESSION,
-                sessionId: committedRoom.sessionId,
-                presenceId: committedRoom.presenceId,
-                joinedAt: committedRoom.joinedAt,
-                user: committedRoom.user
-              }
-            })
-          )
-        }
-      }
-      store.send(worldDomain.command.PublishCurrentCommand({ requestId: `manual:world:${attempt.epoch}` }))
-      notifyTabs()
+      publishCommittedReplacement(attempt, chatRoomId)
       return undefined
     } catch (reason) {
       const error = reason instanceof Error ? reason : new Error('Dual replacement failed')
@@ -930,24 +981,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           // successor cannot publish because abort removed every logical staged owner first.
         }
       }
-      if (
-        !attempt.invalidated &&
-        replacementAttempts.get(attempt.domain) === attempt &&
-        currentWorldReplacement === attempt &&
-        attempt.hostId === connectionOptions.hostId
-      ) {
-        // A retry seed is local-only and bound to the exact caller/document/host. It is rebuilt
-        // from the captured values, never from staged or remote state.
-        replacementSeeds.set(attempt.domain, cloneSeed(attempt))
-        if (cut && gate) {
-          sharedWorldRecovery = {
-            hostId: attempt.hostId,
-            sourceEpoch: attempt.epoch,
-            worldGeneration: gate.worldGeneration,
-            world: cloneWorldIntent(attempt.world)
-          }
-        }
-      }
+      recordReplacementRetrySeed(attempt, gate, cut)
       throw error
     } finally {
       if (replacementAttempts.get(attempt.domain) === attempt) replacementAttempts.delete(attempt.domain)
@@ -1141,51 +1175,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
     refreshIdentity.delete(event.domain)
   })
-  /** One shared in-flight reset settlement per domain: concurrent refreshes join the same owner. */
-  const inFlightResets = new Map<string, Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }>>()
-  const performReset = async (domain: string, operationId: string) => {
-    const runtime = store.query(sessionDomain.query.DomainQuery(domain))
-    const retainedSeed = store.query(sessionDomain.query.RetainedLocalSeedQuery(domain))
-
-    if (!runtime && !retainedSeed) {
-      // Released domain with nothing to destroy: the canonical attempt is a no-op.
-      return { ok: true, ...refreshIdentity.get(domain) }
-    }
-    if (runtime) refreshIdentity.set(domain, { user: runtime.user, site: runtime.site })
-    // A retry after a failed persistence must re-honor the clear save even though the committed
-    // aggregate is already gone; the destruction is idempotent and re-emits the correlated save.
-    const persistence = new Promise<boolean>((resolve) => {
-      const subscription = store.subscribeEvent(sessionDomain.event.PresencePersistenceSettledEvent, (event) => {
-        if (event.requestId !== operationId) return
-        subscription.unsubscribe()
-        resolve(event.error === undefined)
-      })
-    })
-    store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
-    const settled = await persistence
-    if (!settled) return { ok: false }
-    // Active History supplies/jobs physically settle through their abort callbacks; the
-    // replacement may bind new History work only after every old owner is gone. Yielding on the
-    // macrotask queue lets abort callbacks and timers run; no busy loop is introduced.
-    while (!store.query(historyDomain.query.DomainCleanupSettledQuery(domain))) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    }
-    return { ok: true, ...refreshIdentity.get(domain) }
-  }
-  const resetDomainConnection = (
-    domain: string,
-    operationId: string
-  ): Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }> => {
-    const existing = inFlightResets.get(domain)
-    if (existing) return existing
-    const task = performReset(domain, operationId)
-    inFlightResets.set(domain, task)
-    const releaseReset = () => {
-      if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
-    }
-    void task.then(releaseReset, releaseReset)
-    return task
-  }
 
   const completeInterruptedRelease = (domain: string): Promise<void> => {
     // Idempotent completed release: no runtime, no join attempt, and no current fence.
@@ -1240,6 +1229,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     assertReleaseBarrierCurrent(barrier)
   }
 
+  /** A release barrier discards any pre-wait seed; otherwise a retained or shared seed wins. */
+  const resolveReplacementSeed = (
+    releaseBarrier: ReturnType<typeof captureActiveReleaseBarrier>,
+    retained: DualReplacementSeed | undefined,
+    shared: SharedWorldRecoveryEpoch | undefined,
+    reservation: ReplacementReservation
+  ): DualReplacementSeed | null => {
+    if (releaseBarrier.releases.length > 0) {
+      return captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
+    }
+    if (retained) return cloneSeed(retained)
+    if (shared)
+      return captureSharedWorldRecoverySeed(shared, reservation.domain, reservation.tabId, reservation.documentUrl)
+    return captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
+  }
+
   const runReservedDualReplacement = async (
     reservation: ReplacementReservation,
     payload: RuntimePageCall
@@ -1262,14 +1267,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (shared && shared.hostId !== connectionOptions.hostId) {
         throw new Error('Shared World recovery epoch is no longer bound to this host')
       }
-      const captured =
-        releaseBarrier.releases.length > 0
-          ? captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
-          : retained
-            ? cloneSeed(retained)
-            : shared
-              ? captureSharedWorldRecoverySeed(shared, reservation.domain, reservation.tabId, reservation.documentUrl)
-              : captureReplacementSeed(reservation.domain, reservation.tabId, reservation.documentUrl)
+      const captured = resolveReplacementSeed(releaseBarrier, retained, shared, reservation)
       if (!captured) return undefined
       if (
         releaseBarrier.releases.some((release) =>
@@ -1372,71 +1370,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
    * operation (destruction through the replacement commit/failure/cancel) instead of running a
    * second destructive reset against an in-flight replacement. */
   const inFlightReconnects = new Map<string, Promise<undefined | null>>()
-  const refreshWorldAndWait = () => {
-    return new Promise<void>((resolve, reject) => {
-      let requestId: string | undefined
-      let terminal: { requestId: string; error?: Error } | undefined
-      let settled = false
-      const settle = (error?: Error) => {
-        if (settled) return
-        settled = true
-        completed.unsubscribe()
-        aborted.unsubscribe()
-        if (error) reject(error)
-        else resolve()
-      }
-      const completed = store.subscribeEvent(connectionDomain.event.WorldRecoveryCompletedEvent, (event) => {
-        if (!requestId) {
-          terminal = { requestId: event.requestId }
-          return
-        }
-        if (event.requestId === requestId) settle()
-      })
-      const aborted = store.subscribeEvent(connectionDomain.event.WorldRecoveryAbortedEvent, (event) => {
-        if (!requestId) {
-          terminal = { requestId: event.requestId, error: event.error }
-          return
-        }
-        if (event.requestId === requestId) settle(event.error)
-      })
-      store.send(connectionDomain.command.RefreshWorldCommand())
-      requestId = store.query(connectionDomain.query.WorldRecoveryAttemptQuery())?.requestId
-      if (terminal && terminal.requestId === requestId) return settle(terminal.error)
-      // RefreshWorldCommand can legitimately find no remaining demand. There is then no physical
-      // replacement to wait for; otherwise the matching owner terminal resolves this operation.
-      if (!requestId) settle()
-    })
-  }
-  const performReconnect = async (domain: string, operationId: string): Promise<undefined | null> => {
-    // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
-    // cleared-observer persistence must settle and the domain's History work must physically
-    // settle before the replacement may prepare; a persistence rejection fails the request
-    // retryably without committing a mixed old/new snapshot.
-    const reset = await resetDomainConnection(domain, operationId)
-    if (!reset.ok) {
-      return runConnectionOperation(
-        operationId,
-        connectionDomain.command.FailOperationCommand({
-          operationId,
-          error: new Error('Domain connection reset persistence failed')
-        }),
-        () => undefined,
-        () => null
-      )
-    }
-    // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
-    return runConnectionOperation(
-      operationId,
-      connectionDomain.command.ReconnectDomainCommand({
-        operationId,
-        domain,
-        user: reset.user,
-        site: reset.site
-      }),
-      () => undefined,
-      () => null
-    )
-  }
 
   const detachTab = async (tabId: number) => {
     invalidateReplacementForTab(tabId)
@@ -1546,6 +1479,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
       replacementReservations.set(payload.domain, reservation)
       let resolveTask!: (value: undefined | null) => void
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
       let rejectTask!: (reason?: unknown) => void
       const task = new Promise<undefined | null>((resolve, reject) => {
         resolveTask = resolve

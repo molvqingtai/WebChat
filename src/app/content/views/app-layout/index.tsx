@@ -31,6 +31,7 @@ const AppLayout: FC<AppLayoutProps> = ({ children }) => {
     onChange: handlePositionChange
   })
 
+  // SAFETY: geometry.style is the CSSProperties object produced by the layout geometry hook.
   return (
     <div className="contents" style={geometry.style as CSSProperties}>
       <AppMain open={appOpen} geometry={geometry.shell}>

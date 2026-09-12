@@ -70,6 +70,7 @@ const textRecord = (id: string, body: string, user = LOCAL_USER): TextMessageRec
 
 const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => string) => {
   const messageStore = createMessageStore(database)
+  // SAFETY: the storage double returns its own seeded record for every requested key.
   const storage: Storage = {
     get: async <T extends StorageValue>() => SELF as T,
     set: async () => {},
@@ -89,6 +90,8 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
   const chat: ChatRoom = {
     joinRoom: async () => {},
     leaveRoom: async () => {},
+    // SAFETY: the harness sender is cast to the room-message sender surface this fixture installs.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness cast of the room sender surface
     sendMessage: (async (command: SendMessageCommand) => {
       const id = nextId()
       if (command.type === 'reaction') {
@@ -184,6 +187,7 @@ describe.each(backends)('$name causal local send projection', (backend) => {
     databases.add(database)
     const notify = new Set<() => void>()
     const watch = database.watch.bind(database)
+    // SAFETY: the wrapper keeps the database watch contract while adding the test listener.
     database.watch = ((stores, listener) => watch(stores, () => notify.add(listener))) as typeof database.watch
     const page = createPage(database, () => 'local-message')
     await vi.waitFor(() => expect(page.store.query(page.list.query.LoadIsFinishedQuery())).toBe(true))

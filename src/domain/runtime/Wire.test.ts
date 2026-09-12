@@ -177,6 +177,7 @@ describe('WireDomain anti-corruption boundary', () => {
     const calls: string[] = []
     const runtime = fixture({
       encode: (value) => {
+        // SAFETY: the harness encodes the session payload it was given in this test.
         const sessionId = (value as { sessionId: string }).sessionId
         calls.push(sessionId)
         return sessionId === 'first' ? first.promise : second.promise
@@ -432,6 +433,7 @@ describe('WireDomain anti-corruption boundary', () => {
     async (transition) => {
       const staleEncode = deferred<string>()
       const runtime = fixture({
+        // SAFETY: the harness encodes the session payload it was given in this test.
         encode: (value) =>
           (value as { sessionId?: string }).sessionId === 'stale-session'
             ? staleEncode.promise

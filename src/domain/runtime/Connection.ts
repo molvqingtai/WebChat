@@ -767,7 +767,7 @@ const ConnectionDomain = Remesh.domain({
         requestId,
         generation,
         joinRequestId: worldJoinRequestId(requestId),
-        ...(manual ? { manual: true } : {})
+        manual: manual ? true : undefined
       }
       return [
         WorldRecoveryGenerationState().new(generation),
@@ -863,7 +863,7 @@ const ConnectionDomain = Remesh.domain({
           wireDomain.command.LeaveRoomCommand({
             roomId: getWorldRoomId(),
             preservePending: false,
-            ...(recovery.manual ? { diagnosticOnly: true } : {})
+            diagnosticOnly: recovery.manual ? true : undefined
           }),
           // A manual AppButton World replacement keeps its failure out of page UI/Toast; automatic
           // recovery retains its existing diagnostics contract.

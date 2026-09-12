@@ -16,6 +16,7 @@ vi.mock('@/hooks/useCursorPosition', () => ({
 }))
 vi.mock('imgcap', () => ({ default: vi.fn() }))
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- spy accepts the forwarded remesh action
 const sendSpy = vi.fn((_action: unknown) => {})
 const fakeDomain = {
   query: {
@@ -25,12 +26,15 @@ const fakeDomain = {
     CanSubmitTextQuery: () => ({ name: 'Room.CanSubmitTextQuery' })
   },
   command: {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- domain double forwards the command value
     InputCommand: (value: unknown) => value,
     ClearCommand: () => 'MessageInput.ClearCommand',
     WarningCommand: () => 'Toast.WarningCommand',
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- domain double forwards the command value
     SendTextMessageCommand: (value: unknown) => value
   }
 }
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening -- query fixture keyed by remesh query name
 const queryFixtures: Record<string, unknown> = {
   'MessageInput.ValueQuery': '@',
   'UserInfo.UserInfoQuery': { id: 'local-user', name: 'Local', avatar: '' },
