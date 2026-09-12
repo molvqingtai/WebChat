@@ -1942,23 +1942,33 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
 
     if (event.type === 'console') {
-      if (event.contextId !== state.isolatedContextId) return
-      if (containsSharedRuntimeUnavailable(event.args)) {
-        state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
-      } else if (event.level.toLowerCase() === 'error') {
-        state.unexpectedFailure = 'The exact isolated context reported an unexpected console error'
-      }
+      observeIsolatedConsoleEvent(event)
       return
     }
 
     if (event.type === 'exception') {
-      if (event.contextId !== state.isolatedContextId) return
-      if (containsSharedRuntimeUnavailable([event.message, event.stack])) {
-        state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
-      } else {
-        state.unexpectedFailure = 'The exact isolated context reported an unexpected exception'
-      }
+      observeIsolatedExceptionEvent(event)
       return
+    }
+  }
+
+  /** Applies a console event from the exact page-bound isolated context. */
+  const observeIsolatedConsoleEvent = (event: Extract<ChromeLifecycleEvent, { type: 'console' }>): void => {
+    if (event.contextId !== state.isolatedContextId) return
+    if (containsSharedRuntimeUnavailable(event.args)) {
+      state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
+    } else if (event.level.toLowerCase() === 'error') {
+      state.unexpectedFailure = 'The exact isolated context reported an unexpected console error'
+    }
+  }
+
+  /** Applies an exception event from the exact page-bound isolated context. */
+  const observeIsolatedExceptionEvent = (event: Extract<ChromeLifecycleEvent, { type: 'exception' }>): void => {
+    if (event.contextId !== state.isolatedContextId) return
+    if (containsSharedRuntimeUnavailable([event.message, event.stack])) {
+      state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
+    } else {
+      state.unexpectedFailure = 'The exact isolated context reported an unexpected exception'
     }
   }
 
