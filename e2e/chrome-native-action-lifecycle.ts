@@ -1631,7 +1631,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
   /** The terminal outcome and reason for the accepted-target lifecycle, in priority order. */
   const resolveTerminalDecision = (
-    finalDom: ChromeLifecycleDomSample | { readonly unavailable: string } | undefined,
+    finalDom: ChromeLifecycleDomSample | { readonly unavailable: string },
     finalDomMissing: boolean
   ): { readonly outcome: ChromeNativeActionLifecycleOutcome; readonly reason: string } => {
     if (state.extensionFailure) return { outcome: 'extension-setup-failed', reason: state.extensionFailure }
@@ -1658,10 +1658,10 @@ export const diagnoseChromeNativeActionLifecycle = async (
         reason: 'No exact page-bound extension isolated context appeared within the lifecycle budget'
       }
     }
-    if (finalDom && 'unavailable' in finalDom) {
+    if ('unavailable' in finalDom) {
       return { outcome: 'unexpected-content-failure', reason: finalDom.unavailable }
     }
-    if (finalDom && finalDom.extensionRootCount !== 1) {
+    if (finalDom.extensionRootCount !== 1) {
       return {
         outcome: 'content-mount-absent',
         reason: 'The exact isolated context appeared without an extension shadow root'
