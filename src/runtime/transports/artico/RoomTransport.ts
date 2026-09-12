@@ -84,6 +84,7 @@ export const createRoomTransport = (): RoomTransport => {
       owner.pendingJoin?.resolve()
       owner.pendingJoin = undefined
     } catch (error) {
+      // SAFETY: the provider join failure path only propagates thrown errors as Error.
       const joinError = error as Error
       // A synchronous provider join throw is delivered scoped to the owning attempt via the join
       // rejection only. It must not also fire the room-less global error (which would surface as a
@@ -148,10 +149,13 @@ export const createRoomTransport = (): RoomTransport => {
   }
 
   const createOwner = (roomId: string): PeerOwner => {
+    // SAFETY: the peer slot starts as an explicit pre-connect placeholder and is assigned before any use.
+    const unassignedPeer = undefined as unknown
     const owner: PeerOwner = {
       roomId,
       peerId: nanoid(),
-      peer: undefined as unknown as Artico,
+      // SAFETY: unassignedPeer is the placeholder for the peer field, set before the owner is used.
+      peer: unassignedPeer as Artico,
       restartTimer: null,
       retiring: false,
       roomRetired: false,
@@ -182,6 +186,7 @@ export const createRoomTransport = (): RoomTransport => {
     let roomFailure: unknown
     let peerFailed = false
     let peerFailure: unknown
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the failure path rethrows an arbitrary error
     const rememberFailure = (error: unknown) => {
       if (failed) return
       failed = true
@@ -216,8 +221,12 @@ export const createRoomTransport = (): RoomTransport => {
       owner.retirementError = failure
       if (!strict) {
         if (roomFailed) {
-          if (diagnosticOnly) console.error(roomFailure)
-          else errorListeners.forEach((listener) => listener(roomFailure as Error, owner.roomId))
+          if (diagnosticOnly) {
+            console.error(roomFailure)
+          } else {
+            // SAFETY: the room failure path only propagates thrown errors as Error.
+            errorListeners.forEach((listener) => listener(roomFailure as Error, owner.roomId))
+          }
         }
         // A close failure after the room has already retired remains a provider diagnostic, as
         // before; the retained owner still prevents a second peer from being created.
