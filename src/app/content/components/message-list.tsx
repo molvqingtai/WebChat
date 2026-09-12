@@ -80,9 +80,8 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
 
   useEffect(() => {
     atEndRef.current = atEnd
-    // The pending count retires when the bottom is reached. Whether it could be derived during
-    // render is unproven (the acceptance suite is timing-flaky here), so it is kept as an effect by
-    // product decision.
+    // The pending count clears together with the committed at-bottom state; the effect keeps the
+    // clear in the same commit that observes atEnd become true.
     // oxlint-disable-next-line react-hooks/set-state-in-effect -- retires the count on bottom reach
     if (atEnd) setNewMessageCount(0)
   }, [atEnd])
@@ -201,9 +200,9 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
     }
   }, [scrollToEnd, recomputeScrollGate])
 
-  // The arrival counter is accumulated across committed tail changes (a previous-prop comparison),
-  // so it cannot be derived during render without duplicating the scroll authorization state
-  // machine. Kept as an effect by product decision; see the PR's retained-exception list.
+  // The arrival counter accumulates across committed tail changes by comparing the previous tail
+  // props; the effect is the point where those committed changes are observed. See the PR's
+  // retained-exception list.
   useEffect(() => {
     // oxlint-disable-next-line react-hooks/set-state-in-effect -- counter accumulates across commits
     recomputeScrollGate()
