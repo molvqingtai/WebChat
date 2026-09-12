@@ -760,7 +760,7 @@ const registerHistoryProvider = (
         if (active.get(event.request.supplyId) !== controller) return
         return server.rejectHistorySupply({
           supplyId: event.request.supplyId,
-          // SAFETY: this double raises the rejection, so its reason is an Error
+          // SAFETY: every rejection path in this test double rejects with an Error, so its message can be forwarded as the reason
           reason: (error as Error).message,
           ...(payload.caller ? { caller: payload.caller } : {})
         })
@@ -780,12 +780,12 @@ const registerHistoryProvider = (
 const sessionAllocationEventFixture = () => {
   const textPayload: TextMessageAllocatedEventPayload = {
     operationId: 'fixture',
-    // SAFETY: the fixture record carries only the fields this allocation assertion reads
+    // SAFETY: compile-time fixture only - the record value is never read at runtime, it only satisfies the allocation-event boundary
     record: {} as TextMessageRecord
   }
   const reactionPayload: ReactionMessageAllocatedEventPayload = {
     operationId: 'fixture',
-    // SAFETY: the fixture record carries only the fields this allocation assertion reads
+    // SAFETY: compile-time fixture only - the record value is never read at runtime, it only satisfies the allocation-event boundary
     record: {} as ReactionMessageRecord
   }
   // @ts-expect-error — a reaction allocation payload is not a text allocation payload
@@ -805,7 +805,7 @@ describe('RuntimeServer lifecycle', () => {
   it('fails closed before a direct replacement cut when the mandatory retirement capability is malformed', async () => {
     const { fake, server } = await setup()
     const joinsBeforeReplacement = fake.joinCalls.length
-    // SAFETY: reads one private transport field through a widened shape to observe preparation retirement
+    // SAFETY: the transport double is widened so this test can write undefined into a capability the server requires
     const malformed = fake.transport as unknown as { retireRoomsForPreparation?: unknown }
     malformed.retireRoomsForPreparation = undefined
 
