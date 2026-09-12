@@ -39,7 +39,8 @@
     "src/components/magicui",
     "src/lib/uglyAvatar",
     "tools/oxlint/anti-slop/**",
-    ".pi/**"
+    ".pi/**",
+    ".agents/**"
   ],
   "overrides": [
     {
