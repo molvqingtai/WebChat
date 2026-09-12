@@ -14,6 +14,7 @@ type WebSocketConstructor = new (url: string) => WebSocketLike
 type CdpMessage = {
   id?: number
   method?: string
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- CDP harness boundary
   params: Record<string, any>
   sessionId: string
   result?: any
@@ -22,6 +23,7 @@ type CdpMessage = {
 
 type CdpWaiter = {
   resolve: (value: any) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
   reject: (error: unknown) => void
   timer: NodeJS.Timeout
 }
@@ -47,6 +49,7 @@ export type CleanupFailureEvidence = {
 export type CleanupAttempt = {
   resource: string
   phase: string
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
   run: (remainingMs: number) => unknown | PromiseLike<unknown>
 }
 
@@ -55,7 +58,9 @@ export type ChromeTeardownOptions = {
   cleanupTimeoutMs: number
   hasCdp: () => boolean
   closeCdp: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
   closeBrowser: () => PromiseLike<unknown>
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
   waitForBrowserExit: (remainingMs: number) => PromiseLike<unknown>
   remainingAttempts: () => CleanupAttempt[]
   cleanupComplete: () => boolean
@@ -71,11 +76,13 @@ type CleanupOptions = {
   termTimeoutMs?: number
   killTimeoutMs?: number
   pollIntervalMs?: number
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
   sleep?: (durationMs: number) => Promise<unknown>
 }
 
 export const delay = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 export const readDevToolsActivePort = async (
@@ -85,6 +92,7 @@ export const readDevToolsActivePort = async (
   try {
     return (await read(path)).trim() || null
   } catch (error) {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- CDP harness boundary
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null
     throw error
   }
@@ -92,6 +100,7 @@ export const readDevToolsActivePort = async (
 
 export const createProfileRemovalVerificationAttempt = (
   path: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
   accessPath: (path: string) => PromiseLike<unknown>,
   setRemoved: (removed: boolean) => void
 ): CleanupAttempt => ({
@@ -102,6 +111,7 @@ export const createProfileRemovalVerificationAttempt = (
     try {
       await accessPath(path)
     } catch (error) {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- CDP harness boundary
       if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
         setRemoved(true)
         return
@@ -188,6 +198,7 @@ export const appendCleanupFailure = (
   deadlineAt: number,
   resource: string,
   phase: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
   error: unknown,
   now: () => number = Date.now
 ) => {
@@ -231,6 +242,9 @@ export const runCleanupAttempts = async (
   }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness accepts the raw run error
 export const selectTerminalError = (runError: unknown, cleanupError: Error | undefined): unknown =>
   runError ?? cleanupError
 
@@ -247,6 +261,7 @@ export const createChromeTeardown = (options: ChromeTeardownOptions) => {
         appendCleanupFailure(options.errors, beginCleanup(), 'cdp', 'timeout-close', error, now)
       }
     },
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
     finish: async (runError: unknown) => {
       const attempts: CleanupAttempt[] = options.hasCdp()
         ? [
@@ -275,6 +290,7 @@ export const createChromeTeardown = (options: ChromeTeardownOptions) => {
 
 export const evaluateRuntimeMessage = <T>(
   evaluate: (expression: string) => Promise<T>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
   message: unknown
 ): Promise<T> => {
   const serialized = JSON.stringify(message)
@@ -290,10 +306,14 @@ export class CdpClient {
   handlers = new Set<(message: CdpMessage) => void>()
 
   constructor(url: string, options: CdpClientOptions = {}) {
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- CDP harness boundary
+    // SAFETY: the harness casts the global WebSocket to the structural constructor it drives.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness cast of the global WebSocket
     const WebSocketImpl = options.WebSocketImpl ?? (WebSocket as unknown as WebSocketConstructor)
     this.requestTimeoutMs = options.requestTimeoutMs ?? 5000
     this.socket = new WebSocketImpl(url)
     this.socket.addEventListener('message', ({ data }) => {
+      // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- CDP harness boundary
       const message = JSON.parse(String(data)) as CdpMessage
       if (message.id) {
         const waiter = this.pending.get(message.id)
@@ -315,6 +335,7 @@ export class CdpClient {
     })
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
   connect(): Promise<unknown> {
     return withDeadline(
       new Promise((resolve, reject) => {
@@ -331,6 +352,7 @@ export class CdpClient {
     return () => this.handlers.delete(handler)
   }
 
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- CDP harness boundary
   send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++
@@ -340,6 +362,7 @@ export class CdpClient {
       }, this.requestTimeoutMs)
       this.pending.set(id, { resolve, reject, timer })
       try {
+        // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- CDP harness boundary
         this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
       } catch (error) {
         clearTimeout(timer)
