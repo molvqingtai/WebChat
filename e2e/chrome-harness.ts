@@ -244,7 +244,7 @@ export const runCleanupAttempts = async (
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness boundary
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- CDP harness boundary
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- CDP harness accepts the raw run error
+// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- CDP harness selects between raw run/cleanup errors
 export const selectTerminalError = (runError: unknown, cleanupError: Error | undefined): unknown =>
   runError ?? cleanupError
 
