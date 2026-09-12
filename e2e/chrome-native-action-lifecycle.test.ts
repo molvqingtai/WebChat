@@ -154,6 +154,7 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
   readonly sampleDeadlines: number[] = []
   readonly operationDeadlines: Array<{ readonly operation: string; readonly deadlineMs: number }> = []
   readonly phaseEffects = new Map<string, AdapterEffect[]>()
+  gapEffects: AdapterEffect[] | undefined
   readonly observedSessions: Array<{
     session: ChromeLifecycleSession
     domains: { runtime: true; log: true; page: boolean }
@@ -309,6 +310,19 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
     this.trace.push(`wait-event:${deadlineMs}`)
     this.waitDeadlines.push(deadlineMs)
     this.applyPhaseEffects('wait-event')
+    // Queued, not applied: these run after this observation resolves and before the awaiting
+    // caller resumes, which is the dead zone a phase-helper extraction introduces.
+    if (this.gapEffects) {
+      const queued = this.gapEffects
+      this.gapEffects = undefined
+      queueMicrotask(() => {
+        this.trace.push('gap')
+        queued.forEach((effect) => {
+          if ('advanceMs' in effect) this.nowMs += effect.advanceMs
+          else this.requireSink()(effect)
+        })
+      })
+    }
     const step = this.steps.shift()
 
     if (!step) {
@@ -934,6 +948,30 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
     expect(result.lifecycleStartedAtMs).toBe(1000)
     expect(result.lifecycleDeadlineMs).toBe(1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+  })
+
+  it('keeps the pre-target terminal decision stable when the observation gap delivers worker evidence', async () => {
+    // gapEffects run on a queued microtask from inside the awaited observation, so they land after
+    // that observation resolves and before its awaiting caller resumes: the dead zone the
+    // observePreTargetPhase extraction introduced. The delivered foreign worker therefore arrives
+    // with no target created yet and must still be observed before the terminal decision.
+    const adapter = prepareAdapter([{ advanceMs: 10_000 }])
+    adapter.startupTargets = [blankTarget, foreignWorkerTarget]
+    adapter.gapEffects = [{ type: 'target-changed', target: foreignWorkerTarget }]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    const gapIndex = adapter.trace.indexOf('gap')
+    expect(gapIndex).toBeGreaterThanOrEqual(0)
+    expect(adapter.trace.slice(0, gapIndex).some((entry) => entry.startsWith('create-target'))).toBe(false)
+    expect(adapter.trace.some((entry) => entry.startsWith('create-target'))).toBe(false)
+
+    expect(result.outcome).toBe('extension-setup-failed')
+    expect(result.actionAuthorization).toBeNull()
+    expect(adapter.createdUrls).toEqual([])
+    const recordedTypes = result.timeline.map(({ type }) => type)
+    expect(recordedTypes).toContain('event:target-changed')
+    expect(recordedTypes.indexOf('event:target-changed')).toBeLessThan(recordedTypes.lastIndexOf('terminal'))
   })
 
   it('keeps a fully classified unrelated worker after binding as evidence only', async () => {
