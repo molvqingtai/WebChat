@@ -1697,19 +1697,19 @@ export const diagnoseChromeNativeActionLifecycle = async (
   /** Whether a bound-phase failure state other than the extension failure is set. */
   const hasNonExtensionBoundFailure = (): boolean =>
     Boolean(
-      state.targetFailure ??
-      state.unexpectedFailure ??
-      state.sharedRuntimeUnavailable ??
-      timeline.overflow ??
+      state.targetFailure ||
+      state.unexpectedFailure ||
+      state.sharedRuntimeUnavailable ||
+      timeline.overflow ||
       timeline.clockFailure
     )
 
   /** Whether any bound-phase failure state is set. */
   const hasLocalBoundFailure = (): boolean =>
-    Boolean(state.extensionFailure ?? state.targetFailure ?? state.unexpectedFailure ?? state.sharedRuntimeUnavailable)
+    Boolean(state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
 
   /** Whether any bound-phase failure state, including the shared timeline failures, is set. */
-  const hasBoundFailure = (): boolean => hasLocalBoundFailure() || Boolean(timeline.overflow ?? timeline.clockFailure)
+  const hasBoundFailure = (): boolean => hasLocalBoundFailure() || Boolean(timeline.overflow || timeline.clockFailure)
 
   /** Applies the bound lifecycle post-sample checks; false stops the loop at the same conditions. */
   const resolveBoundSampleOutcome = (
