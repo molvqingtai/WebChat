@@ -32,7 +32,7 @@
     "src/lib/uglyAvatar",
     "tools/oxlint/anti-slop/**",
     ".pi/**",
-    ".agents/**"
+    ".agents/skills/archify/**"
   ],
   "overrides": [
     {

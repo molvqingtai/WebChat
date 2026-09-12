@@ -2026,7 +2026,7 @@ describe('RuntimeServer lifecycle', () => {
     emitRemoteWorldPresence(fake)
     await settle()
 
-    // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
+    // SAFETY: the production presence store writes the item after the presence join, and this reads the required local.presenceId that the join guarantees
     const presenceIdBefore = (Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId
     const before = await readServerSnapshot(server)
     const beforeLocal = before.domains.find((item) => item.domain === DOMAIN)!.localSession!
@@ -2044,7 +2044,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(afterLocal.sessionId).not.toBe(beforeLocal.sessionId)
     expect(afterLocal.joinedAt).toBe(beforeLocal.joinedAt)
     expect(afterLocal.user).toEqual(beforeLocal.user)
-    // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
+    // SAFETY: the production presence store writes the item after the presence join, and this reads the required local.presenceId that the join guarantees
     expect((Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId).toBe(presenceIdBefore)
     // The page lease stays attached.
     expect(after.domains.find((item) => item.domain === DOMAIN)!.tabIds).toContain(1)
