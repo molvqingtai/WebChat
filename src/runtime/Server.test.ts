@@ -987,7 +987,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the lastJoinedAt/observers fields it checks
         const record = Object.values(items)[0] as { lastJoinedAt?: number; observers?: unknown[] }
         if (
           holdClearSave &&
@@ -1966,7 +1966,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the local.status/observers fields it checks
         const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
         // The refresh reset persists the cleared-observer record (retained local seed, no remote
         // observations); a healthy join's commit save carries the same shape, so only reject once
@@ -2026,7 +2026,7 @@ describe('RuntimeServer lifecycle', () => {
     emitRemoteWorldPresence(fake)
     await settle()
 
-    // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+    // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
     const presenceIdBefore = (Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId
     const before = await readServerSnapshot(server)
     const beforeLocal = before.domains.find((item) => item.domain === DOMAIN)!.localSession!
@@ -2044,7 +2044,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(afterLocal.sessionId).not.toBe(beforeLocal.sessionId)
     expect(afterLocal.joinedAt).toBe(beforeLocal.joinedAt)
     expect(afterLocal.user).toEqual(beforeLocal.user)
-    // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+    // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
     expect((Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId).toBe(presenceIdBefore)
     // The page lease stays attached.
     expect(after.domains.find((item) => item.domain === DOMAIN)!.tabIds).toContain(1)
@@ -2323,7 +2323,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2407,7 +2407,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2467,7 +2467,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2581,7 +2581,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2641,7 +2641,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
         const record = Object.values(items)[0] as
           | { domain?: string; local?: unknown; observers?: unknown[] }
           | undefined
@@ -2800,7 +2800,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the local.status/observers fields it checks
         const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
         if (
           rejectClearSave &&
@@ -3538,7 +3538,7 @@ describe('RuntimeServer lifecycle', () => {
     const codec: WireCodec = {
       encode: async (value) => JSON.stringify(value),
       decode: async (payload) => {
-        // SAFETY: the payload is produced by the code under test; it is parsed here only to read the recorded message
+        // SAFETY: the fake transport always passes a JSON string from the injected inbound frame, and decode only reads sessionId
         const value = JSON.parse(payload as string) as { sessionId?: string }
         if (value.sessionId === 'old-world-session') {
           oldDecodeStarted = true
@@ -3878,7 +3878,7 @@ describe('RuntimeServer lifecycle', () => {
       coordinator: {
         registerPage: (payload) => server.attachPage({ ...payload, caller: localCaller })
       },
-      // SAFETY: the snapshot object carries the recorded shape this test asserts on
+      // SAFETY: the DocumentClient under test only calls getSnapshot, so the adapter object implements just that one RuntimeServer method
       server: {
         getSnapshot: (payload) => server.getSnapshot({ ...payload, caller: localCaller })
       } as RuntimeServer,
@@ -4498,7 +4498,7 @@ describe('RuntimeServer lifecycle', () => {
     const presenceStore = createBrowserPresenceStore({
       get: async (key) => ({ [key]: values[key] }),
       set: async (items) => {
-        // SAFETY: the fake store recorded the item this test writes, so it carries this shape
+        // SAFETY: the production presence store writes the item and the double reads only the fields it checks here
         const record = Object.values(items)[0] as { local?: unknown } | undefined
         // The release cleanup save carries no local record; active-record saves always do.
         // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the presence record is test data; the typeof confirms it is an object before the 'local' in record check distinguishes a cleanup save from an active-record save
