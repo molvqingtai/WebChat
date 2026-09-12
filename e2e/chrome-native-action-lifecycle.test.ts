@@ -932,6 +932,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.outcome).toBe('target-lifecycle-failed')
     expect(result.actionAuthorization).toBeNull()
     expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
+    expect(result.lifecycleStartedAtMs).toBe(1000)
+    expect(result.lifecycleDeadlineMs).toBe(1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
   })
 
   it('keeps a fully classified unrelated worker after binding as evidence only', async () => {
