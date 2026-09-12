@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 import { ToastExtern, type ToastOptions } from '@/domain/externs/Toast'
 
 const normalizeOptions = (options?: ToastOptions | number): ToastOptions | undefined =>
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- discrimination of the typed number-or-options union
   typeof options === 'number' ? { duration: options } : options
 
 const timedOptions = (options?: ToastOptions | number) => {

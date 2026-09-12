@@ -10,11 +10,13 @@ const proxyOptions = {
   debug: import.meta.env.DEV ? ('event' as const) : false
 }
 
+// SAFETY: the proxy factory placeholder is replaced by the injected RuntimeCoordinator implementation.
 const [, injectCoordinator] = defineProxy(() => ({}) as RuntimeCoordinator, {
   ...proxyOptions,
   namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}`
 })
 
+// SAFETY: the proxy factory placeholder is replaced by the injected RuntimeServer implementation.
 const [, injectServer] = defineProxy(() => ({}) as RuntimeServer, {
   ...proxyOptions,
   namespace: `${RUNTIME_NAMESPACE_PREFIX}:${browser.runtime.id}`
@@ -27,12 +29,16 @@ const rawServer = injectServer(new InjectAdapter())
 const client = new DocumentClient({ coordinator, server: rawServer, domain: pageDomain })
 // Residual inject rejections (e.g. a History-supply callback proxy) are diagnostic only; they
 // never control the drain lifecycle.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- residual inject rejections are untyped
 ownInjectRejections((error) => console.error(error))
 
 // The state-changed listener is installed at module evaluation, before any read can start. The
 // notification is a content-free invalidation: it only marks the sole document-local drain dirty
 // and starts or joins it. It never carries or applies state.
+// SAFETY: the cast probes one optional field of the runtime message payload.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime message payloads are untyped
 browser.runtime.onMessage.addListener((message: unknown) => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the runtime message payload
   if (!message || typeof message !== 'object' || (message as { type?: unknown }).type !== STATE_CHANGED_MESSAGE_TYPE) {
     return
   }

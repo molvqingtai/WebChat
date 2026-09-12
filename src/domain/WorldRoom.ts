@@ -42,6 +42,7 @@ const WorldRoomDomain = Remesh.domain({
             try {
               return CompleteJoinCommand(await worldRoom.getState())
             } catch (error) {
+              // SAFETY: the join failure path only propagates thrown errors as Error.
               return FailJoinCommand(error as Error)
             }
           })

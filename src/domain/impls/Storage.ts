@@ -91,11 +91,13 @@ export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCo
 export const LocalStorageImpl = LocalStorageExtern.impl({
   get: localStorage.getItem,
   set: localStorage.setItem,
+  // SAFETY: localStorage.watch matches the Storage watch contract; the extern narrows the generic.
   watch: localStorage.watch as Storage['watch']
 })
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
   get: browserSyncStorage.getItem,
   set: browserSyncStorage.setItem,
+  // SAFETY: browserSyncStorage.watch matches the Storage watch contract; the extern narrows the generic.
   watch: browserSyncStorage.watch as Storage['watch']
 })
