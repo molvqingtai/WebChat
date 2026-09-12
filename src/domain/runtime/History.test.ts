@@ -36,6 +36,7 @@ type SentMessage = {
 type TransportFixture = {
   transport: RoomTransport
   sent: SentMessage[]
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
   receive: (roomId: string, sourcePeerId: string, message: unknown) => void
 }
 
@@ -48,6 +49,7 @@ const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
     leave: () => {},
     retireRoomsForPreparation: async () => {},
     send: async (roomId, payload, targetPeerIds) => {
+      // SAFETY: the harness decodes the Chat payload it was given in this test.
       sent.push({ roomId, targetPeerIds, message: JSON.parse(payload) as ChatRoomMessage })
     },
     onMessage: (callback) => {
@@ -65,6 +67,7 @@ const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
   return {
     transport,
     sent,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
     receive: (roomId: string, sourcePeerId: string, message: unknown) => {
       messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
     }
@@ -192,10 +195,12 @@ const connectedNetwork = () => {
         const requested =
           targetPeerIds === undefined
             ? [...peers.keys()]
-            : typeof targetPeerIds === 'string'
+            : // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional target argument
+              typeof targetPeerIds === 'string'
               ? [targetPeerIds]
               : targetPeerIds
         const targets = [...new Set(requested)].filter((target) => target !== peerId)
+        // SAFETY: the harness decodes the Chat payload it was given in this test.
         sent.push({
           roomId,
           targetPeerIds,
@@ -231,6 +236,7 @@ const connectedNetwork = () => {
     return {
       transport,
       sent,
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
       receive: (roomId: string, sourcePeerId: string, message: unknown) => {
         peer.messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
       }
@@ -390,7 +396,9 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
   const pushes = (sent: Fixture['sent']) =>
     sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+  // SAFETY: the helper narrows a sent item to the pull command this scenario asserts on.
   const pullMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPull
+  // SAFETY: the helper narrows a sent item to the push command this scenario asserts on.
   const pushMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPush
   const targetsOf = (item: Fixture['sent'][number]) => JSON.stringify(item.targetPeerIds)
 
@@ -699,7 +707,9 @@ describe('HistoryDomain current-function peer topology', () => {
     )
     expect(pull).toHaveLength(1)
     expect(push).toHaveLength(1)
+    // SAFETY: the captured pages are the pull/push commands this scenario emits.
     const pullPage = pull[0]!.message as HistoryMessagesPull
+    // SAFETY: the captured pages are the pull/push commands this scenario emits.
     const pushPage = push[0]!.message as HistoryMessagesPush
     expect(pushPage.syncId).toBe(pullPage.syncId)
     expect(pullPage.page).toBe(0)
