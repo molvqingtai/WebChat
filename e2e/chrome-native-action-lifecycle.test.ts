@@ -754,6 +754,49 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(detail.exact).toBe(false)
   })
 
+  it('reports array length differences under an allowlisted path with lexicographic index order', async () => {
+    const shortScripts = Array.from({ length: 10 }, (_, index) => `script-${index}.js`)
+    const longScripts = [...shortScripts, 'script-10.js']
+    const changedScripts = shortScripts.map((script, index) => (index === 2 ? 'script-2-changed.js' : script))
+    const arrayContext: ChromeLifecycleContext = {
+      ...context,
+      packagedManifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: longScripts }
+      }
+    }
+    const adapter = prepareAdapter()
+    adapter.registerWorker(foreignWorkerTarget, foreignWorkerSession, {
+      runtimeId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      manifest: {
+        ...packagedManifest,
+        background: { type: 'module', service_worker: 'background.js', scripts: changedScripts }
+      }
+    })
+    adapter.startupTargets = [blankTarget, foreignWorkerTarget, workerTarget]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, arrayContext)
+    const foreignEvidence = result.timeline.find(
+      ({ type, detail }) =>
+        type === 'worker-classified' &&
+        // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+        // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+        (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
+    )
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const detail = foreignEvidence?.detail as Record<string, unknown>
+    expect(detail.diffOverflow).toBe(false)
+    // SAFETY: the test narrows the lifecycle timeline detail it reads and asserts here.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- lifecycle timeline detail record read by the test
+    const diff = detail.diff as Array<Record<string, unknown>>
+    // String (lexicographic) index order: `/10` sorts before `/2`, matching the diff's own sort.
+    expect(diff.map(({ path }) => path)).toEqual(['/background/scripts/10', '/background/scripts/2'])
+    const missingSide = diff[0]!.runtime as Record<string, unknown>
+    expect(missingSide.type).toBe('missing')
+    expect(missingSide.length).toBe(0)
+  })
+
   it('fails setup before target creation when total worker evidence capacity is exceeded', async () => {
     const adapter = prepareAdapter([])
     const workers = Array.from({ length: CHROME_NATIVE_ACTION_MAX_WORKER_RECORDS + 1 }, (_, index) => {
