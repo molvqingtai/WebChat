@@ -920,10 +920,10 @@ describe('Chrome native action lifecycle diagnostic', () => {
   })
 
   it('keeps the pre-target terminal decision stable when the deadline lands in the same turn as the final observation', async () => {
-    // Injects the clock advance inside the observation await itself, so the turn that ends the
-    // pre-target phase both completes that await and crosses the discovery deadline. The decision
-    // must stay the recorded deadline failure with no target creation, whether that branch lives
-    // inside the phase helper or in its caller.
+    // ADVANCE inside the observation await itself, so the turn that ends the pre-target phase both
+    // completes that await and crosses the discovery deadline. This pins the decision, the created
+    // target count and the caller's immediate clock reads across the phase-helper boundary; it is
+    // NOT a pre-creation case (one target is created before the bound phase fails).
     const adapter = prepareAdapter()
     adapter.phaseEffects.set('wait-event', [{ advanceMs: CHROME_NATIVE_ACTION_WORKER_DISCOVERY_BUDGET_MS }])
 
