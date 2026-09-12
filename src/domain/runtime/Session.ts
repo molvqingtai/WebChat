@@ -1274,7 +1274,7 @@ const SessionDomain = Remesh.domain({
         try {
           hlc = allocateHlc(get(HlcState()), clock.now())
         } catch (error) {
-          // SAFETY: the operation failure path only propagates thrown errors as Error.
+          // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
           return OperationFailedEvent({ operationId: payload.operationId, error: error as Error })
         }
         const candidate = {
@@ -1325,7 +1325,7 @@ const SessionDomain = Remesh.domain({
         try {
           hlc = allocateHlc(get(HlcState()), clock.now())
         } catch (error) {
-          // SAFETY: the operation failure path only propagates thrown errors as Error.
+          // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
           return OperationFailedEvent({ operationId: payload.operationId, error: error as Error })
         }
         const candidate = {
@@ -2067,7 +2067,7 @@ const SessionDomain = Remesh.domain({
               // The authoritative active record was not removed: surface the exact failure,
               // retain the current fence and physical membership, restore the observer deadline
               // ownership (re-armed), and allow a later retry.
-              // SAFETY: the cleanup failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return FailReleaseCleanupCommand({ domain, error: error as Error })
             }
           })
@@ -2082,7 +2082,7 @@ const SessionDomain = Remesh.domain({
               await presenceStore.save(request.record)
               return request.requestId ? PresencePersistenceSettledEvent({ requestId: request.requestId }) : null
             } catch (error) {
-              // SAFETY: the persistence failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return request.requestId
                 ? PresencePersistenceSettledEvent({ requestId: request.requestId, error: error as Error })
                 : ErrorEvent({ error: error as Error, domain: request.record.domain })

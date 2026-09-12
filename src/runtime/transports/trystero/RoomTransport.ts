@@ -108,7 +108,7 @@ export const createRoomTransport = (): RoomTransport => {
             if (owner.leaveDiagnostic) {
               console.error(error)
             } else {
-              // SAFETY: the leave failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
             }
           }
@@ -121,7 +121,7 @@ export const createRoomTransport = (): RoomTransport => {
         if (owner.leaveDiagnostic) {
           console.error(error)
         } else {
-          // SAFETY: the leave failure path only propagates thrown errors as Error.
+          // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
           errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
         }
       }

@@ -309,7 +309,7 @@ const Footer: FC = () => {
         inputRef.current?.focus()
       })
     } catch (error) {
-      // SAFETY: the send failure path only propagates thrown errors as Error.
+      // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
       send(toastDomain.command.ErrorCommand((error as Error).message))
     } finally {
       setInputLoading(false)

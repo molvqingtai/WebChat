@@ -91,7 +91,7 @@ export class PagePort implements PagePortContract {
       } catch (error) {
         this.pendingHistory.delete(request.supplyId)
         this.removePage(entry.tabId)
-        // SAFETY: the history supply failure path only propagates thrown errors as Error.
+        // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
         reject(error as Error)
         confirmSettled()
       }

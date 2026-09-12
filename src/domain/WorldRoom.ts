@@ -42,7 +42,7 @@ const WorldRoomDomain = Remesh.domain({
             try {
               return CompleteJoinCommand(await worldRoom.getState())
             } catch (error) {
-              // SAFETY: the join failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return FailJoinCommand(error as Error)
             }
           })

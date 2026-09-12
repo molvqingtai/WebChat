@@ -84,7 +84,7 @@ export const createRoomTransport = (): RoomTransport => {
       owner.pendingJoin?.resolve()
       owner.pendingJoin = undefined
     } catch (error) {
-      // SAFETY: the provider join failure path only propagates thrown errors as Error.
+      // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
       const joinError = error as Error
       // A synchronous provider join throw is delivered scoped to the owning attempt via the join
       // rejection only. It must not also fire the room-less global error (which would surface as a
@@ -217,7 +217,7 @@ export const createRoomTransport = (): RoomTransport => {
       if (diagnosticOnly) {
         console.error(outcome.roomFailure)
       } else {
-        // SAFETY: the room failure path only propagates thrown errors as Error.
+        // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
         errorListeners.forEach((listener) => listener(outcome.roomFailure as Error, owner.roomId))
       }
     }

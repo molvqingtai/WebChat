@@ -1043,7 +1043,7 @@ const WireDomain = Remesh.domain({
               await Promise.all(request.rooms.map(({ roomId }) => transport.join(roomId)))
               return CompleteJoinRoomsCommand(request)
             } catch (error) {
-              // SAFETY: the join failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })
             }
           })
@@ -1058,7 +1058,7 @@ const WireDomain = Remesh.domain({
               await Promise.all(route.rooms.map(({ roomId }) => transport.join(roomId)))
               return CompletePreparedRoomsCommand(route)
             } catch (error) {
-              // SAFETY: the join failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return RoomsJoinFailedEvent({ requestId: route.requestId, error: error as Error })
             }
           })
@@ -1091,7 +1091,7 @@ const WireDomain = Remesh.domain({
               const rawPayload = await codec.encode(request.message)
               return CompleteEncodeCommand({ request, rawPayload })
             } catch (error) {
-              // SAFETY: the encode failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return CompleteEncodeCommand({ request, error: error as Error })
             }
           })
@@ -1107,7 +1107,7 @@ const WireDomain = Remesh.domain({
               await transport.send(request.roomId, rawPayload, request.targetPeerIds)
               return CompleteProviderSendCommand({ request })
             } catch (error) {
-              // SAFETY: the provider send failure path only propagates thrown errors as Error.
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return CompleteProviderSendCommand({ request, error: error as Error })
             }
           })
