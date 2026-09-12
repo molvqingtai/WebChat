@@ -1409,7 +1409,8 @@ const HistoryDomain = Remesh.domain({
             ...(dismissFeedback(get, key) ?? [])
           ]
         }
-        const successorJob: ProviderSupplyJobState = successor
+        // Only the promotion branch below reads this job, and it does so only when `successor` is set.
+        const successorJob: ProviderSupplyJobState | null = successor
           ? {
               sourcePeerId: successor.sourcePeerId,
               domain: successor.domain,
@@ -1418,7 +1419,7 @@ const HistoryDomain = Remesh.domain({
               queueBytes: successor.inventoryBytes,
               ready: successor.inventoryDone
             }
-          : (null as unknown as ProviderSupplyJobState)
+          : null
         const promotion = successor
           ? [
               // One atomic job-state transition: the old job is removed and the transferred
@@ -1434,7 +1435,8 @@ const HistoryDomain = Remesh.domain({
               ),
               ProviderSupplyJobsState().new([
                 ...removeBy(get(ProviderSupplyJobsState()), (item) => matchesSync(item, key)),
-                successorJob
+                // The promotion branch runs only when `successor` is set, which is exactly when the job was built.
+                successorJob!
               ])
             ]
           : [
@@ -2013,8 +2015,8 @@ const HistoryDomain = Remesh.domain({
     })
     domain.effect({
       name: 'History.RequesterInventorySupplyEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(RequesterSupplyStartedEvent).pipe(
+      impl: ({ fromEvent, get }) => {
+        const terminal$: unknown = fromEvent(RequesterSupplyStartedEvent).pipe(
           mergeMap((key) => {
             const failedPageIds: string[] = []
             // The send-stage marker: while the inventory output (encode/send) is still invoked,
@@ -2172,7 +2174,10 @@ const HistoryDomain = Remesh.domain({
             }
             return from(selection()).pipe(catchError(() => of(finishEarly())))
           })
-        ) as unknown as Observable<never>
+        )
+        // SAFETY: the effect terminal stream is intentionally viewed as Observable<never>.
+        return terminal$ as Observable<never>
+      }
     })
     domain.effect({
       name: 'History.HistoryMessagesPullEffect',
@@ -2234,8 +2239,8 @@ const HistoryDomain = Remesh.domain({
     })
     domain.effect({
       name: 'History.ProviderSupplyEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(ProviderSupplyRequestedEvent).pipe(
+      impl: ({ fromEvent, get }) => {
+        const terminal$: unknown = fromEvent(ProviderSupplyRequestedEvent).pipe(
           mergeMap((request) => {
             const failedPageIds: string[] = []
             const key: HistoryAttemptKey = {
@@ -2277,6 +2282,7 @@ const HistoryDomain = Remesh.domain({
                 ProviderAttemptsState().new(
                   replaceBy(get(ProviderAttemptsState()), (item) => matchesSync(item, attempt), nextProvider)
                 ),
+                // SAFETY: the provider response command is emitted as a Remesh command output in this effect.
                 QueueProviderResponseCommand({
                   ...request,
                   records: snapshot,
@@ -2363,7 +2369,10 @@ const HistoryDomain = Remesh.domain({
             }
             return from(selection()).pipe(catchError(() => of(cancelOutcome())))
           }, MAX_PROVIDER_SUPPLY_CONCURRENCY)
-        ) as unknown as Observable<never>
+        )
+        // SAFETY: the effect terminal stream is intentionally viewed as Observable<never>.
+        return terminal$ as Observable<never>
+      }
     })
     domain.effect({
       name: 'History.ProviderTimeoutEffect',
