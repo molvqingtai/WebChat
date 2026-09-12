@@ -412,6 +412,39 @@ describe.each(backends)('$name Database contract', (backend) => {
     await database.close()
   })
 
+  it('resolves an empty-string index to the default key for range validation', async () => {
+    const name = `database-empty-index-${backend.name}-${databaseId++}`
+    names.add(name)
+    const definition: DatabaseDefinition<{
+      items: { key: string | number; value: { group: string }; indexes: { '': string } }
+    }> = {
+      name,
+      version: 1,
+      channelName: `${name}:WATCH`,
+      stores: {
+        items: {
+          key: 'string-or-number',
+          introducedIn: 1,
+          indexes: { '': { key: 'string', keyPath: 'group', introducedIn: 1 } }
+        }
+      }
+    }
+    const database = backend.name === 'Memory' ? createMemoryDatabase(definition) : createIndexedDBDatabase(definition)
+
+    await database.write(['items'], async (transaction) => {
+      await Promise.all([
+        transaction.insert('items', 2, { group: 'a' }),
+        transaction.insert('items', 1, { group: 'b' })
+      ])
+    })
+    // The empty-string index falls back to the default key, so the scan uses the default key
+    // order (id) rather than the empty index's group keyPath.
+    await expect(
+      database.read(['items'], (transaction) => transaction.scan('items', { index: '' }))
+    ).resolves.toMatchObject([{ key: 1 }, { key: 2 }])
+    await database.close()
+  })
+
   it('rejects invalid keys, indexes, ranges, limits, and canonical values', async () => {
     const database = create(backend)
     // oxlint-disable-next-line anti-slop/no-known-value-widening -- the test builds a cyclic value deliberately
