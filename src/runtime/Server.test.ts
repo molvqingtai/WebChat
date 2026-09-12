@@ -760,7 +760,7 @@ const registerHistoryProvider = (
         if (active.get(event.request.supplyId) !== controller) return
         return server.rejectHistorySupply({
           supplyId: event.request.supplyId,
-          // SAFETY: every rejection path in this test double rejects with an Error, so its message can be forwarded as the reason
+          // SAFETY: this test double rejects with Error or DOMException by convention, and both carry the message forwarded as the reason
           reason: (error as Error).message,
           ...(payload.caller ? { caller: payload.caller } : {})
         })
