@@ -334,7 +334,9 @@ const manifestValueDescriptor = (value: ComparableManifestValue): ManifestDiffVa
     return { type: 'missing', length: 0, digest: digest('missing') }
   }
   const canonical = JSON.stringify(value)
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- manifestDiffValue labels an untrusted manifest value by its runtime type at the manifest boundary
   const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+  /* oxlint-disable anti-slop/no-runtime-typeof -- the descriptor length follows the same runtime type of the untrusted manifest value */
   const length =
     typeof value === 'string'
       ? value.length
@@ -343,6 +345,7 @@ const manifestValueDescriptor = (value: ComparableManifestValue): ManifestDiffVa
         : value !== null && typeof value === 'object'
           ? Object.keys(value).length
           : canonical.length
+  /* oxlint-enable anti-slop/no-runtime-typeof */
   return { type, length, digest: digest(canonical) }
 }
 
