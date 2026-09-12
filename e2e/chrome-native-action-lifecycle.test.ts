@@ -919,6 +919,21 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.timeline.some(({ type }) => type === 'worker-bound')).toBe(false)
   })
 
+  it('keeps the pre-target terminal decision stable when the deadline lands in the same turn as the final observation', async () => {
+    // Injects the clock advance inside the observation await itself, so the turn that ends the
+    // pre-target phase both completes that await and crosses the discovery deadline. The decision
+    // must stay the recorded deadline failure with no target creation, whether that branch lives
+    // inside the phase helper or in its caller.
+    const adapter = prepareAdapter()
+    adapter.phaseEffects.set('wait-event', [{ advanceMs: CHROME_NATIVE_ACTION_WORKER_DISCOVERY_BUDGET_MS }])
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    expect(result.outcome).toBe('target-lifecycle-failed')
+    expect(result.actionAuthorization).toBeNull()
+    expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
+  })
+
   it('keeps a fully classified unrelated worker after binding as evidence only', async () => {
     const laterWorker: ChromeLifecycleTarget = {
       targetId: 'later-foreign-worker',
