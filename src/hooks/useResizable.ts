@@ -16,11 +16,9 @@ const useResizable = (options: ResizableOptions) => {
 
   useEffect(() => {
     const newSize = clamp(initSize, minSize, maxSize)
-    if (newSize !== size) {
-      startTransition(() => {
-        setSize(newSize)
-      })
-    }
+    startTransition(() => {
+      setSize((current) => (newSize === current ? current : newSize))
+    })
   }, [initSize, minSize, maxSize])
 
   const position = useRef(0)
