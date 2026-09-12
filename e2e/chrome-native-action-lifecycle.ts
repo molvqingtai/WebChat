@@ -869,7 +869,13 @@ const containsSharedRuntimeUnavailable = (value: unknown): boolean => {
   }
 }
 
-const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): JsonObject => {
+type TargetUrlEvidence =
+  | { readonly targetUrl: string }
+  | {
+      readonly targetUrlClassification: 'other-target' | 'startup-page' | 'accepted-page' | 'unexpected-page'
+    }
+
+const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): TargetUrlEvidence => {
   if (target.type === 'service_worker') return { targetUrl: target.url }
   if (target.type === 'other') return { targetUrlClassification: 'other-target' }
   if (target.url === 'about:blank') return { targetUrlClassification: 'startup-page' }
