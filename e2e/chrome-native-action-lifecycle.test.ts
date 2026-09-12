@@ -155,6 +155,7 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
   readonly operationDeadlines: Array<{ readonly operation: string; readonly deadlineMs: number }> = []
   readonly phaseEffects = new Map<string, AdapterEffect[]>()
   gapEffects: AdapterEffect[] | undefined
+  gapAfterPhase: string | undefined
   readonly observedSessions: Array<{
     session: ChromeLifecycleSession
     domains: { runtime: true; log: true; page: boolean }
@@ -379,6 +380,18 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
       if ('advanceMs' in effect) this.nowMs += effect.advanceMs
       else this.requireSink()(effect)
     })
+    if (this.gapAfterPhase === phase && this.gapEffects) {
+      const queued = this.gapEffects
+      this.gapEffects = undefined
+      this.gapAfterPhase = undefined
+      queueMicrotask(() => {
+        this.trace.push('gap')
+        queued.forEach((effect) => {
+          if ('advanceMs' in effect) this.nowMs += effect.advanceMs
+          else this.requireSink()(effect)
+        })
+      })
+    }
   }
 }
 
@@ -1754,5 +1767,29 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.outcome).toBe('target-lifecycle-failed')
     expect(result.actionAuthorization).toBeNull()
     expect(Object.isFrozen(result)).toBe(true)
+  })
+
+  it('keeps the bound-target lifecycle stable when the discovery gap advances the clock', async () => {
+    // The queued microtask is scheduled from the worker identity read itself, so it lands after the
+    // exact worker is bound and the phase helper has resolved, yet before the caller resumes. The
+    // clock advance it applies must be what the caller then reads and hands to target creation.
+    const adapter = prepareAdapter()
+    adapter.gapAfterPhase = 'read-worker:worker-session'
+    adapter.gapEffects = [{ advanceMs: 500 }]
+
+    const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
+
+    const gapIndex = adapter.trace.indexOf('gap')
+    expect(gapIndex).toBeGreaterThan(adapter.trace.lastIndexOf('read-worker:worker-session'))
+    expect(gapIndex).toBeLessThan(adapter.trace.indexOf(`create-target:${CHROME_NATIVE_ACTION_ACCEPTED_URL}`))
+    expect(result.timeline.some(({ type }) => type === 'worker-bound')).toBe(true)
+
+    expect(result.lifecycleStartedAtMs).toBe(1500)
+    expect(result.lifecycleDeadlineMs).toBe(1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS)
+    expect(adapter.operationDeadlines.find(({ operation }) => operation === 'create-target')?.deadlineMs).toBe(
+      1500 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS
+    )
+    expect(result.outcome).toBe('mounted')
+    expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
   })
 })
