@@ -256,6 +256,7 @@ const WireDomain = Remesh.domain({
     // The single peer-receive parse boundary: the room-selected complete declarative schema
     // owns all protocol validation. A rejection emits no typed message and reaches no downstream
     // domain or user-visible feedback.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- raw inbound wire value, validated by the schema below
     const parseMessage = (roomId: string, value: unknown): WireMessage | null => {
       const parsed =
         roomId === worldRoomId ? v.safeParse(WorldRoomMessageSchema, value) : v.safeParse(ChatRoomMessageSchema, value)
@@ -420,12 +421,16 @@ const WireDomain = Remesh.domain({
     const RecoverTransportStateCommand = domain.command({
       name: 'Wire.RecoverTransportStateCommand',
       impl: ({ get }, payload: Array<{ roomId: string; sources: RoomSource[] }>) => {
-        const recovered = payload
-          .filter(({ roomId }) => roomId.length > 0)
-          .map(({ roomId, sources }) => ({
-            roomId,
-            sources: [...new Map(sources.map((source) => [source.sourcePeerId, source])).values()]
-          }))
+        const recovered = payload.flatMap(({ roomId, sources }) =>
+          roomId.length === 0
+            ? []
+            : [
+                {
+                  roomId,
+                  sources: [...new Map(sources.map((source) => [source.sourcePeerId, source])).values()]
+                }
+              ]
+        )
         if (recovered.length === 0) return null
         const roomIds = [...new Set(recovered.map(({ roomId }) => roomId))]
         const sources = get(RoomSourcesState()).filter((item) => !roomIds.includes(item.roomId))
@@ -702,7 +707,7 @@ const WireDomain = Remesh.domain({
               stage: 'cancelled'
             })
           ),
-          LeaveRoomRequestedEvent({ roomId, ...(payload.diagnosticOnly ? { diagnosticOnly: true } : {}) })
+          LeaveRoomRequestedEvent({ roomId, diagnosticOnly: payload.diagnosticOnly ? true : undefined })
         ]
       }
     })
@@ -1038,6 +1043,7 @@ const WireDomain = Remesh.domain({
               await Promise.all(request.rooms.map(({ roomId }) => transport.join(roomId)))
               return CompleteJoinRoomsCommand(request)
             } catch (error) {
+              // SAFETY: the join failure path only propagates thrown errors as Error.
               return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })
             }
           })
@@ -1052,6 +1058,7 @@ const WireDomain = Remesh.domain({
               await Promise.all(route.rooms.map(({ roomId }) => transport.join(roomId)))
               return CompletePreparedRoomsCommand(route)
             } catch (error) {
+              // SAFETY: the join failure path only propagates thrown errors as Error.
               return RoomsJoinFailedEvent({ requestId: route.requestId, error: error as Error })
             }
           })
@@ -1084,6 +1091,7 @@ const WireDomain = Remesh.domain({
               const rawPayload = await codec.encode(request.message)
               return CompleteEncodeCommand({ request, rawPayload })
             } catch (error) {
+              // SAFETY: the encode failure path only propagates thrown errors as Error.
               return CompleteEncodeCommand({ request, error: error as Error })
             }
           })
@@ -1099,6 +1107,7 @@ const WireDomain = Remesh.domain({
               await transport.send(request.roomId, rawPayload, request.targetPeerIds)
               return CompleteProviderSendCommand({ request })
             } catch (error) {
+              // SAFETY: the provider send failure path only propagates thrown errors as Error.
               return CompleteProviderSendCommand({ request, error: error as Error })
             }
           })
