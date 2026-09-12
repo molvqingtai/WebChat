@@ -80,8 +80,7 @@ const MessageListFollow: FC<{ itemKeys: readonly string[] }> = ({ itemKeys }) =>
 
   useEffect(() => {
     atEndRef.current = atEnd
-    // The pending count clears together with the committed at-bottom state; the effect keeps the
-    // clear in the same commit that observes atEnd become true.
+    // The pending count is cleared in the effect in response to the committed at-bottom state.
     // oxlint-disable-next-line react-hooks/set-state-in-effect -- retires the count on bottom reach
     if (atEnd) setNewMessageCount(0)
   }, [atEnd])
