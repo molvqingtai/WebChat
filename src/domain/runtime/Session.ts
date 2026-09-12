@@ -1459,7 +1459,15 @@ const SessionDomain = Remesh.domain({
         const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
         const observers = prepared?.observers ?? persisted?.observers ?? []
         const observed = observers.find((item) => item.presenceId === message.presenceId)
-        if (observed?.status === 'ended') {
+        const rejectBinding = () =>
+          wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'session does not match its logical presence binding'
+          })
+
+        const acceptsBinding = () => {
+          if (observed?.status === 'ended') {
+
           // The wire acceptance already limited this frame to the current trusted Chat room
           // generation. A lawful same-presence correction additionally requires the source to be a
           // CURRENTLY ADMITTED physical member of the room: a source that left (PeerLeave) without
@@ -1483,23 +1491,24 @@ const SessionDomain = Remesh.domain({
                 observer.joinedAt > message.joinedAt
             )
           if (exactReplay || !identityMatch || !admitted || newerConflict) {
-            return wireDomain.command.DropProtocolCommand({
-              sourcePeerId: payload.sourcePeerId,
-              reason: 'session does not match its logical presence binding'
-            })
+            return false
           }
           // Legal correction: fall through so the binding/observer/leave flow below re-activates
           // the same logical observation without allocating a new logical generation.
-        } else if (
+            return true
+          }
+          if (
+
           (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
           (current?.sessionId === message.sessionId &&
             (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
-        ) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'session does not match its logical presence binding'
-          })
+                  ) {
+
+          return false
+                  }
+          return true
         }
+        if (!acceptsBinding()) return rejectBinding()
 
         // The displaced source-current: the source's previous NON-pending binding that is not
         // the incoming generation. It is replaced by the new SESSION: its observation is marked
