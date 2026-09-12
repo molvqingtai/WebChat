@@ -1332,7 +1332,7 @@ const HistoryDomain = Remesh.domain({
           syncId: key.syncId
         })
         const liveActive = active.find((item) => matchesSync(item, key))
-        if (!current) {
+        const cancelWithoutCurrentProvider = () => {
           // While the physical supply is still live (recorded supplyId not yet cleared by its
           // settlement), the slot accounting and any dormant successor stay in place: release and
           // promotion happen only at the late-settlement boundary after physical exit.
@@ -1396,6 +1396,8 @@ const HistoryDomain = Remesh.domain({
             ...(hasSlotAccounting ? [ReleaseProviderSupplySlotCommand(key)] : [])
           ]
         }
+        if (!current) return cancelWithoutCurrentProvider()
+
         // A started current provider with a still-live supply must not release its slot or
         // schedule its successor before the physical query/projection chain confirms exit: cancel
         // the live supplyId, remove the provider state, and keep the canonical job, the active
@@ -1660,7 +1662,7 @@ const HistoryDomain = Remesh.domain({
           ...current,
           providers: { ...current.providers, [payload.sourcePeerId]: lane }
         })
-        if (provider.awaitingBatchId) {
+        const resolvePendingResponsePage = () => {
           // While a batch is pending: replay fingerprint matching runs FIRST, so an identical replay
           // of the accepted page or of any queued page (including a queued terminal page) is
           // idempotent and a changed replay cancels. Only then does the terminal fence reject any
@@ -1720,6 +1722,8 @@ const HistoryDomain = Remesh.domain({
             providerId: payload.sourcePeerId
           })
         }
+        if (provider.awaitingBatchId) return resolvePendingResponsePage()
+
         if (payload.message.page !== provider.expectedResponsePage) {
           // Identical replay of the last applied page is idempotent; anything else (gap,
           // out-of-order, changed replay) cancels the attempt.
