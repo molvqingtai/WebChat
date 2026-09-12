@@ -146,7 +146,7 @@ describe('RuntimeServer production admission and one-way notification', () => {
           return tab
         },
         query: async () => [...tabs.values()],
-        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the double receives an arbitrary payload from the code under test
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the test injects an arbitrary inbound simulated message, including malformed payloads
         sendMessage: async (tabId: number, message: unknown) => {
           sentMessages.push({ tabId, message })
           return undefined
@@ -694,6 +694,7 @@ const deferred = <T>() => {
 const sentToPeer = (fake: ReturnType<typeof createFakeTransport>, roomId: string, peerId: string) =>
   fake.sent
     .filter((message) => {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the recorded send attempt's target is stored as test data; the typeof distinguishes a single recipient from a list
       const recipients = typeof message.to === 'string' ? [message.to] : message.to
       return message.roomId === roomId && recipients?.includes(peerId)
     })
@@ -988,6 +989,7 @@ describe('RuntimeServer lifecycle', () => {
         if (
           holdClearSave &&
           record &&
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the fake presence store's item is test data; the typeof confirms it holds an object before reading its fields
           typeof record === 'object' &&
           record.lastJoinedAt === 0 &&
           (record.observers ?? []).length === 0
@@ -1966,6 +1968,7 @@ describe('RuntimeServer lifecycle', () => {
         if (
           rejectClearSave &&
           record &&
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the fake presence store's item is test data; the typeof confirms it holds an object before reading its fields
           typeof record === 'object' &&
           record.local?.status === 'active' &&
           (record.observers ?? []).length === 0
@@ -2788,6 +2791,7 @@ describe('RuntimeServer lifecycle', () => {
         if (
           rejectClearSave &&
           record &&
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the fake presence store's item is test data; the typeof confirms it holds an object before reading its fields
           typeof record === 'object' &&
           record.local?.status === 'active' &&
           (record.observers ?? []).length === 0
@@ -4479,6 +4483,7 @@ describe('RuntimeServer lifecycle', () => {
       set: async (items) => {
         const record = Object.values(items)[0] as { local?: unknown } | undefined
         // The release cleanup save carries no local record; active-record saves always do.
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the presence record is test data; the typeof distinguishes a cleanup save from an active-record save
         if (record && typeof record === 'object' && !('local' in record)) {
           cleanupWrites += 1
           if (cleanupWrites === 1) {
