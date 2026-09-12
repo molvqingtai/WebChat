@@ -155,6 +155,9 @@ export class DocumentClient {
 
   private async drain(entry: { controller: AbortController }) {
     try {
+      // A synchronous refresh may replace this entry before its scheduled microtask starts.
+      // Fence it before consuming dirty/refresh intent or sending a stale registration.
+      if (!this.isOwnerCurrent(entry)) return
       do {
         this.dirty = false
         const refresh = this.refreshRegistration

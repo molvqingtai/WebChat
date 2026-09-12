@@ -960,9 +960,10 @@ describe('DocumentClient one-way current-state drain', () => {
     const first = client.refresh()
     const rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
     const second = client.refresh()
-    // Each refresh forces its own registration; only the second may settle with the snapshot.
-    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
-    registerQueue.shift() // the superseded first registration stays pending
+    // The old drain has not started. It must neither consume the newest refresh intent nor
+    // dispatch a registration that could pin Background before the current recovery arrives.
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledOnce())
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN, refresh: true })
     registerQueue.shift()!.resolve(snapshot('second'))
     await rejected
     await expect(second).resolves.toMatchObject({ hostPhase: 'ready' })
