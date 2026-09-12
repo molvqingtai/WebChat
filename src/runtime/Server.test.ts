@@ -5202,7 +5202,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, user: refreshedUser })
     fake.receive(roomId, 'peer-a', { ...accepted, user: { ...refreshedUser, id: 'forged-user' } })
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: accepted.joinedAt + 1 })
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately injects an invalid wire message to test the receive validation
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- the test injects this inbound simulated message, including its deliberately malformed field
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
@@ -5243,7 +5243,7 @@ describe('RuntimeServer trusted delivery', () => {
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
     ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) =>
-      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately injects each invalid wire message to test the receive validation
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- the test injects each inbound simulated message, including the deliberately malformed fields
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
     )
     fake.receive(roomId, 'peer-a', text('valid-after-rejections'))
