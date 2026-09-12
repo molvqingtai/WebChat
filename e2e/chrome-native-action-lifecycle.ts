@@ -308,7 +308,6 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
   if (background === null || Array.isArray(background) || typeof background !== 'object') {
     throw new Error('Packaged manifest background must be a JSON object')
   }
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted service worker entry at the manifest boundary
   if (
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parses the untrusted service worker entry at the manifest boundary
     typeof background.service_worker !== 'string' ||
@@ -385,7 +384,7 @@ const manifestDiff = (packaged: JsonValue, runtime: JsonValue): ManifestDiffRepo
       const bothObjects =
         left !== null &&
         right !== null &&
-        /* oxlint-disable anti-slop/no-runtime-typeof -- compares two untrusted manifest values and must confirm both are objects before recursing */
+        /* oxlint-disable anti-slop/no-runtime-typeof -- compares two already validated manifest values and must confirm both are objects before recursing */
         typeof left === 'object' &&
         typeof right === 'object' &&
         /* oxlint-enable anti-slop/no-runtime-typeof */
@@ -512,7 +511,7 @@ const TERMINAL_EVIDENCE_FAILURE = normalizeTerminal(
 )
 
 const deepFreeze = <Value>(value: Value): Value => {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- assertBoundedEvidence checks the runtime shape of untrusted evidence before freezing it
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- deepFreeze only recurses into objects, so the runtime type decides whether to freeze
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value).forEach(deepFreeze)
     Object.freeze(value)
