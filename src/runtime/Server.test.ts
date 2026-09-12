@@ -1524,6 +1524,7 @@ describe('RuntimeServer lifecycle', () => {
       () => {
         olderReadSettled = true
       },
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
       (error: unknown) => {
         olderReadSettled = true
         olderReadError = error
@@ -1545,6 +1546,7 @@ describe('RuntimeServer lifecycle', () => {
           newerReadSettled = true
           return snapshot
         },
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
         (error: unknown) => {
           newerReadSettled = true
           newerReadError = error
@@ -4380,10 +4382,12 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 3, url: '' } } })
     let rejectedB: unknown
     let rejectedC: unknown
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
     const joinB = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
       rejectedB = error
       return null
     })
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
     const joinC = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
       rejectedC = error
       return null
@@ -4503,6 +4507,7 @@ describe('RuntimeServer lifecycle', () => {
     // A late same-domain lease attaches behind the pending cleanup without re-issuing it.
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 2, url: '' } } })
     let rejectedB: unknown
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is arbitrary by language contract
     const joinB = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
       rejectedB = error
       return null
