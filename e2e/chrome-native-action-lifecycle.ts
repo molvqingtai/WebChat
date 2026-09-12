@@ -364,18 +364,7 @@ const manifestDiff = (
         !Array.isArray(left) &&
         !Array.isArray(right)
       if (bothArrays) {
-        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) =>
-          String(index)
-        ).toSorted()
-        for (const index of indexes) {
-          const numericIndex = Number(index)
-          visit(
-            `${path}/${index}`,
-            numericIndex < left.length ? left[numericIndex]! : MISSING_MANIFEST_VALUE,
-            numericIndex < right.length ? right[numericIndex]! : MISSING_MANIFEST_VALUE
-          )
-          if (differences.length > CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES) return
-        }
+        visitArrayEntries(path, left, right)
         return
       }
       if (bothObjects) {
@@ -397,6 +386,22 @@ const manifestDiff = (
       packaged: manifestDiffValue(path, left),
       runtime: manifestDiffValue(path, right)
     })
+  }
+  function visitArrayEntries(
+    path: string,
+    left: readonly ComparableManifestValue[],
+    right: readonly ComparableManifestValue[]
+  ): void {
+    const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) => String(index)).toSorted()
+    for (const index of indexes) {
+      const numericIndex = Number(index)
+      visit(
+        `${path}/${index}`,
+        numericIndex < left.length ? left[numericIndex]! : MISSING_MANIFEST_VALUE,
+        numericIndex < right.length ? right[numericIndex]! : MISSING_MANIFEST_VALUE
+      )
+      if (differences.length > CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES) return
+    }
   }
 
   visit('', packaged, runtime)
