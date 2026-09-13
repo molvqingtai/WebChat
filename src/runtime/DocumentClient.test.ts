@@ -5,7 +5,7 @@ import { createMessageStore } from '@/domain/MessageStore'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import { MESSAGE_TYPE } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
-import { DocumentClient } from '@/runtime/DocumentClient'
+import { DocumentClient, VISIBILITY_CHECK_TIMEOUT_MS } from '@/runtime/DocumentClient'
 
 const DOMAIN = 'https://example.com'
 
@@ -909,4 +909,223 @@ describe('DocumentClient one-way current-state drain', () => {
     await flush()
     expect(readQueue).toHaveLength(0)
   })
+
+  it('a manual refresh starts a fresh registration while a stale read is still in flight, and a late old read never overwrites the new snapshot', async () => {
+    const { client, coordinator, server, registerQueue, readQueue } = setup()
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve(snapshot('first'))
+    await expect(init).resolves.toMatchObject({ hostPhase: 'ready' })
+
+    // A hint stalls the current-state read, leaving the drain in flight; this RPC has no timeout.
+    client.invalidate()
+    await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
+
+    // A manual refresh supersedes the hung drain and starts a fresh registration instead of
+    // waiting for the stale read to finish.
+    client.refresh()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+
+    // The superseded read settles late with a stale marker and must be fenced out.
+    readQueue.shift()!.resolve(snapshot('stale'))
+    registerQueue.shift()!.resolve(snapshot('fresh'))
+    await flush()
+    expect(client.snapshot().failures[0]?.eventId).toBe('fresh')
+  })
+
+  it('a manual refresh after a failure re-registers instead of returning the stale snapshot', async () => {
+    const { client, coordinator, server, registerQueue, readQueue } = setup()
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve(snapshot(''))
+    await expect(init).resolves.toMatchObject({ hostPhase: 'ready' })
+
+    // The next current-state read fails, publishing unavailable.
+    client.invalidate()
+    await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
+    readQueue.shift()!.reject(new Error('read failed'))
+    await flush()
+
+    // A manual refresh starts a fresh registration instead of returning the stale snapshot.
+    client.refresh()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    registerQueue.shift()!.resolve(snapshot('recovered'))
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenCalledTimes(2)
+    expect(client.snapshot().failures[0]?.eventId).toBe('recovered')
+  })
+
+  it('rejects a superseded refresh instead of resolving it with the newest snapshot', async () => {
+    const { client, coordinator, registerQueue } = setup()
+    const first = client.refresh()
+    const rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    const second = client.refresh()
+    // The old drain has not started. It must neither consume the newest refresh intent nor
+    // dispatch a registration that could pin Background before the current recovery arrives.
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledOnce())
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN, refresh: true })
+    registerQueue.shift()!.resolve(snapshot('second'))
+    await rejected
+    await expect(second).resolves.toMatchObject({ hostPhase: 'ready' })
+  })
+})
+
+describe('DocumentClient visibility recovery', () => {
+  it('checks a cached ready client through admission once, without replacing healthy rooms or republishing ready', async () => {
+    const { client, coordinator, registerQueue } = setup()
+    const ready = vi.fn()
+    client.whenReady(ready)
+    const init = client.init()
+    await flush()
+    registerQueue.shift()!.resolve(snapshot('initial'))
+    await init
+    const check = client.checkVisibility()
+    expect(client.checkVisibility()).toBe(check)
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN })
+    expect(coordinator.registerPage).toHaveBeenCalledTimes(2)
+    registerQueue.shift()!.resolve(snapshot('checked'))
+    await expect(check).resolves.toEqual(snapshot('checked'))
+    expect(client.snapshot()).toEqual(snapshot('checked'))
+    expect(ready).toHaveBeenCalledTimes(1)
+  })
+
+  it('supersedes a stale normal drain while preserving initialization waiters and fencing late projections', async () => {
+    const { client, registerQueue } = setup()
+    const applied = vi.fn()
+    client.registerApplier('chat', applied)
+    const init = client.init()
+    await flush()
+    const stale = registerQueue.shift()!
+    const check = client.checkVisibility()
+    await flush()
+    registerQueue.shift()!.resolve(snapshot('visible'))
+    await expect(check).resolves.toEqual(snapshot('visible'))
+    await expect(init).resolves.toEqual(snapshot('visible'))
+    stale.resolve(snapshot('stale'))
+    await flush()
+    expect(applied).toHaveBeenCalledTimes(1)
+    expect(client.snapshot()).toEqual(snapshot('visible'))
+  })
+
+  it('does not let cached readiness bypass a newly installed projection applier', async () => {
+    const { client, registerQueue, readQueue } = setup()
+    const check = client.checkVisibility()
+    await flush()
+    registerQueue.shift()!.resolve(snapshot('early'))
+    await check
+    const apply = deferred<void>()
+    client.registerApplier('chat', () => apply.promise)
+    let initialized = false
+    const init = client.init().then(() => {
+      initialized = true
+    })
+    await flush()
+    readQueue.shift()!.resolve(snapshot('with appliers'))
+    await flush()
+    expect(initialized).toBe(false)
+    apply.resolve()
+    await init
+    expect(initialized).toBe(true)
+  })
+
+  it('escalates a rejected check once to replacement recovery and permits a later visibility retry', async () => {
+    const { client, coordinator, registerQueue } = setup()
+    const first = client.checkVisibility()
+    const failure = expect(first).rejects.toThrow('recovery failed')
+    await flush()
+    registerQueue.shift()!.reject(new Error('admission failed'))
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN, refresh: true })
+    registerQueue.shift()!.reject(new Error('recovery failed'))
+    await failure
+    const retry = client.checkVisibility()
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN })
+    registerQueue.shift()!.resolve(snapshot('retry'))
+    await expect(retry).resolves.toEqual(snapshot('retry'))
+  })
+
+  it('bounds both hung attempts, fences late results, clears timers, and allows manual retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const { client, coordinator, registerQueue } = setup()
+      const applied = vi.fn()
+      client.registerApplier('chat', applied)
+      const check = client.checkVisibility()
+      const failed = expect(check).rejects.toThrow('timed out')
+      await flush()
+      const staleCheck = registerQueue.shift()!
+      await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS)
+      expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN, refresh: true })
+      const staleRecovery = registerQueue.shift()!
+      await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS)
+      await failed
+      expect(vi.getTimerCount()).toBe(0)
+      const retry = client.refresh()
+      await flush()
+      registerQueue.shift()!.resolve(snapshot('manual'))
+      await retry
+      staleCheck.resolve(snapshot('late check'))
+      staleRecovery.resolve(snapshot('late recovery'))
+      await flush()
+      expect(client.snapshot()).toEqual(snapshot('manual'))
+      expect(applied).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds an already hung manual recovery rather than making visibility retries join it forever', async () => {
+    vi.useFakeTimers()
+    try {
+      const { client, registerQueue } = setup()
+      const manual = client.refresh()
+      const failedManual = expect(manual).rejects.toThrow('timed out')
+      await flush()
+      const stale = registerQueue.shift()!
+      const visible = client.checkVisibility()
+      await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS)
+      await failedManual
+      registerQueue.shift()!.resolve(snapshot('visible recovery'))
+      await expect(visible).resolves.toEqual(snapshot('visible recovery'))
+      stale.resolve(snapshot('late manual'))
+      await flush()
+      expect(client.snapshot()).toEqual(snapshot('visible recovery'))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['refresh', 'detach'] as const)(
+    'a %s cancels a pending check and prevents its fallback',
+    async (operation) => {
+      vi.useFakeTimers()
+      try {
+        const { client, coordinator, registerQueue } = setup()
+        const check = client.checkVisibility()
+        const cancelled = expect(check).rejects.toMatchObject({ name: 'AbortError' })
+        await flush()
+        const stale = registerQueue.shift()!
+        if (operation === 'refresh') {
+          const manual = client.refresh()
+          const visibleDuringManual = client.checkVisibility()
+          await flush()
+          registerQueue.shift()!.resolve(snapshot('manual'))
+          await manual
+        } else {
+          client.detach()
+          await expect(client.checkVisibility()).resolves.toBeNull()
+        }
+        await cancelled
+        stale.reject(new Error('late check rejection'))
+        await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS * 3)
+        expect(coordinator.registerPage).toHaveBeenCalledTimes(operation === 'refresh' ? 2 : 1)
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
 })

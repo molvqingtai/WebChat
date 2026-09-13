@@ -32,6 +32,8 @@ import type {
 } from '@/runtime/Contract'
 
 export interface ChatRoomDependencies {
+  /** Explicit recovery replaces the document drain before contacting the current host. */
+  refresh?: () => Promise<RuntimeSnapshot | null>
   server: RuntimeServer
   messageStore: RuntimeMessageStore
   pageDomain: string
@@ -626,6 +628,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   async leaveRoomWithToken(resultToken: number): Promise<void> {
     const attempt = this.beginConnectionAttempt(resultToken)
     try {
+      if (this.dependencies.refresh) {
+        await raceWithSignal(this.dependencies.refresh(), attempt.controller.signal)
+        attempt.controller.signal.throwIfAborted()
+        this.recordResult(attempt.resultToken, 'succeeded')
+        this.finishConnectionAttempt(attempt)
+        return
+      }
       const result = await raceWithSignal(
         this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain }),
         attempt.controller.signal

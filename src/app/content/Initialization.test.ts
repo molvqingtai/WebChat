@@ -267,7 +267,7 @@ describe('initialization lifecycle ownership', () => {
     stop()
   })
 
-  it('detaches a failed Runtime generation before one single-flight Retry', async () => {
+  it('detaches a failed Runtime generation and supersedes a pending Retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const fixture = createFixture()
     const retryWork = deferred<void>()
@@ -283,7 +283,7 @@ describe('initialization lifecycle ownership', () => {
     fixture.store.send(fixture.domain.command.RetryCommand())
     fixture.store.send(fixture.domain.command.RetryCommand())
     expect(phase(fixture)).toBe('connecting')
-    expect(fixture.dependencies.prepareBrowserSyncStorage).toHaveBeenCalledTimes(2)
+    expect(fixture.dependencies.prepareBrowserSyncStorage).toHaveBeenCalledTimes(3)
 
     retryWork.resolve()
     await vi.waitFor(() => expect(phase(fixture)).toBe('ready'))

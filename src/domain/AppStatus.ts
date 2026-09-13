@@ -441,7 +441,7 @@ const AppStatusDomain = Remesh.domain({
     const RetryCommand = domain.command({
       name: 'AppStatus.RetryCommand',
       impl: ({ get }) =>
-        get(PhaseQuery()) === 'unavailable' ? [PhaseState().new('connecting'), RetryRequestedEvent()] : null
+        get(PhaseQuery()) !== 'ready' ? [PhaseState().new('connecting'), RetryRequestedEvent()] : null
     })
 
     const MarkReadyCommand = domain.command({

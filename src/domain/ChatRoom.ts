@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, timer } from 'rxjs'
+import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, switchMap, take, timer } from 'rxjs'
 import {
   ChatRoomExtern,
   type JoinRoomCommand as JoinRoomInput,
@@ -129,7 +129,7 @@ const ChatRoomDomain = Remesh.domain({
     })
     const ReconnectAvailableQuery = domain.query({
       name: 'Room.ReconnectAvailableQuery',
-      impl: ({ get }) => get(userInfoDomain.query.UserInfoQuery()) !== null && !get(ConnectionIsLoadingQuery())
+      impl: ({ get }) => get(userInfoDomain.query.UserInfoQuery()) !== null
     })
 
     const ApplySessionsCommand = domain.command({
@@ -221,13 +221,19 @@ const ChatRoomDomain = Remesh.domain({
     const ReconnectCommand = domain.command({
       name: 'Room.ReconnectCommand',
       impl: ({ get }) => {
-        if (!get(ReconnectAvailableQuery())) return null
+        // A manual refresh must always be able to start a new recovery, even while a connection
+        // attempt is still in flight: it only requires a configured identity, never waits for the
+        // previous attempt to finish. The in-flight attempt is superseded (and cancelled) by the
+        // new request below, and the request-id gate fences any late completion of the old one.
+        if (get(userInfoDomain.query.UserInfoQuery()) === null) return null
         const joined = get(JoinIsFinishedQuery())
         const user = get(userInfoDomain.query.UserInfoQuery())!
         const wireUser: ChatUser = { id: user.id, name: user.name, avatar: user.avatar }
         const input = joined ? get(JoinInputState())! : { user: wireUser, site: getSiteMeta() }
         const id = get(ReconnectSequenceState()) + 1
         return [
+          // The manual request owns recovery now; late initial/automatic completions are stale.
+          ConnectionRequestState().new(null),
           ReconnectSequenceState().new(id),
           ReconnectRequestState().new({
             id,
@@ -394,7 +400,7 @@ const ChatRoomDomain = Remesh.domain({
           filter((state) => state === 'ready'),
           map(() => {
             const input = get(JoinInputState())
-            if (!input || !get(JoinIsFinishedQuery())) return null
+            if (!input || !get(JoinIsFinishedQuery()) || get(ReconnectRequestQuery())) return null
             return StartConnectionCommand({ input, mode: 'automatic' })
           })
         )
@@ -486,16 +492,21 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.ReconnectEffect',
-      impl: ({ fromEvent }) =>
+      impl: ({ fromEvent, get }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
-          concatMap(async ({ id, input, mode }) => {
+          // Start each manual attempt immediately; its public-port invocation cancels the prior
+          // attempt, while request identity fences any continuation already queued to resume.
+          switchMap(async ({ id, input, mode }) => {
             let leaveTask: Promise<void> | undefined
             let joinTask: Promise<void> | undefined
             try {
-              if (mode === 'reconnect') {
-                // Leave is its own public-port invocation with its own exact token.
-                leaveTask = chatRoom.leaveRoom()
-                await leaveTask
+              leaveTask = chatRoom.leaveRoom()
+              await leaveTask
+              // An already-settled leave may resume after replacement. Consume its token without
+              // starting an old join that would cancel the newer attempt.
+              if (get(ReconnectRequestQuery())?.id !== id) {
+                lifecycle.getTaskResult(leaveTask)
+                return null
               }
               joinTask = chatRoom.joinRoom(input)
               await joinTask
@@ -507,11 +518,9 @@ const ChatRoomDomain = Remesh.domain({
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
               // Consume each started task's result exactly once (releases terminal state) before deciding,
-              // so a reconnect's leave/join results are never leaked. A reconnect request is single-lived
-              // (ReconnectCommand is gated while one is in flight), so there is no reachable
-              // request-staleness branch to short-circuit here; cancellation is solely by the exact leave/
-              // join task's own token. Late/dropped completions are fenced by CompleteReconnectOperation
-              // Command's own request-id gate.
+              // so a reconnect's leave/join results are never leaked. Cancellation is solely by the exact
+              // leave/join task's own token; a superseded request's join is skipped by the guard above and
+              // its late completion is fenced by CompleteReconnectOperationCommand's own request-id gate.
               const leaveResult = leaveTask ? lifecycle.getTaskResult(leaveTask) === 'cancelled' : false
               const joinResult = joinTask ? lifecycle.getTaskResult(joinTask) === 'cancelled' : false
               const cancelled = leaveResult || joinResult

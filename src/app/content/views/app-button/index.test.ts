@@ -44,7 +44,7 @@ describe('reconnect action availability', () => {
     const value = source()
 
     expect(value).toContain('const reconnectAvailable = useRemeshQuery(chatRoomDomain.query.ReconnectAvailableQuery())')
-    expect(value).toContain('const refreshDisabled = applicationReady ? !reconnectAvailable : initializationConnecting')
+    expect(value).toContain('const refreshDisabled = applicationReady && !reconnectAvailable')
     expect(value).toContain('const refreshLoading = applicationReady ? reconnecting : initializationConnecting')
     expect(value).toContain('disabled={refreshDisabled}')
     expect(value).toContain("refreshLoading && 'animate-spin'")

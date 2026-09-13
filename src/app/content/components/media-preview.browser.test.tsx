@@ -54,7 +54,12 @@ vi.mock('remesh', async (importOriginal) => {
     ...actual,
     Remesh: {
       ...actual.Remesh,
-      store: () => ({ discard: fixture.discard })
+      store: () => ({
+        discard: fixture.discard,
+        getDomain: <Domain,>(domain: Domain) => domain,
+        query: () => 'ready',
+        send: vi.fn()
+      })
     }
   }
 })
@@ -143,7 +148,12 @@ vi.mock('@/domain/AppAction', () => ({
   default: () => ({ command: { OpenOptionsCommand: () => 'open-options' } })
 }))
 vi.mock('@/domain/Notification', () => ({ default: () => ({ owner: 'notification' }) }))
-vi.mock('@/domain/AppFeedback', () => ({ default: () => ({ owner: 'feedback' }) }))
+vi.mock('@/domain/AppFeedback', () => ({
+  default: () => ({
+    owner: 'feedback',
+    command: { SilenceFeedbackCommand: () => 'silence-feedback', ResumeFeedbackCommand: () => 'resume-feedback' }
+  })
+}))
 vi.mock('@/app/content/Initialization', () => ({
   startInitializationLifecycle: () => fixture.stopInitialization
 }))
@@ -159,6 +169,8 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
 vi.mock('@/domain/impls/runtime/Client', () => ({
   detachClient: fixture.detachClient,
   initClient: vi.fn(),
+  checkClientVisibility: vi.fn(async () => null),
+  refreshClient: vi.fn(),
   whenHostPhase: vi.fn(),
   whenFailure: vi.fn()
 }))

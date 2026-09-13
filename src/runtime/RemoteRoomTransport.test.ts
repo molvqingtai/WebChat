@@ -60,6 +60,30 @@ const createService = () => {
 }
 
 describe('RemoteRoomTransport', () => {
+  it('rejects old alignment publication as soon as recovery is cancelled, before the next rebind', async () => {
+    const fixture = createService()
+    const projection = Promise.withResolvers<Awaited<ReturnType<TransportService['rebind']>>>()
+    vi.mocked(fixture.service.rebind).mockReturnValueOnce(projection.promise)
+    const transport = new RemoteRoomTransport(fixture.service)
+    const controller = new AbortController()
+    const first = transport.rebind(controller.signal)
+    controller.abort()
+    projection.resolve({
+      rooms: [{ roomId: 'room-a', handle: 'old-handle', peerId: 'old-peer' }],
+      worldRecovery: { members: [], presences: [] },
+      roomRecovery: { rooms: [] },
+      recoveryFrames: [],
+      admission: 1
+    })
+    await first
+    expect(transport.peerIdOf('room-a')).toBe('')
+    await transport.rebind()
+    await transport.activateIngress()
+    await transport.join('room-a')
+    expect(transport.peerIdOf('room-a')).toBe('peer:room-a')
+    transport.dispose()
+  })
+
   it('shares one pending physical join for concurrent callers in the same generation and admission', async () => {
     const fixture = createService()
     const releaseJoin = deferred<void>()

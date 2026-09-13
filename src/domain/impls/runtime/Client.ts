@@ -52,6 +52,8 @@ export const whenReady = (callback: () => void) => client.whenReady(callback)
 export const whenHostPhase = (callback: Parameters<typeof client.whenHostPhase>[0]) => client.whenHostPhase(callback)
 export const whenFailure = (callback: Parameters<typeof client.whenFailure>[0]) => client.whenFailure(callback)
 export const initClient = (): Promise<RuntimeSnapshot | null> => client.init()
+export const checkClientVisibility = (): Promise<RuntimeSnapshot | null> => client.checkVisibility()
+export const refreshClient = (): Promise<RuntimeSnapshot | null> => client.refresh()
 export const detachClient = () => client.detach()
 export const getSnapshot = (): RuntimeSnapshot => client.snapshot()
 export const registerApplier = (stage: 'chat' | 'persistence' | 'world', applier: ProjectionApplier) =>

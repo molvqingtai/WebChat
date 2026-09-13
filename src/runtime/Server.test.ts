@@ -1462,6 +1462,73 @@ describe('RuntimeServer lifecycle', () => {
     }
   })
 
+  it('fences automatic recovery failures that arrive after the manual dual cut', async () => {
+    const fake = createFakeTransport()
+    const oldJoin = deferred<void>()
+    let holdAutomatic = false
+    let held = 0
+    const transport: RoomTransport = {
+      ...fake.transport,
+      join: async (roomId) => {
+        if (holdAutomatic) {
+          held += 1
+          await oldJoin.promise
+        }
+        return fake.transport.join(roomId)
+      }
+    }
+    const server = createServer({ transport, codec: jsonCodec })
+    await attachTab(server, DOMAIN, 1)
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    await settle()
+    holdAutomatic = true
+    fake.roomClose(getChatRoomId(DOMAIN))
+    fake.roomClose(getWorldRoomId())
+    await vi.waitFor(() => expect(held).toBeGreaterThan(0))
+    holdAutomatic = false
+    fake.makeNotReady()
+    const refresh = server.reconnectDomain({ domain: DOMAIN, replace: true, ...callerOf(1) })
+    const result = refresh.then(
+      () => 'committed',
+      (error: Error) => error.message
+    )
+    await vi.waitFor(() => expect(fake.operationLog.some((entry) => entry.startsWith('retire:'))).toBe(true))
+    await settle()
+    oldJoin.reject(new Error('old offscreen binding failed'))
+    await settle()
+    fake.open()
+    await expect(result).resolves.toBe('committed')
+    const snapshot = await server.getSnapshot(callerOf(1))
+    expect(snapshot.domains.find((item) => item.domain === DOMAIN)?.chatRoomJoined).toBe(true)
+    expect(snapshot.world.joined).toBe(true)
+    disposeServer(server)
+  })
+
+  it('lets an explicit replacement overtake pending preparation and fences the old terminal', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.makeNotReady()
+    const first = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    const firstTerminal = first.then(
+      (value) => value,
+      (error) => error
+    )
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    const latest = server.reconnectDomain({ domain: DOMAIN, replace: true, ...callerOf(1) })
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(2)
+    )
+    fake.open()
+    await expect(latest).resolves.toBeUndefined()
+    await expect(firstTerminal).resolves.toBeNull()
+    const snapshot = await server.getSnapshot(callerOf(1))
+    expect(snapshot.domains.find((item) => item.domain === DOMAIN)?.chatRoomJoined).toBe(true)
+    expect(snapshot.world.joined).toBe(true)
+    disposeServer(server)
+  })
+
   it('joins an in-flight dual replacement so a concurrent refresh cannot expose a partial owner', async () => {
     const { fake, server, roomId } = await setup()
     const worldRoomId = getWorldRoomId()

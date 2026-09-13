@@ -1253,6 +1253,32 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(room.leaveRoom()).rejects.toMatchObject({ name: 'AbortError' })
   })
 
+  it('starts a fresh document recovery before replacing a hung manual attempt', async () => {
+    const { server } = await setup()
+    const database = createMemoryMessageDatabase(`manual-refresh-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const oldRead = Promise.withResolvers<RuntimeSnapshot | null>()
+    const refresh = vi.fn().mockReturnValueOnce(oldRead.promise).mockResolvedValue(null)
+    const reconnect = vi.spyOn(server, 'reconnectDomain')
+    const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN, refresh })
+    const lifecycle = createConnectionLifecycle()
+    room.bindConnectionResultReporter(lifecycle.report)
+    room.bindStandaloneInvocation(lifecycle.value.mint, lifecycle.value.bindTask)
+    const first = room.leaveRoom()
+    const rejected = expect(first).rejects.toThrow('Page connection attempt superseded')
+    const latest = room.leaveRoom()
+    await expect(latest).resolves.toBeUndefined()
+    await rejected
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
+    expect(lifecycle.value.getTaskResult(latest)).toBe('succeeded')
+    oldRead.reject(new Error('late previous registration failed'))
+    await settle()
+    expect(reconnect).not.toHaveBeenCalled()
+    room.dispose()
+    await database.close()
+  })
+
   it('reports a superseded attempt token cancelled before aborting it (real Runtime adapter)', async () => {
     const heldJoin = new Promise<RuntimeSnapshot>(() => {})
     const database = createMemoryMessageDatabase(`supersede-${databaseId++}`)

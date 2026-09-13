@@ -1,5 +1,6 @@
 import type { RemeshStore } from 'remesh'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import AppStatusDomain from '@/domain/AppStatus'
 import type { SendLifecycle } from '@/domain/externs/SendLifecycle'
 
 interface DocumentLifecycleDeps {
@@ -8,6 +9,8 @@ interface DocumentLifecycleDeps {
   /** Composition-provided runtime init/detach operations supplied by the composition root (the owner only awaits completion). */
   // oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored
   initRuntime: () => Promise<unknown>
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- only check settlement is observed here
+  checkRuntime: () => Promise<unknown>
   detachRuntime: () => void
 }
 
@@ -19,7 +22,7 @@ interface DocumentLifecycleOwner {
 /**
  * The one Content composition document-lifecycle owner. It coordinates page-scoped Runtime feedback,
  * active sends, runtime attachment, and restoration for terminal exit, BFCache suspension, and
- * BFCache restoration. `beforeunload`/`pagehide`/`pageshow` feed this owner only; no Domain, component,
+ * BFCache restoration, and ordinary hidden-to-visible checks. Browser lifecycle events feed this owner only; no Domain, component,
  * feedback adapter, or watchdog independently owns whether the document may attach or present state.
  *
  * Ordering per authority: on departure the owner first silences page feedback and removes the current
@@ -33,6 +36,7 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
   // A restore generation is invalidated by any later suspend/terminal-exit/dispose, so a late restore
   // completion can never resume feedback or re-activate an ended/discarded document.
   let restoreGeneration = 0
+  let wasHidden = document.visibilityState === 'hidden'
   let deps: DocumentLifecycleDeps | null = null
   const feedbackDomain = () => deps!.store.getDomain(AppFeedbackDomain())
 
@@ -84,6 +88,24 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
       }
     )
   }
+  const onVisibilityChange = () => {
+    const hidden = document.visibilityState === 'hidden'
+    const becameVisible = wasHidden && !hidden
+    wasHidden = hidden
+    if (!becameVisible || !deps || documentState !== 'active') return
+    const appStatus = deps.store.getDomain(AppStatusDomain())
+    const phase = deps.store.query(appStatus.query.PhaseQuery())
+    // Preparation and the first projection belong to Initialization. Never race its waiter or
+    // bypass storage readiness; a failed initialization retries through that same owner.
+    if (phase === 'connecting') return
+    if (phase === 'unavailable') {
+      deps.store.send(appStatus.command.RetryCommand())
+      return
+    }
+    // The Runtime client owns deduplication, deadlines, and recovery cancellation. Ordinary
+    // hiding does not detach a healthy page or silence its feedback.
+    void deps.checkRuntime().catch(() => {})
+  }
   const onBeforeUnload = () => {
     // Feedback becomes silent before any page-local readiness change; cleanup ownership stays with
     // pagehide (which alone knows whether the document is suspended or terminal).
@@ -96,6 +118,7 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
   const onPageShow = (event: PageTransitionEvent) => {
     if (event.persisted) restore()
   }
+  document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('beforeunload', onBeforeUnload)
   window.addEventListener('pagehide', onPageHide)
   window.addEventListener('pageshow', onPageShow)
@@ -104,13 +127,14 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
       deps = bound
     },
     dispose: () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('beforeunload', onBeforeUnload)
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('pageshow', onPageShow)
       // Dispose is terminal for this document generation: any in-flight restore completion must not
       // resume feedback on a discarded page.
       invalidateRestore()
-      documentState = 'ended'
+      if (documentState !== 'ended') end()
     }
   }
 }

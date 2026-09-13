@@ -180,7 +180,7 @@ export interface RuntimeServer {
   ) => Promise<ReactionMessageRecord>
   sendChatMessage: (payload: { domain: string; event: ChatMessage } & RuntimePageCall) => Promise<ChatMessage>
   ackInbound: (payload: { domain: string; sequence: number; inserted: boolean } & RuntimePageCall) => Promise<void>
-  reconnectDomain: (payload: { domain: string } & RuntimePageCall) => Promise<void | null>
+  reconnectDomain: (payload: { domain: string; replace?: boolean } & RuntimePageCall) => Promise<void | null>
   provideHistory: (
     payload: { domain: string } & RuntimePageCall,
     callback: (event: HistorySupplyEvent) => void
@@ -197,7 +197,7 @@ export interface RuntimeTab {
 }
 
 export interface RuntimeCoordinator {
-  registerPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
+  registerPage: (payload: { domain: string; refresh?: boolean } & RuntimePageCall) => Promise<RuntimeSnapshot>
 }
 
 export const COORDINATOR_NAMESPACE = 'WEB_CHAT_RUNTIME_COORDINATOR_V2' as const
