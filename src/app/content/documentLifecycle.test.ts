@@ -158,6 +158,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
       initRuntime: () => lease.init(),
+      checkRuntime: () => lease.checkVisibility(),
       detachRuntime: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
@@ -290,6 +291,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
       initRuntime: () => lease.init(),
+      checkRuntime: () => lease.checkVisibility(),
       detachRuntime: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())

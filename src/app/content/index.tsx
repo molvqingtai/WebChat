@@ -9,7 +9,14 @@ import App from './App'
 import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
-import { detachClient, initClient, refreshClient, whenFailure, whenHostPhase } from '@/domain/impls/runtime/Client'
+import {
+  checkClientVisibility,
+  detachClient,
+  initClient,
+  refreshClient,
+  whenFailure,
+  whenHostPhase
+} from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
@@ -304,7 +311,13 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        documentLifecycle.bind({ store, sendLifecycle, initRuntime: initClient, detachRuntime: detachClient })
+        documentLifecycle.bind({
+          store,
+          sendLifecycle,
+          initRuntime: initClient,
+          checkRuntime: checkClientVisibility,
+          detachRuntime: detachClient
+        })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>
@@ -324,7 +337,6 @@ export default defineContentScript({
       onRemove: (content) => {
         content?.disposeDocumentLifecycle()
         content?.stopInitialization()
-        content?.sendLifecycle.cancelActiveSends()
         content?.root.unmount()
         content?.store.discard()
         mediaPreviewTransitionStyle?.remove()

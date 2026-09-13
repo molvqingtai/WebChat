@@ -41,6 +41,7 @@ const fixture = vi.hoisted(() => ({
   prepareIndexedDBMessageDatabase: vi.fn(),
   createIndexedDBMessageDatabase: vi.fn(),
   initClient: vi.fn(async () => null),
+  checkClientVisibility: vi.fn(async () => null),
   detachClient: vi.fn(),
   whenHostPhase: vi.fn(),
   whenFailure: vi.fn(),
@@ -114,6 +115,7 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
 vi.mock('@/domain/impls/runtime/Client', () => ({
   detachClient: fixture.detachClient,
   initClient: fixture.initClient,
+  checkClientVisibility: fixture.checkClientVisibility,
   whenHostPhase: fixture.whenHostPhase,
   whenFailure: fixture.whenFailure
 }))
@@ -327,6 +329,38 @@ describe('content composition root', () => {
     await Promise.resolve()
     expect(fixture.initClient).toHaveBeenCalledTimes(2)
     expect(fixture.resumeFeedback).toHaveBeenCalledTimes(2)
+  })
+
+  it('checks on each real hidden-to-visible transition, consumes failure, and removes the listener on teardown', async () => {
+    let visibility: DocumentVisibilityState = 'visible'
+    const state = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    const change = (next: DocumentVisibilityState) => {
+      visibility = next
+      document.dispatchEvent(new window.Event('visibilitychange'))
+    }
+    try {
+      await startContent()
+      change('visible')
+      change('hidden')
+      expect(fixture.checkClientVisibility).not.toHaveBeenCalled()
+      fixture.checkClientVisibility.mockRejectedValueOnce(new Error('check failed'))
+      change('visible')
+      change('visible')
+      await Promise.resolve()
+      expect(fixture.checkClientVisibility).toHaveBeenCalledTimes(1)
+      change('hidden')
+      change('visible')
+      expect(fixture.checkClientVisibility).toHaveBeenCalledTimes(2)
+      expect(fixture.initClient).not.toHaveBeenCalled()
+      expect(fixture.detachClient).not.toHaveBeenCalled()
+      await act(async () => fixture.removeUis[0]?.())
+      change('hidden')
+      change('visible')
+      expect(fixture.checkClientVisibility).toHaveBeenCalledTimes(2)
+      expect(fixture.detachClient).toHaveBeenCalledTimes(1)
+    } finally {
+      state.mockRestore()
+    }
   })
 
   it('does not resume feedback when a terminal exit lands while restore is in flight', async () => {

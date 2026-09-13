@@ -5,7 +5,7 @@ import { createMessageStore } from '@/domain/MessageStore'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import { MESSAGE_TYPE } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
-import { DocumentClient } from '@/runtime/DocumentClient'
+import { DocumentClient, VISIBILITY_CHECK_TIMEOUT_MS } from '@/runtime/DocumentClient'
 
 const DOMAIN = 'https://example.com'
 
@@ -968,4 +968,143 @@ describe('DocumentClient one-way current-state drain', () => {
     await rejected
     await expect(second).resolves.toMatchObject({ hostPhase: 'ready' })
   })
+})
+
+describe('DocumentClient visibility recovery', () => {
+  it('checks a cached ready client through admission once, without replacing healthy rooms or republishing ready', async () => {
+    const { client, coordinator, registerQueue } = setup()
+    const ready = vi.fn()
+    client.whenReady(ready)
+    const init = client.init()
+    await flush()
+    registerQueue.shift()!.resolve(snapshot('initial'))
+    await init
+    const check = client.checkVisibility()
+    expect(client.checkVisibility()).toBe(check)
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN })
+    expect(coordinator.registerPage).toHaveBeenCalledTimes(2)
+    registerQueue.shift()!.resolve(snapshot('checked'))
+    await expect(check).resolves.toEqual(snapshot('checked'))
+    expect(client.snapshot()).toEqual(snapshot('checked'))
+    expect(ready).toHaveBeenCalledTimes(1)
+  })
+
+  it('supersedes a stale normal drain while preserving initialization waiters and fencing late projections', async () => {
+    const { client, registerQueue } = setup()
+    const applied = vi.fn()
+    client.registerApplier('chat', applied)
+    const init = client.init()
+    await flush()
+    const stale = registerQueue.shift()!
+    const check = client.checkVisibility()
+    await flush()
+    registerQueue.shift()!.resolve(snapshot('visible'))
+    await expect(check).resolves.toEqual(snapshot('visible'))
+    await expect(init).resolves.toEqual(snapshot('visible'))
+    stale.resolve(snapshot('stale'))
+    await flush()
+    expect(applied).toHaveBeenCalledTimes(1)
+    expect(client.snapshot()).toEqual(snapshot('visible'))
+  })
+
+  it('escalates a rejected check once to replacement recovery and permits a later visibility retry', async () => {
+    const { client, coordinator, registerQueue } = setup()
+    const first = client.checkVisibility()
+    const failure = expect(first).rejects.toThrow('recovery failed')
+    await flush()
+    registerQueue.shift()!.reject(new Error('admission failed'))
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN, refresh: true })
+    registerQueue.shift()!.reject(new Error('recovery failed'))
+    await failure
+    const retry = client.checkVisibility()
+    await flush()
+    expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN })
+    registerQueue.shift()!.resolve(snapshot('retry'))
+    await expect(retry).resolves.toEqual(snapshot('retry'))
+  })
+
+  it('bounds both hung attempts, fences late results, clears timers, and allows manual retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const { client, coordinator, registerQueue } = setup()
+      const applied = vi.fn()
+      client.registerApplier('chat', applied)
+      const check = client.checkVisibility()
+      const failed = expect(check).rejects.toThrow('timed out')
+      await flush()
+      const staleCheck = registerQueue.shift()!
+      await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS)
+      expect(coordinator.registerPage).toHaveBeenLastCalledWith({ domain: DOMAIN, refresh: true })
+      const staleRecovery = registerQueue.shift()!
+      await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS)
+      await failed
+      expect(vi.getTimerCount()).toBe(0)
+      const retry = client.refresh()
+      await flush()
+      registerQueue.shift()!.resolve(snapshot('manual'))
+      await retry
+      staleCheck.resolve(snapshot('late check'))
+      staleRecovery.resolve(snapshot('late recovery'))
+      await flush()
+      expect(client.snapshot()).toEqual(snapshot('manual'))
+      expect(applied).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds an already hung manual recovery rather than making visibility retries join it forever', async () => {
+    vi.useFakeTimers()
+    try {
+      const { client, registerQueue } = setup()
+      const manual = client.refresh()
+      const failedManual = expect(manual).rejects.toThrow('timed out')
+      await flush()
+      const stale = registerQueue.shift()!
+      const visible = client.checkVisibility()
+      await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS)
+      await failedManual
+      registerQueue.shift()!.resolve(snapshot('visible recovery'))
+      await expect(visible).resolves.toEqual(snapshot('visible recovery'))
+      stale.resolve(snapshot('late manual'))
+      await flush()
+      expect(client.snapshot()).toEqual(snapshot('visible recovery'))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['refresh', 'detach'] as const)(
+    'a %s cancels a pending check and prevents its fallback',
+    async (operation) => {
+      vi.useFakeTimers()
+      try {
+        const { client, coordinator, registerQueue } = setup()
+        const check = client.checkVisibility()
+        const cancelled = expect(check).rejects.toMatchObject({ name: 'AbortError' })
+        await flush()
+        const stale = registerQueue.shift()!
+        if (operation === 'refresh') {
+          const manual = client.refresh()
+          const visibleDuringManual = client.checkVisibility()
+          await flush()
+          registerQueue.shift()!.resolve(snapshot('manual'))
+          await manual
+        } else {
+          client.detach()
+          await expect(client.checkVisibility()).resolves.toBeNull()
+        }
+        await cancelled
+        stale.reject(new Error('late check rejection'))
+        await vi.advanceTimersByTimeAsync(VISIBILITY_CHECK_TIMEOUT_MS * 3)
+        expect(coordinator.registerPage).toHaveBeenCalledTimes(operation === 'refresh' ? 2 : 1)
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
 })

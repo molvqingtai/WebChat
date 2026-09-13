@@ -1,5 +1,7 @@
 import type { HostPhase, RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 
+export const VISIBILITY_CHECK_TIMEOUT_MS = 10_000
+
 export interface DocumentClientOptions {
   coordinator: RuntimeCoordinator
   server: RuntimeServer
@@ -48,6 +50,9 @@ interface ProjectionAppliers {
  *   already set it. No `dirty=true/owner=null` lost wakeup is possible.
  */
 export class DocumentClient {
+  private visibilityCheck: Promise<RuntimeSnapshot | null> | null = null
+  private manualRecovery: Promise<RuntimeSnapshot | null> | null = null
+  private recoveryGeneration = 0
   private registered = false
   private refreshRegistration = false
   private currentHostId: string | null = null
@@ -195,6 +200,7 @@ export class DocumentClient {
       if (!this.readyPublished) {
         this.publishReady()
       }
+      this.resolveWaiters()
     } catch (error) {
       // A fenced late continuation is inert; only a current owner's failure is published.
       if (!this.isOwnerCurrent(entry)) return
@@ -216,6 +222,9 @@ export class DocumentClient {
     // later explicit hint may attempt publication again.
     this.readyCallbacks.forEach((callback) => callback())
     this.readyPublished = true
+  }
+
+  private resolveWaiters() {
     if (this.currentSnapshot) {
       const snapshot = this.currentSnapshot
       this.initWaiters.forEach((waiter) => waiter.resolve(snapshot))
@@ -267,20 +276,79 @@ export class DocumentClient {
    * by isOwnerCurrent once the owner slot is replaced, so an old result cannot overwrite the new one.
    */
   refresh(): Promise<RuntimeSnapshot | null> {
+    this.recoveryGeneration += 1
+    this.visibilityCheck = null
+    const task = this.restartRegistration(true)
+    this.manualRecovery = task
+    const clear = () => {
+      if (this.manualRecovery === task) this.manualRecovery = null
+    }
+    void task.then(clear, clear)
+    return task
+  }
+
+  /** Check through coordinator admission, retaining healthy rooms. Only a failed/bounded-out
+   * check escalates to the existing replacement recovery. An existing manual recovery is joined with the same deadline; a new manual action wins. */
+  checkVisibility(): Promise<RuntimeSnapshot | null> {
+    if (this.detached) return Promise.resolve(null)
+    if (this.visibilityCheck) return this.visibilityCheck
+    const generation = ++this.recoveryGeneration
+    const task = (async () => {
+      try {
+        return await (this.manualRecovery
+          ? this.boundRegistration(this.manualRecovery)
+          : this.boundedRegistration(false))
+      } catch (error) {
+        if (this.detached || this.recoveryGeneration !== generation) throw error
+        return this.boundedRegistration(true)
+      }
+    })()
+    this.visibilityCheck = task
+    const clear = () => {
+      if (this.visibilityCheck === task) this.visibilityCheck = null
+    }
+    void task.then(clear, clear)
+    return task
+  }
+
+  private boundedRegistration(refresh: boolean): Promise<RuntimeSnapshot | null> {
+    return this.boundRegistration(this.restartRegistration(refresh))
+  }
+
+  private boundRegistration(task: Promise<RuntimeSnapshot | null>): Promise<RuntimeSnapshot | null> {
+    const owner = this.owner
+    const timer = setTimeout(() => {
+      if (!owner || !this.isOwnerCurrent(owner)) return
+      const error = new Error('Runtime visibility check timed out')
+      owner.controller.abort(error)
+      this.owner = null
+      this.dirty = false
+      this.registered = false
+      this.refreshRegistration = false
+      this.publishFailure(error)
+    }, VISIBILITY_CHECK_TIMEOUT_MS)
+    return task.finally(() => clearTimeout(timer))
+  }
+
+  private restartRegistration(refresh: boolean): Promise<RuntimeSnapshot | null> {
     if (this.detached) this.detached = false
     this.owner?.controller.abort(new DOMException('Runtime client refresh superseded prior drain', 'AbortError'))
     this.owner = null
     // Supersede any prior refresh/init waiters too: an older recovery attempt must not continue
     // with the fresh result, so its callers are rejected as superseded instead of being resolved
     // by the shared waiter pool with the newest snapshot.
-    const superseded = new DOMException('Runtime client refresh superseded a prior recovery', 'AbortError')
-    this.initWaiters.forEach((waiter) => waiter.reject(superseded))
-    this.initWaiters.clear()
+    if (refresh) {
+      const superseded = new DOMException('Runtime client refresh superseded a prior recovery', 'AbortError')
+      this.initWaiters.forEach((waiter) => waiter.reject(superseded))
+      this.initWaiters.clear()
+    }
     this.registered = false
-    this.refreshRegistration = true
-    this.readyPublished = false
+    this.refreshRegistration = refresh
     this.currentHostId = null
-    this.currentSnapshot = null
+    if (refresh) {
+      this.readyPublished = false
+      this.currentSnapshot = null
+    }
     const waiter = new Promise<RuntimeSnapshot>((resolve, reject) => {
       this.initWaiters.add({ resolve, reject })
     })
@@ -291,6 +359,9 @@ export class DocumentClient {
 
   /** Document-local teardown only; tab departure itself is owned by browser lifecycle events. */
   detach() {
+    this.recoveryGeneration += 1
+    this.visibilityCheck = null
+    this.manualRecovery = null
     this.detached = true
     this.dirty = false
     this.registered = false
