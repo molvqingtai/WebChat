@@ -16,6 +16,7 @@ import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { DocumentClient } from '@/runtime/DocumentClient'
 import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 import { createDocumentLifecycleOwner } from './documentLifecycle'
+import { startInitializationLifecycle } from './Initialization'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 
@@ -323,4 +324,106 @@ describe('Content document-lifecycle owner composed parent control', () => {
     expect(readinessUnsubscriptions).toBe(readinessSubscriptions)
     vi.useRealTimers()
   })
+})
+
+describe('visibility and initialization share the preparation/projection barrier', () => {
+  it.each(['resolve', 'reject'] as const)(
+    'does not race preparation or the initial %s, and later visible recovery stays usable',
+    async (result) => {
+      const domain = 'https://example.test'
+      const projection: RuntimeSnapshot = {
+        hostId: 'host',
+        hostPhase: 'ready',
+        peerId: 'peer',
+        domains: [],
+        world: { joined: true, peerId: 'peer', presences: [] },
+        failures: []
+      }
+      const preparation = Promise.withResolvers<void>()
+      const firstRegistration = Promise.withResolvers<RuntimeSnapshot>()
+      const applying = Promise.withResolvers<void>()
+      const registerPage = vi
+        .fn<RuntimeCoordinator['registerPage']>()
+        .mockImplementationOnce(() => firstRegistration.promise)
+        .mockResolvedValue(projection)
+      const lease = new DocumentClient({
+        coordinator: { registerPage },
+        // SAFETY: this composed lifecycle case uses only the snapshot RPC.
+        server: { getSnapshot: async () => projection } as never,
+        domain
+      })
+      const fixture = createComposedFixture(lease)
+      let visibility: DocumentVisibilityState = 'visible'
+      const state = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+      const owner = createDocumentLifecycleOwner()
+      const checkRuntime = vi.fn(() => lease.checkVisibility())
+      owner.bind({
+        store: fixture.store,
+        sendLifecycle: fixture.sendLifecycle,
+        initRuntime: () => lease.init(),
+        checkRuntime,
+        detachRuntime: () => lease.detach()
+      })
+      const activate = vi.fn(() => lease.registerApplier('chat', () => applying.promise))
+      const stop = startInitializationLifecycle({
+        store: fixture.store,
+        activateApplicationDependencies: () => {},
+        dependencies: {
+          prepareBrowserSyncStorage: () => preparation.promise,
+          prepareLocalStorage: async () => {},
+          prepareMessageDatabase: async () => {},
+          initializeRuntime: (refresh) => {
+            if (!activate.mock.calls.length) activate()
+            return refresh ? lease.refresh() : lease.init()
+          },
+          detachRuntime: () => lease.detach()
+        }
+      })
+      const showAgain = () => {
+        visibility = 'hidden'
+        document.dispatchEvent(new window.Event('visibilitychange'))
+        visibility = 'visible'
+        document.dispatchEvent(new window.Event('visibilitychange'))
+      }
+      const phase = () => fixture.store.query(fixture.appStatus.query.PhaseQuery())
+      try {
+        showAgain()
+        await flushMicrotasks()
+        expect(registerPage).not.toHaveBeenCalled()
+        expect(activate).not.toHaveBeenCalled()
+        preparation.resolve()
+        await flushMicrotasks()
+        expect(registerPage).toHaveBeenCalledTimes(1)
+        showAgain()
+        expect(checkRuntime).not.toHaveBeenCalled()
+        if (result === 'reject') {
+          firstRegistration.reject(new Error('initial registration failed'))
+          await flushMicrotasks()
+          expect(phase()).toBe('unavailable')
+          showAgain()
+          await flushMicrotasks()
+          expect(registerPage).toHaveBeenLastCalledWith({ domain, refresh: true })
+        } else {
+          firstRegistration.resolve(projection)
+          await flushMicrotasks()
+        }
+        expect(phase()).toBe('connecting')
+        expect(checkRuntime).not.toHaveBeenCalled()
+        applying.resolve()
+        await flushMicrotasks()
+        expect(phase()).toBe('ready')
+        showAgain()
+        await flushMicrotasks()
+        expect(checkRuntime).toHaveBeenCalledTimes(1)
+        expect(registerPage).toHaveBeenLastCalledWith({ domain })
+        expect(phase()).toBe('ready')
+      } finally {
+        owner.dispose()
+        stop()
+        fixture.store.discard()
+        activeStores.delete(fixture.store)
+        state.mockRestore()
+      }
+    }
+  )
 })

@@ -256,7 +256,7 @@ export class DocumentClient {
   /** Starts the drain and settles on the next ready publication or failure. */
   async init(): Promise<RuntimeSnapshot | null> {
     if (this.detached) this.detached = false
-    if (this.readyPublished && this.currentSnapshot) {
+    if (this.readyPublished && this.currentSnapshot && !this.owner && !this.dirty) {
       return this.currentSnapshot
     }
     const waiter = new Promise<RuntimeSnapshot>((resolve, reject) => {

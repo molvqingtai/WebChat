@@ -1,5 +1,6 @@
 import type { RemeshStore } from 'remesh'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import AppStatusDomain from '@/domain/AppStatus'
 import type { SendLifecycle } from '@/domain/externs/SendLifecycle'
 
 interface DocumentLifecycleDeps {
@@ -92,6 +93,15 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
     const becameVisible = wasHidden && !hidden
     wasHidden = hidden
     if (!becameVisible || !deps || documentState !== 'active') return
+    const appStatus = deps.store.getDomain(AppStatusDomain())
+    const phase = deps.store.query(appStatus.query.PhaseQuery())
+    // Preparation and the first projection belong to Initialization. Never race its waiter or
+    // bypass storage readiness; a failed initialization retries through that same owner.
+    if (phase === 'connecting') return
+    if (phase === 'unavailable') {
+      deps.store.send(appStatus.command.RetryCommand())
+      return
+    }
     // The Runtime client owns deduplication, deadlines, and recovery cancellation. Ordinary
     // hiding does not detach a healthy page or silence its feedback.
     void deps.checkRuntime().catch(() => {})

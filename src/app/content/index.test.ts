@@ -23,6 +23,7 @@ const fixture = vi.hoisted(() => ({
   createStore: vi.fn(),
   discard: vi.fn(),
   storeSend: vi.fn(),
+  phaseQuery: vi.fn(() => 'ready'),
   silenceFeedback: vi.fn(),
   resumeFeedback: vi.fn(),
   loadingCommand: vi.fn(),
@@ -153,7 +154,9 @@ beforeEach(() => {
   fixture.createStore.mockImplementation(() => ({
     discard: fixture.discard,
     send: fixture.storeSend,
+    query: fixture.phaseQuery,
     getDomain: () => ({
+      query: { PhaseQuery: () => null },
       command: {
         SilenceFeedbackCommand: fixture.silenceFeedback,
         ResumeFeedbackCommand: fixture.resumeFeedback,

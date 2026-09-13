@@ -1008,6 +1008,27 @@ describe('DocumentClient visibility recovery', () => {
     expect(client.snapshot()).toEqual(snapshot('visible'))
   })
 
+  it('does not let cached readiness bypass a newly installed projection applier', async () => {
+    const { client, registerQueue, readQueue } = setup()
+    const check = client.checkVisibility()
+    await flush()
+    registerQueue.shift()!.resolve(snapshot('early'))
+    await check
+    const apply = deferred<void>()
+    client.registerApplier('chat', () => apply.promise)
+    let initialized = false
+    const init = client.init().then(() => {
+      initialized = true
+    })
+    await flush()
+    readQueue.shift()!.resolve(snapshot('with appliers'))
+    await flush()
+    expect(initialized).toBe(false)
+    apply.resolve()
+    await init
+    expect(initialized).toBe(true)
+  })
+
   it('escalates a rejected check once to replacement recovery and permits a later visibility retry', async () => {
     const { client, coordinator, registerQueue } = setup()
     const first = client.checkVisibility()
