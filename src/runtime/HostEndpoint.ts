@@ -1,5 +1,4 @@
 import type { HistorySupplyEvent, RuntimeServer } from '@/runtime/Contract'
-import { removeServerTab } from '@/runtime/Server'
 import {
   HOST_PUSH_SCOPE,
   errorMessage,
@@ -35,7 +34,8 @@ export class HostEndpoint {
 
   constructor(
     private readonly server: RuntimeServer,
-    private readonly sendPush: (push: HostPush) => void
+    private readonly sendPush: (push: HostPush) => void,
+    private readonly detachTabOwner: (tabId: number) => void | Promise<void> = () => {}
   ) {}
 
   private pageIdsForTab(tabId: number) {
@@ -49,9 +49,9 @@ export class HostEndpoint {
     return page
   }
 
-  private removeTab(tabId: number) {
+  private detachTab(tabId: number) {
     for (const pageId of this.pageIdsForTab(tabId)) this.pages.delete(pageId)
-    void removeServerTab(this.server, tabId).catch((error) => console.error(error))
+    void Promise.resolve(this.detachTabOwner(tabId)).catch((error) => console.error(error))
   }
 
   private register(pageId: string, tabId: number, domain: string, url: string): HostedPage {
@@ -120,7 +120,7 @@ export class HostEndpoint {
     try {
       if (request.type === 'ping') return { ok: true, value: { host: true } }
       if (request.type === 'tab-gone') {
-        if (typeof request.tabId === 'number') this.removeTab(request.tabId)
+        if (typeof request.tabId === 'number') this.detachTab(request.tabId)
         return { ok: true }
       }
       if (request.type !== 'call' || !request.message) throw new Error('Invalid Runtime host request')
@@ -128,7 +128,7 @@ export class HostEndpoint {
       const message = request.message
       if (message.type === 'bye') {
         const page = this.removePage(message.pageId)
-        if (page && this.pageIdsForTab(page.tabId).length === 0) this.removeTab(page.tabId)
+        if (page && this.pageIdsForTab(page.tabId).length === 0) this.detachTab(page.tabId)
         return { ok: true }
       }
       return { ok: true, value: await this.invoke(message, request.tabId, request.url ?? '') }

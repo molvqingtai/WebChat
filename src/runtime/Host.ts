@@ -1,5 +1,5 @@
 import { browser } from '#imports'
-import { createServer } from '@/runtime/Server'
+import { createServer, removeServerTab } from '@/runtime/Server'
 import { createRoomTransport } from '@/runtime/RoomTransportProvider'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 import { HostEndpoint } from '@/runtime/HostEndpoint'
@@ -33,7 +33,7 @@ export const createHost = ({ sendPush }: CreateHostOptions): RuntimeHost => {
     presenceStore: createBrowserPresenceStore(sessionArea),
     onStateChanged: () => endpoint?.invalidate()
   })
-  endpoint = new HostEndpoint(server, sendPush)
+  endpoint = new HostEndpoint(server, sendPush, (tabId) => removeServerTab(server, tabId))
   return {
     handle: (request) => endpoint!.handle(request)
   }
