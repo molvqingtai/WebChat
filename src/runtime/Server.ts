@@ -14,37 +14,18 @@ import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/R
 import type { RecoveryBindingCapability, RoomTransport } from '@/runtime/RoomTransport'
 import { MESSAGE_TYPE, NativeWireCodec, type TextMessage, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
-import {
-  STATE_CHANGED_MESSAGE_TYPE,
-  type RuntimeErrorEvent,
-  type RuntimePageCall,
-  type RuntimeServer,
-  type RuntimeSnapshot,
-  type RuntimeTab
-} from '@/runtime/Contract'
+import type { RuntimeErrorEvent, RuntimePageCall, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
-import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
-
-export interface RuntimeTabsApi {
-  get: (tabId: number) => Promise<RuntimeTab>
-  query: (queryInfo: { url?: string | string[] }) => Promise<RuntimeTab[]>
-  sendMessage: (tabId: number, message: unknown) => Promise<unknown>
-}
-
-export interface RuntimeAdmission {
-  tabs: RuntimeTabsApi
-  /** Reconciles a surviving Background with a restarted Offscreen transport before Page ingress. */
-  ensureTransport: () => Promise<void>
-}
+import { canonicalNavigationUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
 export interface ServerConfig {
   transport: RoomTransport
   clock?: Clock
   codec?: WireCodec
   presenceStore?: PresenceStore
-  /** Omitted only by isolated domain/server tests. Production always supplies Browser admission. */
-  admission?: RuntimeAdmission
+  /** Content-free "the current projection is stale" signal consumed by Page pullers. */
+  onStateChanged?: () => void
 }
 
 type ReplacementFailureStage = 'room-hydrate' | 'world-hydrate' | 'room-precommit' | 'world-precommit'
@@ -134,140 +115,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
 
-  // A logical replacement can hydrate both owners before ordered ingress opens. This vault is
-  // intentionally populated only from the owner terminals, never from transport recovery payloads.
-  // It is private to this Server and is cleared once activation succeeds.
-  interface RecoveryIntentVault {
-    rooms: Map<
-      string,
-      {
-        roomId: string
-        sessionId: string
-        presenceId: string
-        user: ChatUser
-        site: ChatSite
-        joinedAt: number
-        capability: RecoveryBindingCapability
-      }
-    >
-    world?: {
-      registrations: Array<{ domain: string; user: ChatUser; site: ChatSite }>
-      capability: RecoveryBindingCapability
-    }
-  }
-  let recoveryIntentVault: RecoveryIntentVault | undefined = { rooms: new Map() }
-  const recoveryReceiptTriggers = [
-    store.subscribeEvent(sessionDomain.event.RecoveryHydratedEvent, (receipt) => {
-      const vault = recoveryIntentVault
-      if (!vault) return
-      const capability = config.transport.mintRecoveryBindingCapability?.(receipt.roomId)
-      if (!capability) return
-      vault.rooms.set(receipt.domain, {
-        roomId: receipt.roomId,
-        sessionId: receipt.local.sessionId,
-        presenceId: receipt.local.presenceId,
-        user: { ...receipt.local.user },
-        site: { ...receipt.local.site },
-        joinedAt: receipt.local.joinedAt,
-        capability
-      })
-    }),
-    store.subscribeEvent(worldDomain.event.RecoveryHydratedEvent, (receipt) => {
-      const vault = recoveryIntentVault
-      if (!vault) return
-      const capability = config.transport.mintRecoveryBindingCapability?.(getWorldRoomId())
-      if (!capability) return
-      vault.world = {
-        registrations: receipt.registrations.map(({ domain, user, site }) => ({
-          domain,
-          user: { ...user },
-          site: { ...site }
-        })),
-        capability
-      }
-    })
-  ]
-  const recoveredWorld = config.transport.worldRecovery?.()
-  const recoveredRooms = config.transport.roomRecovery?.()
-  const recoveredSources = [
-    ...(recoveredWorld?.members.length
-      ? [
-          {
-            roomId: getWorldRoomId(),
-            sources: recoveredWorld.members.map(({ sourcePeerId, sourceGeneration }) => ({
-              sourcePeerId,
-              generation: sourceGeneration
-            }))
-          }
-        ]
-      : []),
-    ...(recoveredRooms?.rooms ?? []).map(({ roomId, sessions }) => ({
-      roomId,
-      sources: sessions.map(({ sourcePeerId, sourceGeneration }) => ({ sourcePeerId, generation: sourceGeneration }))
-    }))
-  ]
-  if (recoveredSources.length > 0) store.send(wireDomain.command.RecoverTransportStateCommand(recoveredSources))
-  if (recoveredRooms && recoveredRooms.rooms.length > 0) {
-    store.send(sessionDomain.command.RecoverTransportStateCommand(recoveredRooms))
-  }
-  if (recoveredWorld) {
-    store.send(
-      worldDomain.command.RecoverTransportStateCommand({
-        members: recoveredWorld.members.map(({ sourcePeerId }) => sourcePeerId),
-        presences: recoveredWorld.presences.map(({ sourcePeerId, presence }) => ({ sourcePeerId, presence })),
-        ...(recoveredWorld.local ? { registrations: recoveredWorld.local.registrations } : {})
-      })
-    )
-  }
-  // Recovered ROOM current state may be newer than durable history. Reconcile the latter before
-  // ingress opens so an active runtime can never skip ended observations or a larger HLC seed.
-  let recoveryReady: Promise<void> | undefined
-  let recoveryFailure: Error | undefined
-  let recoveryEpoch = 0
-  const beginRecoveryEpoch = (activate: () => void | Promise<void>) => {
-    const epoch = ++recoveryEpoch
-    recoveryFailure = undefined
-    const task = Promise.resolve()
-      .then(activate)
-      .then(
-        () => {
-          if (recoveryEpoch === epoch) recoveryReady = undefined
-        },
-        (error) => {
-          const failure = error instanceof Error ? error : new Error('Transport recovery did not complete')
-          if (recoveryEpoch === epoch) {
-            recoveryFailure = failure
-            recoveryReady = undefined
-          }
-          throw failure
-        }
-      )
-    recoveryReady = task
-    // Reads observe the exact rejected promise; this only prevents an unhandled diagnostic when
-    // the Server is replaced before a caller reaches its stable fail-closed read.
-    void task.catch(() => {})
-    return task
-  }
-  const initialRecovery = beginRecoveryEpoch(() =>
-    recoveredRooms && recoveredRooms.rooms.length > 0
-      ? Promise.all(
-          recoveredRooms.rooms.map(async (recovery) => {
-            const record = (await presenceStore.load(recovery.domain)) ?? {
-              domain: recovery.domain,
-              lastJoinedAt: 0,
-              observers: []
-            }
-            store.send(sessionDomain.command.ReconcileRecoveredPresenceCommand({ domain: recovery.domain, record }))
-          })
-        ).then(() => config.transport.activateIngress?.())
-      : config.transport.activateIngress?.()
-  )
-  void initialRecovery.then(
-    () => {
-      recoveryIntentVault = undefined
-    },
-    () => {}
-  )
   interface PresenceRecovery {
     attempts: number
     promise: Promise<void>
@@ -286,26 +133,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   // Every trigger is a post-commit domain event; reads never schedule a notification.
   let notifyScheduled = false
   const notifyTabs = () => {
-    const admission = config.admission
-    if (!admission || notifyScheduled) return
+    if (notifyScheduled) return
     notifyScheduled = true
-    // Microtask scheduling only coalesces content-free invalidation hints; it holds no payload,
-    // business state, replay item, or cleanup dependency.
+    // One content-free invalidation per turn. The payload never contains Runtime state: pages
+    // pull their own current snapshot through the ordinary request path.
     queueMicrotask(() => {
       notifyScheduled = false
-      void (async () => {
-        try {
-          const tabs = await admission.tabs.query({})
-          for (const tab of tabs) {
-            if (typeof tab.id !== 'number' || typeof tab.url !== 'string') continue
-            const url = canonicalNavigationUrl(tab.url)
-            if (!url || !isEligibleContentUrl(url)) continue
-            void admission.tabs.sendMessage(tab.id, { type: STATE_CHANGED_MESSAGE_TYPE }).catch(() => {})
-          }
-        } catch (error) {
-          console.error(error)
-        }
-      })()
+      config.onStateChanged?.()
     })
   }
 
@@ -337,90 +171,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     })
   ]
 
-  /** The Offscreen owner retains only typed current Room identity, never messages or History. */
-  const roomRecoveryTrigger = store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
-    const runtime = store.query(sessionDomain.query.DomainQuery(event.domain))
-    if (!runtime || !config.transport.rememberRoomRecovery) return
-    const sources = new Map(
-      store
-        .query(wireDomain.query.SourcesQuery(runtime.roomId))
-        .map((source) => [source.sourcePeerId, source.generation])
-    )
-    void config.transport
-      .rememberRoomRecovery({
-        roomId: runtime.roomId,
-        domain: runtime.domain,
-        local: {
-          sessionId: runtime.sessionId,
-          presenceId: runtime.presenceId,
-          user: runtime.user,
-          site: runtime.site,
-          joinedAt: runtime.joinedAt
-        },
-        sessions: runtime.sessions.flatMap((session) => {
-          // Grace-preserved bindings can share a reusable peer id with the current physical
-          // incarnation. Recovery carries only the exact admitted incarnation; never relabel a
-          // retained old binding with the latest source generation.
-          return sources.get(session.sourcePeerId) !== session.sourceGeneration
-            ? []
-            : [
-                {
-                  sourcePeerId: session.sourcePeerId,
-                  sourceGeneration: session.sourceGeneration,
-                  session: {
-                    type: 'session',
-                    sessionId: session.sessionId,
-                    presenceId: session.presenceId,
-                    user: session.user,
-                    joinedAt: session.joinedAt
-                  }
-                }
-              ]
-        })
-      })
-      .catch(() => {})
-  })
 
-  const checkpointWorldRecovery = () => {
-    if (!config.transport.rememberWorldRecovery) return
-    const members = store.query(wireDomain.query.SourcesQuery(getWorldRoomId()))
-    const sources = new Map(members.map((source) => [source.sourcePeerId, source.generation]))
-    const presences = store.query(worldDomain.query.PresencesQuery()).flatMap(({ sourcePeerId, presence }) => {
-      const sourceGeneration = sources.get(sourcePeerId)
-      return sourceGeneration === undefined ? [] : [{ sourcePeerId, sourceGeneration, presence }]
-    })
-    void config.transport
-      .rememberWorldRecovery({
-        members: members.map(({ sourcePeerId, generation }) => ({ sourcePeerId, sourceGeneration: generation })),
-        presences,
-        ...(store.query(worldDomain.query.RegistrationsQuery()).length > 0
-          ? {
-              local: {
-                peerId: config.transport.peerIdOf(getWorldRoomId()),
-                registrations: store.query(worldDomain.query.RegistrationsQuery())
-              }
-            }
-          : {})
-      })
-      .catch(() => {})
-  }
-  const worldRecoveryTrigger = store.subscribeEvent(
-    worldDomain.event.TransportStateChangedEvent,
-    checkpointWorldRecovery
-  )
-  const worldRegistrationRecoveryTrigger = store.subscribeEvent(
-    worldDomain.event.DomainCommittedEvent,
-    checkpointWorldRecovery
-  )
-  const worldReleaseRecoveryTrigger = store.subscribeEvent(
-    worldDomain.event.DomainReleasedEvent,
-    checkpointWorldRecovery
-  )
-
-  /**
-   * Browser sender/tab facts are the sole caller identity. With production admission the current
-   * tab is revalidated against the tabs API; isolated tests may supply or omit caller facts.
-   */
+  /** Browser sender/tab facts are the sole caller identity; pages never claim one. */
   interface ManualRefresh {
     pending?: Promise<void>
     failure?: Error
@@ -462,34 +214,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
-  const requireCallerTab = async (
-    payload: RuntimePageCall,
-    domain?: string,
-    options?: { allowRecoveryFailure?: boolean }
-  ): Promise<number | null> => {
-    if (!options?.allowRecoveryFailure) {
-      if (recoveryFailure) throw recoveryFailure
-      if (recoveryReady) await recoveryReady
-      if (recoveryFailure) throw recoveryFailure
-    }
-    const caller = payload.caller?.tab
-    const tabId = caller?.id
+  /**
+   * Browser facts attached by the Background are the only caller identity. A Page id alone never
+   * becomes a caller claim.
+   */
+  const requireCallerTab = (payload: RuntimePageCall): number => {
+    const tabId = payload.caller?.tab?.id
     if (typeof tabId !== 'number' || !Number.isSafeInteger(tabId) || tabId < 0) {
-      if (!config.admission) return null
       throw new Error('Current Page browser caller is required')
-    }
-    if (!config.admission) return tabId
-    await config.admission.ensureTransport()
-    const current = await config.admission.tabs.get(tabId)
-    const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
-    if (
-      current.id !== tabId ||
-      !url ||
-      !isEligibleContentUrl(url) ||
-      (typeof caller?.url === 'string' && !isSameNavigation(url, caller.url)) ||
-      (domain !== undefined && new URL(url).origin !== domain)
-    ) {
-      throw new Error('Browser tab navigation is no longer eligible')
     }
     return tabId
   }
@@ -714,7 +446,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (disposed) cancelledReplacementAttempts.add(attempt)
       throw operationCancelled()
     }
-    const tabId = await requireCallerTab(payload, attempt.domain, { allowRecoveryFailure: true })
+    const tabId = requireCallerTab(payload)
     if (tabId !== attempt.tabId || callerDocumentUrl(payload, tabId) !== attempt.documentUrl) {
       throw new Error('AppButton caller binding is no longer current')
     }
@@ -735,7 +467,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (disposed) cancelledReplacementReservations.add(reservation)
       throw operationCancelled()
     }
-    const tabId = await requireCallerTab(payload, reservation.domain, { allowRecoveryFailure: true })
+    const tabId = requireCallerTab(payload)
     if (tabId !== reservation.tabId || callerDocumentUrl(payload, tabId) !== reservation.documentUrl) {
       throw new Error('AppButton caller binding is no longer current')
     }
@@ -893,8 +625,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         sharedWorldRecovery.world.forEach(({ domain }) => replacementSeeds.delete(domain))
         sharedWorldRecovery = undefined
       }
-      recoveryFailure = undefined
-      recoveryReady = undefined
       // Public hints begin only after the shared terminal. The initial local state is already
       // complete, while outbound presence/session catch-up remains ordinary post-commit work.
       const committedRoom = store.query(sessionDomain.query.DomainQuery(attempt.domain))
@@ -1449,27 +1179,24 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const server: RuntimeServer = {
     attachPage: async (payload) => {
-      const tabId = await requireCallerTab(payload, payload.domain)
+      const tabId = requireCallerTab(payload)
       await waitForManualRefreshes(payload.domain)
-      if (tabId !== null) {
-        const existing = tabDomains.get(tabId)
-        if (existing && existing.domain !== payload.domain) await detachTab(tabId)
-        const current = config.admission ? await config.admission.tabs.get(tabId) : null
-        const url = current?.url ?? payload.caller?.tab?.url ?? ''
-        tabDomains.set(tabId, { domain: payload.domain, url: canonicalNavigationUrl(url) ?? url })
-        store.send(lifecycleDomain.command.AttachPageCommand({ domain: payload.domain, tabId }))
-      }
+      const existing = tabDomains.get(tabId)
+      if (existing && existing.domain !== payload.domain) await detachTab(tabId)
+      const rawUrl = payload.caller?.tab?.url ?? ''
+      const url = canonicalNavigationUrl(rawUrl) ?? rawUrl
+      tabDomains.set(tabId, { domain: payload.domain, url })
+      store.send(lifecycleDomain.command.AttachPageCommand({ domain: payload.domain, tabId }))
       return snapshot(tabId)
     },
     getSnapshot: async (payload) => {
       if (!payload) throw new Error('Caller-bearing snapshot request is required')
-      const tabId = await requireCallerTab(payload)
-      await waitForManualRefreshes(tabId === null ? undefined : tabDomains.get(tabId)?.domain)
+      const tabId = requireCallerTab(payload)
+      await waitForManualRefreshes(tabDomains.get(tabId)?.domain)
       return snapshot(tabId)
     },
     joinChatRoom: async (payload) => {
-      await requireCallerTab(payload, payload.domain)
-      await config.transport.requireRoomRecovery?.(getChatRoomId(payload.domain), payload.domain)
+      requireCallerTab(payload)
       if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
         const existing = inFlightJoins.get(payload.domain)
         if (existing) return existing
@@ -1484,7 +1211,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return joinChatRoomSettled(payload)
     },
     leaveChatRoom: async (payload) => {
-      await requireCallerTab(payload, payload.domain)
+      requireCallerTab(payload)
       const replacement = inFlightReconnects.get(payload.domain)
       invalidateReplacementForDomain(payload.domain)
       // A same-domain explicit leave owns the lifecycle after it cancels the private replacement.
@@ -1495,7 +1222,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       await completeInterruptedRelease(payload.domain)
     },
     allocateTextMessage: async (payload) => {
-      await requireCallerTab(payload, payload.domain)
+      requireCallerTab(payload)
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       return runAllocationOperation(
@@ -1505,7 +1232,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     allocateReactionMessage: async (payload) => {
-      await requireCallerTab(payload, payload.domain)
+      requireCallerTab(payload)
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       return runAllocationOperation(
@@ -1515,7 +1242,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     sendChatMessage: async (payload) => {
-      await requireCallerTab(payload, payload.domain)
+      requireCallerTab(payload)
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
@@ -1526,14 +1253,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return payload.event
     },
     ackInbound: async (payload) => {
-      await requireCallerTab(payload, payload.domain)
+      requireCallerTab(payload)
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
     reconnectDomain: async (payload) => {
-      // A prior recovery epoch can be fail-closed for readers, but an explicit AppButton is the
-      // only authorized way to start a new ROOM+World attempt. It must not be trapped behind the
-      // previous rejected promise.
-      const tabId = await requireCallerTab(payload, payload.domain, { allowRecoveryFailure: true })
+      // The refresh control is the only authorized way to start a new ROOM+World attempt.
+      const tabId = requireCallerTab(payload)
       const existing = inFlightReconnects.get(payload.domain)
       if (existing) return existing
       const documentUrl = callerDocumentUrl(payload, tabId)
@@ -1571,18 +1296,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return task
     },
     provideHistory: async (payload, callback) => {
-      const tabId = await requireCallerTab(payload, payload.domain)
-      if (tabId === null) throw new Error('Current Page browser caller is required')
+      const tabId = requireCallerTab(payload)
       pagePort.provideHistory(tabId, payload.domain, callback)
     },
     resolveHistorySupply: async (payload) => {
-      const tabId = await requireCallerTab(payload)
-      if (tabId === null) throw new Error('Current Page browser caller is required')
+      const tabId = requireCallerTab(payload)
       pagePort.resolveHistorySupply(tabId, payload.supplyId, payload.result)
     },
     rejectHistorySupply: async (payload) => {
-      const tabId = await requireCallerTab(payload)
-      if (tabId === null) throw new Error('Current Page browser caller is required')
+      const tabId = requireCallerTab(payload)
       pagePort.rejectHistorySupply(tabId, payload.supplyId, payload.reason)
     }
   }
@@ -1601,11 +1323,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     presenceRecoveries.clear()
     ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
     notificationTriggers.forEach((subscription) => subscription.unsubscribe())
-    recoveryReceiptTriggers.forEach((subscription) => subscription.unsubscribe())
-    roomRecoveryTrigger.unsubscribe()
-    worldRecoveryTrigger.unsubscribe()
-    worldRegistrationRecoveryTrigger.unsubscribe()
-    worldReleaseRecoveryTrigger.unsubscribe()
     try {
       store.discard()
     } finally {

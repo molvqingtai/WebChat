@@ -1,15 +1,22 @@
 import { browser } from '#imports'
-import { defineProxy } from 'comctx'
-import { type MessageApi } from '@/service/adapter/runtime/Core'
-import { ProviderAdapter } from '@/service/adapter/runtime/Provider'
-import { createTransportService, TRANSPORT_NAMESPACE_PREFIX, type TransportService } from '@/runtime/TransportHost'
+import { createHost } from '@/runtime/Host'
+import { isHostRequest } from '@/runtime/Link'
 
 /**
- * Chrome/Edge Offscreen Document: physical WebRTC transport only. Logical Runtime
- * state, page callbacks, and domain lifecycle remain in the Background authority.
+ * Chrome/Edge Offscreen Document: the long-lived Runtime host.
+ *
+ * It owns Rooms, Sessions, the WebRTC transport, page bindings, and the delivery buffer. The
+ * Background service worker may be suspended and restarted at any time without touching any of
+ * that state; it only relays messages and tab events.
  */
-const messageApi = browser.runtime as unknown as MessageApi
-const [provideTransport] = defineProxy<() => TransportService>(() => createTransportService(), {
-  namespace: `${TRANSPORT_NAMESPACE_PREFIX}:${browser.runtime.id}`
+const host = createHost({
+  sendPush: (push) => {
+    void browser.runtime.sendMessage(push).catch(() => {})
+  }
 })
-provideTransport(new ProviderAdapter(messageApi))
+
+browser.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  if (!isHostRequest(message)) return false
+  void host.handle(message).then(sendResponse)
+  return true
+})
