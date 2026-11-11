@@ -21,7 +21,9 @@ const fixture = vi.hoisted(() => ({
   storeSend: vi.fn(),
   discard: vi.fn(),
   stopInitialization: vi.fn(),
-  initialization: [] as Array<{ dependencies: { initializeRuntime: () => Promise<unknown>; detachRuntime: () => void } }>,
+  initialization: [] as Array<{
+    dependencies: { initializeRuntime: () => Promise<unknown>; detachRuntime: () => void }
+  }>,
   createIndexedDBMessageDatabase: vi.fn(() => ({})),
   remove: null as (() => void) | null
 }))

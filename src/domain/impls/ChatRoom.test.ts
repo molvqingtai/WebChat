@@ -128,7 +128,12 @@ describe('page Runtime ports', () => {
     const text = await alice.chatRoom.sendMessage({ type: 'text', body: 'hello', mentions: [] })
     expect(text.body).toBe('hello')
     await vi.waitFor(() => expect(bob.seen.messages).toEqual([text.id]))
-    const reaction = await bob.chatRoom.sendMessage({ type: 'reaction', targetId: text.id, reaction: 'like', active: true })
+    const reaction = await bob.chatRoom.sendMessage({
+      type: 'reaction',
+      targetId: text.id,
+      reaction: 'like',
+      active: true
+    })
     await vi.waitFor(() => expect(alice.seen.messages).toEqual([reaction.id]))
     const stored = (await alice.store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).map((record) => record.id)
     expect(stored.toSorted()).toEqual([text.id, reaction.id].toSorted())
@@ -217,10 +222,14 @@ describe('page Runtime ports', () => {
     await Promise.all([alice.start(), bob.start()])
     await alice.join()
     const text = await alice.chatRoom.sendMessage({ type: 'text', body: 'before bob', mentions: [] })
-    await vi.waitFor(async () => expect(await alice.store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).toHaveLength(1))
+    await vi.waitFor(async () =>
+      expect(await alice.store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).toHaveLength(1)
+    )
     await bob.join()
     await vi.waitFor(async () =>
-      expect((await bob.store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).map((record) => record.id)).toEqual([text.id])
+      expect((await bob.store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).map((record) => record.id)).toEqual([
+        text.id
+      ])
     )
     // History is merged silently: no live message event.
     expect(bob.seen.messages).toEqual([])

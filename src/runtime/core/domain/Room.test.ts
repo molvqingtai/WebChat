@@ -13,10 +13,7 @@ const createPeer = (hub: ReturnType<typeof createMemoryHub>, name: string) => {
   const transport = hub.createTransport()
   let sequence = 0
   const store = Remesh.store({
-    externs: [
-      RoomTransportExtern.impl(transport),
-      IdentityExtern.impl({ nextId: () => `${name}-${++sequence}` })
-    ]
+    externs: [RoomTransportExtern.impl(transport), IdentityExtern.impl({ nextId: () => `${name}-${++sequence}` })]
   })
   store.igniteDomain(RoomDomain())
   const room = store.getDomain(RoomDomain())

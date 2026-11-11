@@ -1,4 +1,3 @@
-import { defineProxy } from 'comctx'
 import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import type { ChatMessageRecord } from '@/domain/Message'
@@ -7,43 +6,12 @@ import { MAX_BACKLOG_MESSAGES } from './Config'
 import type { Channel, PageService, RuntimeEvent, RuntimeService, RuntimeSession } from './Contract'
 import { ClockExtern, IdentityExtern, PageGatewayExtern, RoomTransportExtern, type PageGateway } from './Externs'
 import type { RoomTransport } from './RoomTransport'
+import { connectServices, PAGE_NAMESPACE, RUNTIME_NAMESPACE } from './Rpc'
 import HistoryDomain from './domain/History'
 import LifecycleDomain from './domain/Lifecycle'
 import RoomDomain, { type Room } from './domain/Room'
 import WorldDomain from './domain/World'
 import { sendWire } from './domain/Wire'
-
-export const RUNTIME_NAMESPACE = 'WEB_CHAT_RUNTIME_V3'
-export const PAGE_NAMESPACE = 'WEB_CHAT_PAGE_V3'
-
-const proxyOptions = { heartbeatCheck: false } as const
-
-/** comctx over one Channel: each side provides its service and injects the other's. */
-export const connectServices = <Local extends object, Remote extends object>(
-  channel: Channel,
-  local: { namespace: string; service: Local },
-  remoteNamespace: string
-): Remote => {
-  const adapter = {
-    sendMessage: (message: unknown) => channel.post(message),
-    onMessage: (callback: (message: never) => void) => channel.onMessage((frame) => callback(frame as never))
-  }
-  const [provide] = defineProxy(() => local.service, { ...proxyOptions, namespace: local.namespace })
-  provide(adapter)
-  const [, inject] = defineProxy(() => ({}) as Remote, { ...proxyOptions, namespace: remoteNamespace })
-  const remote = inject(adapter)
-  // A call still pending when the channel closes would never settle; fail it instead.
-  const closed = new Promise<never>((_, reject) => channel.onClose(() => reject(new DOMException('Runtime channel closed', 'AbortError'))))
-  closed.catch(() => {})
-  return new Proxy({} as Remote, {
-    get: (_, key) =>
-      // Not thenable: an async function may return this proxy.
-      key === 'then'
-        ? undefined
-        : (...args: unknown[]) =>
-            Promise.race([(remote as Record<PropertyKey, (...args: unknown[]) => unknown>)[key]!(...args), closed])
-  })
-}
 
 export interface RuntimeDeps {
   transport: RoomTransport
@@ -121,7 +89,9 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
   store.subscribeEvent(history.event.LoadingChangedEvent, (site) =>
     gateway.publish(site, { type: 'history', syncIds: store.query(history.query.LoadingQuery(site)) })
   )
-  store.subscribeEvent(room.event.ErrorEvent, ({ domain, message }) => gateway.publish(domain, { type: 'error', message }))
+  store.subscribeEvent(room.event.ErrorEvent, ({ domain, message }) =>
+    gateway.publish(domain, { type: 'error', message })
+  )
   store.subscribeEvent(history.event.ErrorEvent, ({ domain, message }) =>
     gateway.publish(domain, { type: 'error', message })
   )
@@ -170,14 +140,19 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
       store.send(room.command.OpenCommand({ domain: site, ...input }))
       const joined = await whenJoined(site)
       void Promise.resolve(page.publish(sessionsEvent(joined))).catch(() => {})
-      void Promise.resolve(page.publish({ type: 'world', sites: store.query(world.query.SitesQuery()) })).catch(() => {})
+      void Promise.resolve(page.publish({ type: 'world', sites: store.query(world.query.SitesQuery()) })).catch(
+        () => {}
+      )
       void Promise.resolve(
         page.publish({ type: 'history', syncIds: store.query(history.query.LoadingQuery(site)) })
       ).catch(() => {})
       return { ...toSession(joined), presenceId: joined.presenceId }
     },
     reconnect: async () => {
-      store.send([room.command.ReconnectCommand({ domain: site, leaveFirst: true }), world.command.ReconnectCommand(true)])
+      store.send([
+        room.command.ReconnectCommand({ domain: site, leaveFirst: true }),
+        world.command.ReconnectCommand(true)
+      ])
     },
     send: async (command) => {
       let record: ChatMessageRecord | undefined

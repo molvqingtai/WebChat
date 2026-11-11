@@ -8,7 +8,11 @@ const createEmitter = <Args extends unknown[]>() => {
     listeners.add(callback)
     return () => listeners.delete(callback)
   }
-  return { subscribe, emit: (...args: Args) => listeners.forEach((listener) => listener(...args)), clear: () => listeners.clear() }
+  return {
+    subscribe,
+    emit: (...args: Args) => listeners.forEach((listener) => listener(...args)),
+    clear: () => listeners.clear()
+  }
 }
 
 /** The five event streams every transport exposes. */

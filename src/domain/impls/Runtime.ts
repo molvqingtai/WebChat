@@ -6,7 +6,7 @@ import {
   type PageService,
   type RuntimeService
 } from '@/runtime/core/Contract'
-import { connectServices, PAGE_NAMESPACE, RUNTIME_NAMESPACE } from '@/runtime/core/Runtime'
+import { connectServices, PAGE_NAMESPACE, RUNTIME_NAMESPACE } from '@/runtime/core/Rpc'
 
 const RETRY_MIN_MS = 100
 const RETRY_MAX_MS = 5000

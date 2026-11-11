@@ -1,14 +1,7 @@
 import { Remesh } from 'remesh'
 import { filter, map, mergeMap, timer } from 'rxjs'
 import { MESSAGE_RECORD_TYPE, type ChatMessageRecord } from '@/domain/Message'
-import {
-  MESSAGE_TYPE,
-  type ChatMessage,
-  type ChatSite,
-  type ChatUser,
-  type HLC,
-  type SessionMessage
-} from '@/protocol'
+import { MESSAGE_TYPE, type ChatMessage, type ChatSite, type ChatUser, type HLC, type SessionMessage } from '@/protocol'
 import stringToHex from '@/utils/stringToHex'
 import { CHAT_ROOM_NAMESPACE, JOIN_RETRY_MS, PEER_LEAVE_GRACE_MS } from '../Config'
 import type { SendCommand } from '../Contract'
@@ -246,9 +239,7 @@ const RoomDomain = Remesh.domain({
         const peer = room.peers.find((item) => item.peerId === source.peerId && !item.leaving)
         if (!peer) return disconnected
         // Another tab or device still holds this presence: drop only this source.
-        const shared = room.peers.some(
-          (item) => item !== peer && !item.leaving && item.presenceId === peer.presenceId
-        )
+        const shared = room.peers.some((item) => item !== peer && !item.leaving && item.presenceId === peer.presenceId)
         const peers = shared
           ? room.peers.filter((item) => item !== peer)
           : room.peers.map((item) => (item === peer ? { ...item, leaving: true } : item))
@@ -391,7 +382,9 @@ const RoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.JoinFailureEffect',
       impl: ({ fromEvent }) =>
-        fromEvent(JoinFailedEvent).pipe(map(({ domain: roomDomain, message }) => ErrorEvent({ domain: roomDomain, message })))
+        fromEvent(JoinFailedEvent).pipe(
+          map(({ domain: roomDomain, message }) => ErrorEvent({ domain: roomDomain, message }))
+        )
     })
 
     domain.effect({

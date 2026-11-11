@@ -24,7 +24,9 @@ const LifecycleDomain = Remesh.domain({
         const leases = get(LeasesState())
         const exist = leases.find((lease) => lease.domain === site)
         if (!exist) return LeasesState().new([...leases, { domain: site, pages: 1, grace: 0 }])
-        return LeasesState().new(leases.map((lease) => (lease === exist ? { ...exist, pages: exist.pages + 1 } : lease)))
+        return LeasesState().new(
+          leases.map((lease) => (lease === exist ? { ...exist, pages: exist.pages + 1 } : lease))
+        )
       }
     })
 

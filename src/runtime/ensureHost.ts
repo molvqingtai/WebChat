@@ -5,7 +5,8 @@ const OFFSCREEN_URL = '/offscreen.html'
 
 let creating: Promise<void> | null = null
 
-const ensureOffscreen = async () => {
+/** Chromium: the host is an Offscreen document, created on demand. */
+export const ensureOffscreen = async () => {
   if (await browser.offscreen.hasDocument()) return
   creating ??= browser.offscreen
     .createDocument({
@@ -19,11 +20,8 @@ const ensureOffscreen = async () => {
   await creating
 }
 
-/**
- * The background's whole part in the Runtime: answer "make sure the host exists". `ensure` is
- * absent where the background itself is the host (Firefox).
- */
-export const registerEnsureHost = (ensure: () => Promise<void> = ensureOffscreen) => {
+/** The background's whole part in the Runtime: answer "make sure the host exists". */
+export const registerEnsureHost = (ensure: () => Promise<void>) => {
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== ENSURE_HOST_MESSAGE) return
     ensure().then(

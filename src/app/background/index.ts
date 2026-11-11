@@ -3,8 +3,7 @@ import { ProvideAdapter } from '@/service/adapter/runtime'
 import { AppAction } from '@/service/AppAction'
 import { defineAppActionProxy, defineNotificationProxy } from '@/service/Contract'
 import { Notification } from '@/service/Notification'
-import { registerEnsureHost } from '@/runtime/ensureHost'
-import { startHost } from '@/runtime/host'
+import { ensureOffscreen, registerEnsureHost } from '@/runtime/ensureHost'
 import { registerActionClick } from '@/app/background/ActionRegistration'
 import { registerBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
@@ -21,11 +20,12 @@ export default defineBackground({
     const appAction = provideAppAction(new ProvideAdapter())
 
     if (import.meta.env.FIREFOX) {
-      // Firefox's background is a document, so it hosts the Runtime itself.
-      startHost()
-      registerEnsureHost(async () => {})
+      // Firefox's background is a document, so it hosts the Runtime itself. Loaded on demand so
+      // the Chromium service worker never carries the Runtime or WebRTC code.
+      const host = import('@/runtime/host').then(({ startHost }) => void startHost())
+      registerEnsureHost(() => host)
     } else {
-      registerEnsureHost()
+      registerEnsureHost(ensureOffscreen)
     }
 
     registerActionClick(browser, () => appAction.openOptionsPage())

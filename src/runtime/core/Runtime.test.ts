@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MESSAGE_RECORD_TYPE, type ChatMessageRecord } from '@/domain/Message'
 import { DOMAIN_GRACE_MS } from './Config'
 import type { PageService, RuntimeEvent, RuntimeService } from './Contract'
-import { connectServices, createRuntime, PAGE_NAMESPACE, RUNTIME_NAMESPACE } from './Runtime'
+import { createRuntime } from './Runtime'
+import { connectServices, PAGE_NAMESPACE, RUNTIME_NAMESPACE } from './Rpc'
 import { chatRoomId } from './domain/Room'
 import { worldRoomId } from './domain/Wire'
 import { createChannelPair, createMemoryHub } from './testing'
@@ -69,9 +70,7 @@ describe('Runtime over a MessagePort channel', () => {
     expect(session.user).toEqual(alice.user)
     await bob.join()
     await vi.waitFor(() => expect(alice.last('sessions')?.remote.map((item) => item.user.name)).toEqual(['bob']))
-    await vi.waitFor(() =>
-      expect(alice.last('world')?.sites).toEqual([{ ...site, users: [alice.user, bob.user] }])
-    )
+    await vi.waitFor(() => expect(alice.last('world')?.sites).toEqual([{ ...site, users: [alice.user, bob.user] }]))
     const sent = await alice.remote.send({ type: 'text', body: 'hello', mentions: [] })
     expect(sent.user).toEqual(alice.user)
     await vi.waitFor(() => expect(bob.live.map((item) => item.id)).toEqual([sent.id]))

@@ -108,10 +108,14 @@ const HistoryDomain = Remesh.domain({
         }
         return [
           RequestsState().new(
-            input.done ? requests.filter((item) => item !== request) : requests.map((item) => (item === request ? next : item))
+            input.done
+              ? requests.filter((item) => item !== request)
+              : requests.map((item) => (item === request ? next : item))
           ),
           ...(input.done ? [] : [RequestActiveEvent({ syncId: next.syncId, activity: next.activity })]),
-          ...((input.done ? request.visible : next.visible !== request.visible) ? [LoadingChangedEvent(request.domain)] : [])
+          ...((input.done ? request.visible : next.visible !== request.visible)
+            ? [LoadingChangedEvent(request.domain)]
+            : [])
         ]
       }
     })
@@ -151,7 +155,12 @@ const HistoryDomain = Remesh.domain({
           (message.done || message.messageIds.length > 0) &&
           current.ids.length + message.messageIds.length <= MAX_HISTORY_INVENTORY_IDS
         const next: Inventory = valid
-          ? { ...current, nextPage: current.nextPage + 1, ids: [...current.ids, ...message.messageIds], done: message.done }
+          ? {
+              ...current,
+              nextPage: current.nextPage + 1,
+              ids: [...current.ids, ...message.messageIds],
+              done: message.done
+            }
           : { ...current, ids: [], done: true }
         return [
           InventoriesState().new([...inventories.filter((item) => item !== exist), next]),

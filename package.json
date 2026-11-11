@@ -20,7 +20,7 @@
     "clear": "rimraf .output node_modules",
     "test": "vitest run",
     "test:e2e:chrome": "cross-env NODE_ENV=production pnpm build:chrome && node e2e/chrome-runtime.ts",
-    "check": "wxt prepare && tsc --noEmit",
+    "check": "wxt prepare && tsc --noEmit && tsc -p tsconfig.core.json",
     "prepare": "husky",
     "postinstall": "wxt prepare"
   },

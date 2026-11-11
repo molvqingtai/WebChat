@@ -143,7 +143,8 @@ const WorldDomain = Remesh.domain({
         // A world session never changes its owner.
         if (
           presences.some(
-            ({ presence }) => presence.sessionId === input.message.sessionId && presence.user.id !== input.message.user.id
+            ({ presence }) =>
+              presence.sessionId === input.message.sessionId && presence.user.id !== input.message.user.id
           )
         ) {
           return null
