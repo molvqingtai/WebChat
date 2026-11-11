@@ -9,7 +9,7 @@ import {
   type WorldRoomMessage
 } from '@/protocol'
 import stringToHex from '@/utils/stringToHex'
-import { MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID } from '../Config'
+import { JOIN_TIMEOUT_MS, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID } from '../Config'
 import { RoomTransportExtern, WireCodecExtern } from '../Externs'
 import type { RoomTransport } from '../RoomTransport'
 
@@ -25,6 +25,22 @@ export const sendWire = async (
   if (Array.isArray(to) && to.length === 0) return
   await transport.send(roomId, await codec.encode(message), to)
 }
+
+export const joinWithTimeout = async (transport: RoomTransport, roomId: string) => {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      transport.join(roomId),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Physical room join timed out')), JOIN_TIMEOUT_MS)
+      })
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 interface Source {
   roomId: string

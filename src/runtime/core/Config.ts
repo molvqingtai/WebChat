@@ -12,3 +12,9 @@ export const HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 export const HISTORY_IDLE_TIMEOUT_MS = 10000
 /** Per-source frames waiting for decode; overflow drops the new frame. */
 export const MAX_DECODE_QUEUE_FRAMES = 8
+/** Message ids per history request page, before the frame size check. */
+export const HISTORY_INVENTORY_PAGE_IDS = 4096
+/** A requester announcing more ids than this is ignored. */
+export const MAX_HISTORY_INVENTORY_IDS = 500000
+/** Live messages kept while a site has no page (only during its grace period). */
+export const MAX_BACKLOG_MESSAGES = 512

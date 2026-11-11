@@ -33,8 +33,15 @@ export type RuntimeEvent =
 
 /** Page calls Runtime. The page replays `join` after every (re)connect; it is idempotent. */
 export interface RuntimeService {
-  /** `fresh` is true only when this call created the presence; the page writes its self-join notice then. */
-  join: (input: { user: ChatUser; site: ChatSite }) => Promise<RuntimeSession & { fresh: boolean }>
+  /**
+   * A page that was joined before passes the presence it got back then, so a restarted host
+   * continues the same presence and peers see no leave and join.
+   */
+  join: (input: {
+    user: ChatUser
+    site: ChatSite
+    resume?: { presenceId: string; joinedAt: number }
+  }) => Promise<RuntimeSession & { presenceId: string }>
   reconnect: () => Promise<void>
   send: (command: SendCommand) => Promise<ChatMessageRecord>
 }

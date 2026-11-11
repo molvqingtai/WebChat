@@ -10,10 +10,11 @@ import {
   type SessionMessage
 } from '@/protocol'
 import stringToHex from '@/utils/stringToHex'
-import { CHAT_ROOM_NAMESPACE, JOIN_RETRY_MS, JOIN_TIMEOUT_MS, PEER_LEAVE_GRACE_MS } from '../Config'
+import { CHAT_ROOM_NAMESPACE, JOIN_RETRY_MS, PEER_LEAVE_GRACE_MS } from '../Config'
 import type { SendCommand } from '../Contract'
 import { ClockExtern, IdentityExtern, RoomTransportExtern, WireCodecExtern } from '../Externs'
-import WireDomain, { sendWire } from './Wire'
+import LifecycleDomain from './Lifecycle'
+import WireDomain, { errorMessage, joinWithTimeout, sendWire } from './Wire'
 
 export const chatRoomId = (domain: string) => stringToHex(`${CHAT_ROOM_NAMESPACE}:${domain}`)
 
@@ -78,6 +79,7 @@ const RoomDomain = Remesh.domain({
     const clock = domain.getExtern(ClockExtern)
     const identity = domain.getExtern(IdentityExtern)
     const wire = domain.getDomain(WireDomain())
+    const lifecycle = domain.getDomain(LifecycleDomain())
 
     const RoomsState = domain.state<Room[]>({ name: 'Room.RoomsState', default: [] })
     const ClockState = domain.state<HLC>({ name: 'Room.ClockState', default: { timestamp: 0, counter: 0 } })
@@ -94,6 +96,8 @@ const RoomDomain = Remesh.domain({
     const JoinFailedEvent = domain.event<Attempt & { message: string }>({ name: 'Room.JoinFailedEvent' })
     const ClosedEvent = domain.event<{ domain: string; roomId: string }>({ name: 'Room.ClosedEvent' })
     const IdentityChangedEvent = domain.event<string>({ name: 'Room.IdentityChangedEvent' })
+    /** The set of open rooms, or a room's user or site, changed. */
+    const PresenceChangedEvent = domain.event({ name: 'Room.PresenceChangedEvent' })
     const SessionsChangedEvent = domain.event<string>({ name: 'Room.SessionsChangedEvent' })
     const PeerConnectedEvent = domain.event<Attempt & { peerId: string }>({ name: 'Room.PeerConnectedEvent' })
     const PeerDisconnectedEvent = domain.event<{ domain: string; peerId: string }>({
@@ -115,7 +119,10 @@ const RoomDomain = Remesh.domain({
     /** Idempotent: pages replay it after every connect. */
     const OpenCommand = domain.command({
       name: 'Room.OpenCommand',
-      impl: ({ get }, input: { domain: string; user: ChatUser; site: ChatSite }) => {
+      impl: (
+        { get },
+        input: { domain: string; user: ChatUser; site: ChatSite; resume?: { presenceId: string; joinedAt: number } }
+      ) => {
         const rooms = get(RoomsState())
         const exist = rooms.find((room) => room.domain === input.domain)
         if (exist) {
@@ -123,15 +130,18 @@ const RoomDomain = Remesh.domain({
           return [
             RoomsState().new(replace(rooms, { ...exist, user: input.user, site: input.site })),
             IdentityChangedEvent(input.domain),
+            PresenceChangedEvent(),
             SessionsChangedEvent(input.domain)
           ]
         }
-        const joinedAt = Math.max(clock.now(), get(LastJoinedAtState()) + 1)
+        const joinedAt = input.resume?.joinedAt ?? Math.max(clock.now(), get(LastJoinedAtState()) + 1)
         const room: Room = {
-          ...input,
+          domain: input.domain,
+          user: input.user,
+          site: input.site,
           roomId: chatRoomId(input.domain),
           sessionId: identity.nextId(),
-          presenceId: identity.nextId(),
+          presenceId: input.resume?.presenceId ?? identity.nextId(),
           joinedAt,
           joined: false,
           connection: 0,
@@ -139,7 +149,8 @@ const RoomDomain = Remesh.domain({
         }
         return [
           RoomsState().new([...rooms, room]),
-          LastJoinedAtState().new(joinedAt),
+          LastJoinedAtState().new(Math.max(joinedAt, get(LastJoinedAtState()))),
+          PresenceChangedEvent(),
           JoinRequestedEvent({ domain: room.domain, connection: 0, leaveFirst: false })
         ]
       }
@@ -210,7 +221,8 @@ const RoomDomain = Remesh.domain({
           ...room.peers
             .filter((peer) => !peer.leaving)
             .map((peer) => PeerDisconnectedEvent({ domain: roomDomain, peerId: peer.peerId })),
-          ClosedEvent({ domain: roomDomain, roomId: room.roomId })
+          ClosedEvent({ domain: roomDomain, roomId: room.roomId }),
+          PresenceChangedEvent()
         ]
       }
     })
@@ -357,20 +369,12 @@ const RoomDomain = Remesh.domain({
         fromEvent(JoinRequestedEvent).pipe(
           mergeMap(async ({ domain: roomDomain, connection, leaveFirst }) => {
             const roomId = chatRoomId(roomDomain)
-            let timeout: ReturnType<typeof setTimeout> | undefined
             try {
               if (leaveFirst) transport.leave(roomId)
-              await Promise.race([
-                transport.join(roomId),
-                new Promise<never>((_, reject) => {
-                  timeout = setTimeout(() => reject(new Error('Physical room join timed out')), JOIN_TIMEOUT_MS)
-                })
-              ])
+              await joinWithTimeout(transport, roomId)
               return SettleJoinCommand({ domain: roomDomain, connection })
             } catch (error) {
-              return SettleJoinCommand({ domain: roomDomain, connection, error: String((error as Error).message) })
-            } finally {
-              clearTimeout(timeout)
+              return SettleJoinCommand({ domain: roomDomain, connection, error: errorMessage(error) })
             }
           })
         )
@@ -402,6 +406,11 @@ const RoomDomain = Remesh.domain({
     })
 
     domain.effect({
+      name: 'Room.ReleaseEffect',
+      impl: ({ fromEvent }) => fromEvent(lifecycle.event.ReleasedEvent).pipe(map(CloseCommand))
+    })
+
+    domain.effect({
       name: 'Room.LeaveGraceEffect',
       impl: ({ fromEvent }) =>
         fromEvent(PeerLeavePendingEvent).pipe(
@@ -414,7 +423,7 @@ const RoomDomain = Remesh.domain({
         await sendWire(transport, codec, room.roomId, sessionMessage(room), to)
         return null
       } catch (error) {
-        return ErrorEvent({ domain: room.domain, message: String((error as Error).message) })
+        return ErrorEvent({ domain: room.domain, message: errorMessage(error) })
       }
     }
 
@@ -496,6 +505,7 @@ const RoomDomain = Remesh.domain({
         JoinedEvent,
         JoinFailedEvent,
         ClosedEvent,
+        PresenceChangedEvent,
         SessionsChangedEvent,
         PeerConnectedEvent,
         PeerDisconnectedEvent,
