@@ -189,18 +189,12 @@ export interface RuntimeServer {
   rejectHistorySupply: (payload: { supplyId: string; reason: string } & RuntimePageCall) => Promise<void>
 }
 
-export const RUNTIME_NAMESPACE_PREFIX = 'WEB_CHAT_RUNTIME_V2' as const
-
 export interface RuntimeTab {
   id?: number
   url?: string
 }
 
+/** Page-side view of the one host entry. A registration is also the Page's first call. */
 export interface RuntimeCoordinator {
   registerPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
 }
-
-export const COORDINATOR_NAMESPACE = 'WEB_CHAT_RUNTIME_COORDINATOR_V2' as const
-
-/** The complete Runtime-to-Page notification is intentionally content-free. */
-export const STATE_CHANGED_MESSAGE_TYPE = 'runtime:state-changed' as const

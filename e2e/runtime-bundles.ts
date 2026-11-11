@@ -268,53 +268,72 @@ await runStaticClosureControls()
 
 const chromeRoot = '.output/chrome-mv3'
 const firefoxRoot = '.output/firefox-mv2'
-const [chromeManifest, firefoxManifest, chromeChunks, chromeBackground, firefoxBackground, wireCodecSource] =
-  await Promise.all([
-    readJson(join(chromeRoot, 'manifest.json')),
-    readJson(join(firefoxRoot, 'manifest.json')),
-    readdir(join(chromeRoot, 'chunks')),
-    readFile(join(chromeRoot, 'background.js'), 'utf8'),
-    readFile(join(firefoxRoot, 'background.js'), 'utf8'),
-    readFile('src/protocol/WireCodec.ts', 'utf8')
-  ])
+const [
+  chromeManifest,
+  firefoxManifest,
+  chromeChunks,
+  chromeBackground,
+  firefoxBackground,
+  chromeOffscreenHtml,
+  wireCodecSource
+] = await Promise.all([
+  readJson(join(chromeRoot, 'manifest.json')),
+  readJson(join(firefoxRoot, 'manifest.json')),
+  readdir(join(chromeRoot, 'chunks')),
+  readFile(join(chromeRoot, 'background.js'), 'utf8'),
+  readFile(join(firefoxRoot, 'background.js'), 'utf8'),
+  readFile(join(chromeRoot, 'offscreen.html'), 'utf8'),
+  readFile('src/protocol/WireCodec.ts', 'utf8')
+])
 
 assert(chromeManifest.manifest_version === 3, 'Expected the production Chrome MV3 manifest')
 assert(chromeManifest.background?.service_worker === 'background.js', 'Expected the Chrome service-worker host')
 assert(firefoxManifest.manifest_version === 2, 'Expected the production Firefox MV2 manifest')
 assert(firefoxManifest.background?.scripts?.includes('background.js'), 'Expected the Firefox background-page host')
 
-const chromeTransportChunk = chromeChunks.find((file) => file.startsWith('TransportHost-') && file.endsWith('.js'))
-assert(chromeTransportChunk, 'Expected the production Chrome Offscreen transport chunk')
+const chromeHostChunk = chromeChunks.find((file) => file.startsWith('offscreen-') && file.endsWith('.js'))
+assert(chromeHostChunk, 'Expected the production Chrome Offscreen host chunk')
 const chromeOutputRoot = resolve(chromeRoot)
 const chromeBackgroundPath = resolve(chromeRoot, 'background.js')
-const chromeTransportPath = resolve(chromeRoot, 'chunks', chromeTransportChunk)
+const chromeHostPath = resolve(chromeRoot, 'chunks', chromeHostChunk)
 const chromeContentEntries = chromeManifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []
 const firefoxContentEntries = firefoxManifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []
 assert(chromeContentEntries.length > 0, 'Expected at least one production Chrome content entry')
 assert(firefoxContentEntries.length > 0, 'Expected at least one production Firefox content entry')
-const [chromeTransport, chromeContent, firefoxContent] = await Promise.all([
-  readFile(join(chromeRoot, 'chunks', chromeTransportChunk), 'utf8'),
+const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
+  readFile(chromeHostPath, 'utf8'),
   Promise.all(chromeContentEntries.map((entry) => readFile(join(chromeRoot, entry), 'utf8'))),
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
-// oxlint-disable-next-line anti-slop/no-known-value-widening -- the closure collector reads build output as text
-assert(!chromeTransport.includes('tabs.query'), 'Chrome Offscreen transport must not contain tabs.query')
+
+assert(chromeOffscreenHtml.includes(chromeHostChunk), 'Chrome Offscreen HTML must load the host chunk')
+// Chrome keeps the transport and the logical Runtime in the Offscreen host. The Background is a stateless router.
+assert(!chromeBackground.includes('RTCPeerConnection'), 'Chrome background must not own WebRTC')
+assert(!chromeBackground.includes('SocketSignaling'), 'Chrome background must not own the signaling socket')
+assert(!chromeBackground.includes('tabs.query'), 'Chrome background must not query tabs')
+assert(chromeBackground.includes('tabs.sendMessage'), 'Chrome background must deliver host pushes via tabs')
+assert(chromeBackground.includes('offscreen'), 'Chrome background must ensure the Offscreen host')
 assert(
-  staticLocalDependencies(chromeOutputRoot, chromeBackgroundPath, chromeBackground).includes(chromeTransportPath),
-  'Chrome background must statically import the production transport chunk'
+  !staticLocalDependencies(chromeOutputRoot, chromeBackgroundPath, chromeBackground).includes(chromeHostPath),
+  'Chrome background must not statically import the Offscreen host'
 )
-const chromeRuntimeClosure = await collectStaticLocalEsmClosure(chromeOutputRoot, chromeBackgroundPath, (path) =>
+assert(chromeHost.includes('RTCPeerConnection'), 'Chrome Offscreen host must own WebRTC')
+assert(chromeHost.includes('SocketSignaling'), 'Chrome Offscreen host must own the signaling socket')
+assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not query tabs')
+assert(!chromeHost.includes('tabs.sendMessage'), 'Chrome Offscreen host must not send tab messages')
+
+const chromeRuntimeClosure = await collectStaticLocalEsmClosure(chromeOutputRoot, chromeHostPath, (path) =>
   readFile(path, 'utf8')
 )
+
+// Firefox has one persistent background document: it owns both the router and the transport.
+assert(
+  firefoxBackground.includes('RTCPeerConnection') || firefoxBackground.includes('SocketSignaling'),
+  'Firefox background must own the transport'
+)
+assert(firefoxBackground.includes('tabs.sendMessage'), 'Firefox background must deliver host pushes via tabs')
 ;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
-)
-;['untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
-  assert(
-    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the marker scan reads build output as text
-    !firefoxBackground.includes(relayMarker),
-    `Firefox background must not contain Chrome relay marker ${relayMarker}`
-  )
 )
 
 const expectedCoreJsImports = ['core-js/actual/typed-array/from-base64', 'core-js/actual/typed-array/to-base64']
@@ -337,7 +356,7 @@ const codecPolyfillMarkers = [...requiredCodecMarkers, 'setFromBase64', 'fromHex
     )
   )
 )
-assertCodecBoundary('Chrome background static module closure', chromeRuntimeClosure.values())
+assertCodecBoundary('Chrome Offscreen host static module closure', chromeRuntimeClosure.values())
 assertCodecBoundary('Firefox background', [firefoxBackground])
 dynamicImportParser.close()
 
@@ -347,18 +366,20 @@ console.log(
       manifestVersion: 3,
       contentBytes: chromeContent.reduce((total, bundle) => total + Buffer.byteLength(bundle), 0),
       contentCodecPolyfill: false,
+      backgroundBytes: Buffer.byteLength(chromeBackground),
+      hostBytes: Buffer.byteLength(chromeHost),
+      backgroundWebrtc: false,
+      hostWebrtc: true,
       offscreenTabsQuery: false,
-      runtimeBytes: Buffer.byteLength(chromeBackground),
-      transportBytes: Buffer.byteLength(chromeTransport),
       uint8ArrayBase64: true
     },
     firefox: {
       manifestVersion: 2,
       contentBytes: firefoxContent.reduce((total, bundle) => total + Buffer.byteLength(bundle), 0),
       contentCodecPolyfill: false,
+      backgroundBytes: Buffer.byteLength(firefoxBackground),
+      backgroundWebrtc: true,
       tabsProvider: true,
-      offscreenRelay: false,
-      runtimeBytes: Buffer.byteLength(firefoxBackground),
       uint8ArrayBase64: true
     },
     coreJsImports
