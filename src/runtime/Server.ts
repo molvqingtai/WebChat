@@ -171,7 +171,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     })
   ]
 
-
   /** Browser sender/tab facts are the sole caller identity; pages never claim one. */
   interface ManualRefresh {
     pending?: Promise<void>

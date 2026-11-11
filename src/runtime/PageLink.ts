@@ -1,11 +1,6 @@
 import { browser } from '#imports'
 import { nanoid } from 'nanoid'
-import type {
-  HistorySupplyEvent,
-  HistorySupplyResult,
-  RuntimeServer,
-  RuntimeSnapshot
-} from '@/runtime/Contract'
+import type { HistorySupplyEvent, HistorySupplyResult, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import {
   PAGE_SCOPE,
   isHostPush,

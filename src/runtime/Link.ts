@@ -83,7 +83,9 @@ export const isPageMessage = (value: unknown): value is PageMessage => {
 export const isHostRequest = (value: unknown): value is HostRequest => {
   if (!value || typeof value !== 'object') return false
   const message = value as { scope?: unknown; type?: unknown }
-  return message.scope === HOST_SCOPE && (message.type === 'ping' || message.type === 'call' || message.type === 'tab-gone')
+  return (
+    message.scope === HOST_SCOPE && (message.type === 'ping' || message.type === 'call' || message.type === 'tab-gone')
+  )
 }
 
 export const isHostPush = (value: unknown): value is HostPush => {

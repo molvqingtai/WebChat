@@ -89,9 +89,7 @@ export class HostEndpoint {
       case 'allocateTextMessage':
         return this.server.allocateTextMessage(args[0] as Parameters<RuntimeServer['allocateTextMessage']>[0])
       case 'allocateReactionMessage':
-        return this.server.allocateReactionMessage(
-          args[0] as Parameters<RuntimeServer['allocateReactionMessage']>[0]
-        )
+        return this.server.allocateReactionMessage(args[0] as Parameters<RuntimeServer['allocateReactionMessage']>[0])
       case 'sendChatMessage':
         return this.server.sendChatMessage(args[0] as Parameters<RuntimeServer['sendChatMessage']>[0])
       case 'ackInbound':
@@ -104,13 +102,9 @@ export class HostEndpoint {
           this.historyCallback(page)
         )
       case 'resolveHistorySupply':
-        return this.server.resolveHistorySupply(
-          args[0] as Parameters<RuntimeServer['resolveHistorySupply']>[0]
-        )
+        return this.server.resolveHistorySupply(args[0] as Parameters<RuntimeServer['resolveHistorySupply']>[0])
       case 'rejectHistorySupply':
-        return this.server.rejectHistorySupply(
-          args[0] as Parameters<RuntimeServer['rejectHistorySupply']>[0]
-        )
+        return this.server.rejectHistorySupply(args[0] as Parameters<RuntimeServer['rejectHistorySupply']>[0])
       default:
         throw new Error(`Unknown Runtime method: ${String(message.method)}`)
     }
