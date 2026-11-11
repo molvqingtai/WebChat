@@ -11,7 +11,9 @@ import {
   withDeadline
 } from './chrome-harness.ts'
 
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser event payloads
 type FakeEvent = Record<string, unknown>
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for browser event payloads
 type FakeListener = (event: FakeEvent) => void
 
 class FakeWebSocket {

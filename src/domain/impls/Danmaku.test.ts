@@ -1,8 +1,10 @@
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// SAFETY: the hoisted fixture is typed to the plugin node and rendered element this test inspects.
 const fixture = vi.hoisted(() => ({
   options: null as null | { plugin: { $createNode: (manager: { node?: Element; data: unknown }) => void } },
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the rendered element's click handler result is unused
   rendered: null as ReactElement<{ onClick: () => unknown }> | null
 }))
 
@@ -22,6 +24,7 @@ vi.mock('danmu', () => ({
 
 vi.mock('react-dom/client', () => ({
   createRoot: () => ({
+    // oxlint-disable-next-line anti-slop/no-unknown-returns -- the rendered element's click handler result is unused
     render: (element: ReactElement<{ onClick: () => unknown }>) => {
       fixture.rendered = element
     }

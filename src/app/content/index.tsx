@@ -81,6 +81,7 @@ const preparationLockCoordinator = import.meta.env.FIREFOX
   ? createDirectPreparationCoordinator()
   : createWebLocksPreparationCoordinator()
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored by the lifecycle owner
 let initializeRuntimeImpl: () => Promise<unknown> = () => {
   throw new Error('Content store has not been created')
 }
@@ -159,14 +160,20 @@ const createContentStore = () => {
       // Mint the exact invocation token synchronously (before any await), pass it explicitly into the
       // realized adapter, and bind this public-port task to it so the domain reads only this result.
       const token = deferredConnectionLifecycle.mint()
-      const room = realizedChatRoom ?? (chatRoom as unknown as RuntimeChatRoom)
+      // SAFETY: chatRoom is the deferred placeholder until realizedChatRoom exists; widen once.
+      const unrealizedChatRoom = chatRoom as unknown
+      // SAFETY: unrealizedChatRoom is either the deferred placeholder or the realized RuntimeChatRoom.
+      const room = realizedChatRoom ?? (unrealizedChatRoom as RuntimeChatRoom)
       const task = room.joinRoomWithToken(token, command)
       deferredConnectionLifecycle.bindTask(task, token)
       return task
     },
     leaveRoom: () => {
       const token = deferredConnectionLifecycle.mint()
-      const room = realizedChatRoom ?? (chatRoom as unknown as RuntimeChatRoom)
+      // SAFETY: chatRoom is the deferred placeholder until realizedChatRoom exists; widen once.
+      const unrealizedChatRoom = chatRoom as unknown
+      // SAFETY: unrealizedChatRoom is either the deferred placeholder or the realized RuntimeChatRoom.
+      const room = realizedChatRoom ?? (unrealizedChatRoom as RuntimeChatRoom)
       const task = room.leaveRoomWithToken(token)
       deferredConnectionLifecycle.bindTask(task, token)
       return task

@@ -36,6 +36,7 @@ type SentMessage = {
 type TransportFixture = {
   transport: RoomTransport
   sent: SentMessage[]
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
   receive: (roomId: string, sourcePeerId: string, message: unknown) => void
 }
 
@@ -48,6 +49,7 @@ const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
     leave: () => {},
     retireRoomsForPreparation: async () => {},
     send: async (roomId, payload, targetPeerIds) => {
+      // SAFETY: the harness decodes the Chat payload it was given in this test.
       sent.push({ roomId, targetPeerIds, message: JSON.parse(payload) as ChatRoomMessage })
     },
     onMessage: (callback) => {
@@ -65,6 +67,7 @@ const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
   return {
     transport,
     sent,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
     receive: (roomId: string, sourcePeerId: string, message: unknown) => {
       messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
     }
@@ -192,10 +195,12 @@ const connectedNetwork = () => {
         const requested =
           targetPeerIds === undefined
             ? [...peers.keys()]
-            : typeof targetPeerIds === 'string'
+            : // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional target argument
+              typeof targetPeerIds === 'string'
               ? [targetPeerIds]
               : targetPeerIds
         const targets = [...new Set(requested)].filter((target) => target !== peerId)
+        // SAFETY: the harness decodes the Chat payload it was given in this test.
         sent.push({
           roomId,
           targetPeerIds,
@@ -231,6 +236,7 @@ const connectedNetwork = () => {
     return {
       transport,
       sent,
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
       receive: (roomId: string, sourcePeerId: string, message: unknown) => {
         peer.messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
       }
@@ -390,7 +396,9 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
   const pushes = (sent: Fixture['sent']) =>
     sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+  // SAFETY: the helper narrows a sent item to the pull command this scenario asserts on.
   const pullMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPull
+  // SAFETY: the helper narrows a sent item to the push command this scenario asserts on.
   const pushMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPush
   const targetsOf = (item: Fixture['sent'][number]) => JSON.stringify(item.targetPeerIds)
 
@@ -699,7 +707,9 @@ describe('HistoryDomain current-function peer topology', () => {
     )
     expect(pull).toHaveLength(1)
     expect(push).toHaveLength(1)
+    // SAFETY: the captured pages are the pull/push commands this scenario emits.
     const pullPage = pull[0]!.message as HistoryMessagesPull
+    // SAFETY: the captured pages are the pull/push commands this scenario emits.
     const pushPage = push[0]!.message as HistoryMessagesPush
     expect(pushPage.syncId).toBe(pullPage.syncId)
     expect(pullPage.page).toBe(0)
@@ -841,5 +851,111 @@ describe('HistoryDomain dead-page projection', () => {
     await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0))
     expect(deadPages).not.toHaveBeenCalled()
     expect(pagePort.historyPageIds(DOMAIN)).toEqual(['tab:1'])
+  })
+})
+
+describe('HistoryDomain inventory page replay', () => {
+  const inventoryPage = (syncId: string, page: number, messageIds: string[], done = false): HistoryMessagesPull => ({
+    type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+    syncId,
+    page,
+    messageIds,
+    done
+  })
+  const sendInventory = (
+    store: Fixture['store'],
+    history: Fixture['history'],
+    syncId: string,
+    page: number,
+    messageIds: string[],
+    done = false
+  ) =>
+    store.send(
+      history.command.HandleHistoryMessagesPullCommand({
+        roomId: ROOM_ID,
+        sourcePeerId: 'peer-a',
+        message: inventoryPage(syncId, page, messageIds, done)
+      })
+    )
+
+  const sendInventoryFrom = (
+    store: Fixture['store'],
+    history: Fixture['history'],
+    sourcePeerId: string,
+    syncId: string,
+    page: number,
+    messageIds: string[],
+    done = false
+  ) =>
+    store.send(
+      history.command.HandleHistoryMessagesPullCommand({
+        roomId: ROOM_ID,
+        sourcePeerId,
+        message: inventoryPage(syncId, page, messageIds, done)
+      })
+    )
+
+  it('does not consume an internal token when an identical page is replayed', async () => {
+    const replayFixture = await setup()
+    const controlFixture = await setup()
+    // A: accept page 0, then replay the identical page. B: accept page 0 only.
+    sendInventory(replayFixture.store, replayFixture.history, 'token-a', 0, ['m1'])
+    sendInventory(controlFixture.store, controlFixture.history, 'token-a', 0, ['m1'])
+    await vi.waitFor(() =>
+      expect(replayFixture.store.query(replayFixture.history.query.ProviderAttemptsQuery())).toHaveLength(1)
+    )
+    await vi.waitFor(() =>
+      expect(controlFixture.store.query(controlFixture.history.query.ProviderAttemptsQuery())).toHaveLength(1)
+    )
+    sendInventory(replayFixture.store, replayFixture.history, 'token-a', 0, ['m1'])
+
+    // Both fixtures admit the same new legal provider identity (a second source peer has its own
+    // binding). A replay that consumed an internal token shifts this identity's syncToken.
+    const fixtures = [replayFixture, controlFixture] as const
+    for (const fixture of fixtures) sendInventoryFrom(fixture.store, fixture.history, 'peer-b', 'token-b', 0, ['m2'])
+    const syncTokenOf = (fixture: (typeof fixtures)[number]) =>
+      fixture.store.query(fixture.history.query.ProviderAttemptsQuery()).find((item) => item.syncId === 'token-b')
+        ?.syncToken
+    await vi.waitFor(() => expect(syncTokenOf(replayFixture)).toBeDefined())
+    await vi.waitFor(() => expect(syncTokenOf(controlFixture)).toBeDefined())
+    expect(syncTokenOf(replayFixture)).toEqual(syncTokenOf(controlFixture))
+  })
+
+  it('does not cancel an accepted attempt when an identical replay reaches the byte boundary', async () => {
+    const { store, history } = await setup()
+    // A page between 4KiB and 8KiB is admitted (<= MAX_PROVIDER_SUPPLY_QUEUE_BYTES) but its own
+    // replay would exceed the budget on the pre-fix path (cumulative old + incoming), which is the
+    // deterministic boundary this test needs.
+    const largeIds = Array.from({ length: 120 }, (_, index) => `message-${index}-${'x'.repeat(30)}`)
+    sendInventory(store, history, 'boundary-a', 0, largeIds)
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
+    const attempts = structuredClone(store.query(history.query.ProviderAttemptsQuery()))
+    const jobs = structuredClone(store.query(history.query.ProviderSupplyJobsQuery()))
+
+    // The identical replay must terminate with no output: the attempt stays, and neither the
+    // attempt nor the job record changes (the pre-fix path returned Drop + Cancel here).
+    sendInventory(store, history, 'boundary-a', 0, largeIds)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
+    expect(store.query(history.query.ProviderSupplyJobsQuery())).toEqual(jobs)
+  })
+
+  it('treats an identical accepted page replay as inert', async () => {
+    const { store, history } = await setup()
+    sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
+    const attempts = structuredClone(store.query(history.query.ProviderAttemptsQuery()))
+    const jobs = structuredClone(store.query(history.query.ProviderSupplyJobsQuery()))
+    expect(attempts).toHaveLength(1)
+    expect(jobs.length).toBeGreaterThan(0)
+
+    // Replaying the exact page must terminate with no output: no counting, bytes or job change.
+    // Token consumption is observed by the dedicated two-fixture comparison test above.
+    sendInventory(store, history, 'replay-a', 0, ['m1', 'm2'])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.query(history.query.ProviderAttemptsQuery())).toEqual(attempts)
+    expect(store.query(history.query.ProviderSupplyJobsQuery())).toEqual(jobs)
   })
 })

@@ -15,6 +15,7 @@ type ExtensionManifest = {
 }
 
 const readJson = async (path: string): Promise<ExtensionManifest> =>
+  // SAFETY: the manifest file is the build output this check parses.
   JSON.parse(await readFile(path, 'utf8')) as ExtensionManifest
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
@@ -110,6 +111,7 @@ const collectStaticLocalEsmClosure = async (
     } catch {
       throw new Error(`Unable to resolve static local module: ${modulePath}`)
     }
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the assertion helper accepts any checked value
     assert(!hasDynamicImport(source), `Dynamic import is not allowed in static module closure: ${modulePath}`)
     closure.set(modulePath, source)
     pending.push(...staticLocalDependencies(resolvedRoot, modulePath, source))
@@ -121,10 +123,12 @@ const assertCodecBoundary = (target: string, sources: Iterable<string>) => {
   const source = [...sources].join('\n')
   requiredCodecMarkers.forEach((marker) => assert(source.includes(marker), `${target} must contain ${marker}`))
   prohibitedCodecResidue.forEach((residue) =>
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the synchronous residue scan reads a literal residue string from the packaged source
     assert(!source.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
   )
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- the helper returns the rejected operation outcome
 const expectRejected = async (operation: () => Promise<unknown>, message: string): Promise<unknown> => {
   try {
     await operation()
@@ -293,6 +297,7 @@ const [chromeTransport, chromeContent, firefoxContent] = await Promise.all([
   Promise.all(chromeContentEntries.map((entry) => readFile(join(chromeRoot, entry), 'utf8'))),
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- the closure collector reads build output as text
 assert(!chromeTransport.includes('tabs.query'), 'Chrome Offscreen transport must not contain tabs.query')
 assert(
   staticLocalDependencies(chromeOutputRoot, chromeBackgroundPath, chromeBackground).includes(chromeTransportPath),
@@ -306,6 +311,7 @@ const chromeRuntimeClosure = await collectStaticLocalEsmClosure(chromeOutputRoot
 )
 ;['untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
   assert(
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the marker scan reads build output as text
     !firefoxBackground.includes(relayMarker),
     `Firefox background must not contain Chrome relay marker ${relayMarker}`
   )
@@ -326,6 +332,7 @@ const codecPolyfillMarkers = [...requiredCodecMarkers, 'setFromBase64', 'fromHex
 ).forEach(([target, bundles]) =>
   bundles.forEach((bundle, index) =>
     codecPolyfillMarkers.forEach((marker) =>
+      // oxlint-disable-next-line anti-slop/no-known-value-widening -- the bundle scan reads build output as text
       assert(!bundle.includes(marker), `${target} entry ${index} must not contain codec polyfill marker ${marker}`)
     )
   )

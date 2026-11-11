@@ -41,7 +41,7 @@ export class PagePort implements PagePortContract {
   }
 
   historyPageIds(domain: string) {
-    return [...this.historyProviders].filter(([, provider]) => provider.domain === domain).map(([id]) => id)
+    return [...this.historyProviders].flatMap(([id, provider]) => (provider.domain === domain ? [id] : []))
   }
 
   isHistoryProvider(tabId: number, domain: string) {
@@ -91,6 +91,7 @@ export class PagePort implements PagePortContract {
       } catch (error) {
         this.pendingHistory.delete(request.supplyId)
         this.removePage(entry.tabId)
+        // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
         reject(error as Error)
         confirmSettled()
       }

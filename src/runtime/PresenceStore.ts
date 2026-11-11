@@ -34,7 +34,9 @@ const PresenceDomainRecordSchema = v.strictObject({
 })
 
 interface SessionStorage {
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw session storage records at this boundary
   get(key: string): Promise<Record<string, unknown>>
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw session storage records at this boundary
   set(items: Record<string, unknown>): Promise<void>
 }
 

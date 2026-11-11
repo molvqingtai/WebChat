@@ -6,6 +6,7 @@ interface DocumentLifecycleDeps {
   store: RemeshStore
   sendLifecycle: SendLifecycle
   /** Composition-provided runtime init/detach operations supplied by the composition root (the owner only awaits completion). */
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored
   initRuntime: () => Promise<unknown>
   detachRuntime: () => void
 }

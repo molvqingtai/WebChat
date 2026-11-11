@@ -61,6 +61,7 @@ type ConnectionOperation = {
   mode: 'join' | 'automatic'
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
 const ChatRoomDomain = Remesh.domain({
@@ -191,7 +192,8 @@ const ChatRoomDomain = Remesh.domain({
       // it; the user must submit again explicitly.
       impl: ({ get }, message: string | { body: string; mentions: MentionedUser[] }) =>
         get(CanSubmitTextQuery())
-          ? SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
+          ? // oxlint-disable-next-line anti-slop/no-runtime-typeof -- discrimination of the typed string-or-payload union
+            SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
           : null
     })
 

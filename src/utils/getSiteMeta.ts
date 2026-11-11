@@ -16,28 +16,37 @@ const getIcon = (): string => {
   return /^(data:|\/\/|https?:\/\/)/.test(path) ? path : buildFullURL(document.location.origin, path)
 }
 
+/** First non-null `content` among the given meta selectors. */
+const readMetaContent = (selectors: readonly string[]): string | undefined => {
+  for (const selector of selectors) {
+    const content = document.querySelector(selector)?.getAttribute('content')
+    if (content !== null && content !== undefined) return content
+  }
+  return undefined
+}
+
 /** Display-safe World presence metadata. Raw href/host/hostname never leave this helper. */
 const getSiteMeta = (): ChatSite => {
   const title =
-    document.querySelector('meta[property="og:site_name" i]')?.getAttribute('content') ??
-    document.querySelector('meta[property="og:title" i]')?.getAttribute('content') ??
-    document.querySelector('meta[name="twitter:title" i]')?.getAttribute('content') ??
-    document.querySelector('meta[itemprop="name" i]')?.getAttribute('content') ??
-    document.querySelector('meta[name="application-name" i]')?.getAttribute('content') ??
-    document.title
+    readMetaContent([
+      'meta[property="og:site_name" i]',
+      'meta[property="og:title" i]',
+      'meta[name="twitter:title" i]',
+      'meta[itemprop="name" i]',
+      'meta[name="application-name" i]'
+    ]) ?? document.title
   const description =
-    document.querySelector('meta[property="og:description" i]')?.getAttribute('content') ??
-    document.querySelector('meta[name="description" i]')?.getAttribute('content') ??
-    document.querySelector('meta[name="twitter:description" i]')?.getAttribute('content') ??
-    document.querySelector('meta[itemprop="description" i]')?.getAttribute('content') ??
-    ''
+    readMetaContent([
+      'meta[property="og:description" i]',
+      'meta[name="description" i]',
+      'meta[name="twitter:description" i]',
+      'meta[itemprop="description" i]'
+    ]) ?? ''
 
-  return {
-    origin: document.location.origin,
-    ...(title ? { title } : {}),
-    icon: getIcon(),
-    ...(description ? { description } : {})
-  }
+  const site: ChatSite = { origin: document.location.origin, icon: getIcon() }
+  if (title) site.title = title
+  if (description) site.description = description
+  return site
 }
 
 export default getSiteMeta

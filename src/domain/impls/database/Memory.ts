@@ -26,6 +26,7 @@ import {
 
 type StoreName<Schema> = keyof Schema & string
 type StoreMap = Map<DatabaseKey, unknown>
+type StoreHandle<Definition> = { data: StoreMap; definition: Definition }
 
 interface MemoryInstance {
   notify(stores: readonly string[]): void
@@ -52,6 +53,7 @@ const getState = <Schema extends DatabaseSchema<Schema>>(definition: DatabaseDef
   return state
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- AbortSignal.reason is an untyped platform value; callers only rethrow it
 const abortError = (signal: AbortSignal): unknown => signal.reason ?? new DOMException('Aborted', 'AbortError')
 
 class MemoryTransaction<
@@ -95,12 +97,7 @@ class MemoryTransaction<
     }, 0)
   }
 
-  private store<Store extends Allowed>(
-    name: Store
-  ): {
-    data: StoreMap
-    definition: StoreDefinition<Schema[Store]>
-  } {
+  private store<Store extends Allowed>(name: Store): StoreHandle<StoreDefinition<Schema[Store]>> {
     this.assertActive()
     this.touch()
     this.signal?.throwIfAborted()
@@ -123,6 +120,7 @@ class MemoryTransaction<
     assertDatabaseKey(key, definition.key)
     const value = data.get(key)
     this.idle()
+    // SAFETY: the store's values were validated by validateStoreValue on insert/put; the map holds Schema[Store]['value'].
     return value === undefined ? undefined : cloneValue(value as Schema[Store]['value'])
   }
 
@@ -136,11 +134,14 @@ class MemoryTransaction<
       this.idle()
       return []
     }
+    // SAFETY: validateQuery established that query.index is a key of definition.indexes; the dynamic
+    // lookup erases the mapped per-index type and only the shared keyPath view is used here.
     const indexDefinition = query.index
       ? (definition.indexes as Record<string, { keyPath: string }>)[query.index]
       : undefined
     const items = [...data].flatMap(([key, value]) => {
       const queryKey = indexDefinition ? getPathValue(value, indexDefinition.keyPath) : key
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a document's index key at the store boundary
       if (typeof queryKey !== 'string' && typeof queryKey !== 'number') return []
       return keyInRange(queryKey, query.range) ? [{ key, value, queryKey }] : []
     })
@@ -151,7 +152,9 @@ class MemoryTransaction<
     const selected = query.limit === undefined ? sorted : sorted.slice(0, query.limit)
     this.idle()
     return selected.map(({ key, value }) => ({
+      // SAFETY: map keys were accepted by assertDatabaseKey/insert; the store map holds Schema[Store]['key'].
       key: key as Schema[Store]['key'],
+      // SAFETY: store values were validated by validateStoreValue on insert/put.
       value: cloneValue(value as Schema[Store]['value'])
     }))
   }
@@ -159,11 +162,14 @@ class MemoryTransaction<
   async count<Store extends Allowed>(store: Store, options?: QueryOptions<Schema[Store]>): Promise<number> {
     const { data, definition } = this.store(store)
     const query = validateQuery(definition, options)
+    // SAFETY: validateQuery established that query.index is a key of definition.indexes; the dynamic
+    // lookup erases the mapped per-index type and only the shared keyPath view is used here.
     const indexDefinition = query.index
       ? (definition.indexes as Record<string, { keyPath: string }>)[query.index]
       : undefined
     const count = [...data].reduce((acc, [key, value]) => {
       const queryKey = indexDefinition ? getPathValue(value, indexDefinition.keyPath) : key
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a document's index key at the store boundary
       return (typeof queryKey === 'string' || typeof queryKey === 'number') && keyInRange(queryKey, query.range)
         ? acc + 1
         : acc
@@ -183,6 +189,7 @@ class MemoryTransaction<
     const existing = data.get(key)
     if (existing !== undefined) {
       this.idle()
+      // SAFETY: the store's values were validated by validateStoreValue on insert/put.
       return { inserted: false, existing: cloneValue(existing as Schema[Store]['value']) }
     }
     data.set(key, cloneValue(value))
@@ -229,6 +236,7 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
   constructor(
     private readonly definition: DatabaseDefinition<Schema>,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- watcher errors cross an external callback boundary
     private readonly onWatcherError?: (error: unknown) => void
   ) {
     this.state = getState(definition)
@@ -368,10 +376,12 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
 export const createMemoryDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- watcher errors cross an external callback boundary
   options?: { onWatcherError?: (error: unknown) => void }
 ): MemoryDatabase<Schema> => new MemoryDatabase(definition, options?.onWatcherError)
 
 export const createMemoryMessageDatabase = (
   name: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- watcher errors cross an external callback boundary
   options?: { onWatcherError?: (error: unknown) => void }
 ): MemoryDatabase<MessageDatabaseSchema> => createMemoryDatabase(createMessageDatabaseDefinition(name, 2), options)

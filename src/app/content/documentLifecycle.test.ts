@@ -58,6 +58,7 @@ const createComposedFixture = (lease: DocumentClient) => {
     onSessions: () => () => {},
     onError: () => () => {}
   }
+  // SAFETY: the storage double returns its own seeded record for every requested key.
   const storage: Storage = {
     get: async <Value extends StorageValue>() => SELF as Value,
     set: async () => {},
@@ -128,6 +129,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
       failures: []
     }
     const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(readySnapshot)
+    // SAFETY: the client only reads the snapshot surface from this stubbed server.
     const lease = new DocumentClient({
       coordinator: { registerPage },
       server: { getSnapshot: async () => readySnapshot } as never,
@@ -263,6 +265,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
       .fn<RuntimeCoordinator['registerPage']>()
       .mockResolvedValueOnce(readySnapshot)
       .mockImplementationOnce(() => held)
+    // SAFETY: the client only reads the snapshot surface from this stubbed server.
     const lease = new DocumentClient({
       coordinator: { registerPage },
       server: { getSnapshot: async () => readySnapshot } as never,

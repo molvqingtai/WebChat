@@ -44,7 +44,8 @@ const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDr
     },
     async setItems(items) {
       checkPermission()
-      const map = items.reduce<Record<string, any>>((map, item) => {
+      // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- unstorage driver values are untyped at this boundary
+      const map = items.reduce<Record<string, unknown>>((map, item) => {
         map[item.key] = item.value ?? null
         return map
       }, {})

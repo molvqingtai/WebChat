@@ -8,6 +8,7 @@ import type { WireCodec, WorldRoomMessage } from '@/protocol'
 
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<T>((onResolve, onReject) => {
     resolve = onResolve
@@ -45,7 +46,9 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
       if (roomId !== getWorldRoomId()) return
       const settle = deferred<void>()
       attempts.push({
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional target argument
         targetPeerIds: typeof targetPeerIds === 'string' ? [targetPeerIds] : targetPeerIds,
+        // SAFETY: the harness decodes the World payload it was given in this test.
         message: JSON.parse(payload) as WorldRoomMessage,
         settle
       })

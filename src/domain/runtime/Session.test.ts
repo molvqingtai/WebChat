@@ -15,7 +15,9 @@ const DOMAIN = 'https://chat.example.com'
 const USER: ChatUser = { id: 'user-1', name: 'User', avatar: '' }
 
 const jsonCodec = {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- JSON codec stub for arbitrary payloads
   encode: async (value: unknown): Promise<string> => JSON.stringify(value),
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- JSON codec stub for arbitrary payloads
   decode: async (value: string): Promise<unknown> => JSON.parse(value)
 }
 
@@ -83,6 +85,7 @@ const setup = async () => {
   return {
     store,
     session,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound messages
     receive: (roomId: string, sourcePeerId: string, message: unknown) => {
       messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
     }

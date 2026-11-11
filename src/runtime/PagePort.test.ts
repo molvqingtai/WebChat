@@ -166,6 +166,7 @@ describe('PagePort history request/response', () => {
     const pending = port.supplyHistory('tab:1', request)
     const outcome = pending.then(
       () => ({ status: 'resolved' as const }),
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is recorded as-is
       (error: unknown) => ({ status: 'rejected' as const, error })
     )
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -195,6 +196,7 @@ describe('PagePort history request/response', () => {
     const pending = port.supplyHistory('tab:1', request)
     const outcome = pending.then(
       () => ({ status: 'resolved' as const }),
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the rejection reason is recorded as-is
       (error: unknown) => ({ status: 'rejected' as const, error })
     )
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})

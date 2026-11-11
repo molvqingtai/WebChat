@@ -42,6 +42,7 @@ const WorldRoomDomain = Remesh.domain({
             try {
               return CompleteJoinCommand(await worldRoom.getState())
             } catch (error) {
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
               return FailJoinCommand(error as Error)
             }
           })

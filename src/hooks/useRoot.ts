@@ -1,11 +1,9 @@
 import { getRootNode } from '@/utils'
-import { useLayoutEffect, useState } from 'react'
+import { useState } from 'react'
 
 const useRoot = () => {
-  const [root, setRoot] = useState<Element | null>(null)
-  useLayoutEffect(() => {
-    setRoot(getRootNode())
-  }, [])
+  // The root host is created before this hook renders, so the lookup is a first-render value.
+  const [root] = useState<Element>(() => getRootNode())
   return root
 }
 

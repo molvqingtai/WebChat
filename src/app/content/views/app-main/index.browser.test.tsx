@@ -19,8 +19,11 @@ const fixture = vi.hoisted(() => {
     listeners.forEach((listener) => listener())
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- spy accepts the forwarded remesh command
   const send = vi.fn((command: unknown) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the forwarded command
     if (typeof command !== 'object' || command === null) return
+    // SAFETY: the spy narrows the forwarded command to the two shapes this scenario sends.
     const value = command as { type: 'open'; value: boolean } | { type: 'position'; value: { x: number; y: number } }
     if (value.type === 'open') update({ open: value.value })
     if (value.type === 'position') {
@@ -55,6 +58,7 @@ const fixture = vi.hoisted(() => {
 vi.mock('remesh-react', async () => {
   const { useSyncExternalStore } = await import('react')
   return {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- module mock forwards the domain identity it is given
     useRemeshDomain: (domain: unknown) => domain,
     useRemeshSend: () => fixture.send,
     useRemeshQuery: (query: string) => {
@@ -152,6 +156,7 @@ vi.mock('@/utils', () => ({
   cn: (...values: Array<string | Record<string, boolean> | undefined>) =>
     values
       .flatMap((value) =>
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the query fixture union
         typeof value === 'string'
           ? value
           : Object.entries(value ?? {})

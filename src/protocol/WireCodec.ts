@@ -8,7 +8,9 @@ const getByteSize = (value: string): number => new TextEncoder().encode(value).b
 const isWireFrameWithinLimit = (value: string): boolean => getByteSize(value) <= MAX_WIRE_BYTES
 
 export interface WireCodec {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- codec input is arbitrary serializable data
   encode: (value: unknown) => Promise<string>
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- decode returns arbitrary serializable data parsed by callers
   decode: (value: string) => Promise<unknown>
 }
 
@@ -19,6 +21,7 @@ export class WireCodecError extends Error {
   }
 }
 
+// SAFETY: compatibility assertion preserving the existing ArrayBuffer return typing; the runtime buffer kind is not validated here.
 const asArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
   bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 

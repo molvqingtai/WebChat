@@ -45,6 +45,7 @@ let databaseId = 0
 
 const deferred = () => {
   let resolve!: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
   let reject!: (reason?: unknown) => void
   const promise = new Promise<void>((next, fail) => {
     resolve = next
@@ -70,12 +71,14 @@ const createFixture = (
   const recordWatchNotifications = new Set<() => void>()
   if (options.delayRecordWatch) {
     const watch = database.watch.bind(database)
+    // SAFETY: the wrapper keeps the database watch contract while adding the test listener.
     database.watch = ((stores, listener) =>
       watch(stores, () => recordWatchNotifications.add(listener))) as typeof database.watch
   }
   const messageStore = createMessageStore(database)
   const configuredUser = options.user === undefined ? SELF : options.user
   const storage: Storage = {
+    // SAFETY: the storage double returns the configured user record for every requested key.
     get: async <T extends StorageValue>() => configuredUser as T,
     set: async () => {},
     watch: async () => async () => {}
@@ -118,6 +121,8 @@ const createFixture = (
   const chat: ChatRoom = options.chat ?? {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
+    // SAFETY: the mock sender returns the value the domain expects for this scenario.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness sender keeps the mock's declared send contract
     sendMessage: vi.fn(async (command: SendMessageCommand) => {
       if (command.type === 'reaction') {
         const message = {
@@ -305,6 +310,7 @@ const createPendingConnectionFixture = () => {
   adapter.bindConnectionResultReporter(lifecycleBundle.report)
   adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
   const storage: Storage = {
+    // SAFETY: the storage double returns its seeded self record for every requested key.
     get: async <T extends StorageValue>() => SELF as T,
     set: async () => {},
     watch: async () => async () => {}
@@ -554,10 +560,15 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture) // joinRoom call 1 (baseline)
     const staleOp = deferred()
     const newerOp = deferred()
+    // SAFETY: keeps the pending promise identity bound to the lifecycle result.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the original pending promise identity bound to the lifecycle result
     const staleTask = staleOp.promise as unknown as Promise<void>
+    // SAFETY: keeps the pending promise identity bound to the lifecycle result.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the original pending promise identity bound to the lifecycle result
     const newerTask = newerOp.promise as unknown as Promise<void>
     fixture.bindLifecycleTask(staleTask, 'cancelled')
     fixture.bindLifecycleTask(newerTask, 'cancelled')
+    // SAFETY: the queued join outcomes are the lifecycle tasks this scenario binds above.
     vi.mocked(fixture.chat.joinRoom)
       .mockReturnValueOnce(staleTask as never) // call 2 (older op)
       .mockReturnValueOnce(newerTask as never) // call 3 (newer op, supersedes)
@@ -583,11 +594,17 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture) // joinRoom call 1 (baseline)
     const leaveDeferred = deferred()
     const joinDeferred = deferred()
+    // SAFETY: keeps the pending promise identity bound to the lifecycle result.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the original pending promise identity bound to the lifecycle result
     const leaveTask = leaveDeferred.promise as unknown as Promise<void>
+    // SAFETY: keeps the pending promise identity bound to the lifecycle result.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- keeps the original pending promise identity bound to the lifecycle result
     const joinTask = joinDeferred.promise as unknown as Promise<void>
     fixture.bindLifecycleTask(leaveTask, 'failed')
     fixture.bindLifecycleTask(joinTask, 'failed')
+    // SAFETY: the queued leave outcome is the pending lifecycle task bound above.
     vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(leaveTask as never)
+    // SAFETY: the queued join outcome is the pending lifecycle task bound above.
     vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joinTask as never)
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
@@ -830,6 +847,7 @@ describe('ChatRoomDomain exact application port', () => {
     const messageStore = createMessageStore(database)
     const adapter = new RuntimeChatRoom({ server, messageStore, pageDomain: domain })
     const storage: Storage = {
+      // SAFETY: the storage double returns its seeded self record for every requested key.
       get: async <T extends StorageValue>() => SELF as T,
       set: async () => {},
       watch: async () => async () => {}
@@ -1431,11 +1449,14 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the rejected send keeps the promise identity this scenario asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- simulates a rejected send while matching the existing mock return type
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('held by teardown'))
@@ -1460,12 +1481,15 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const providerError = new Error('provider transport failed')
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the rejected send keeps the promise identity this scenario asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- simulates a rejected send while matching the existing mock return type
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('provider fails'))
@@ -1487,12 +1511,15 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const providerError = new Error('provider transport failed')
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the rejected send keeps the promise identity this scenario asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- simulates a rejected send while matching the existing mock return type
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('remote leaves'))
@@ -1515,11 +1542,14 @@ describe('ChatRoomDomain exact application port', () => {
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
     const providerError = new Error('provider transport failed')
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- test harness accepts raw runtime values
     let rejectSend!: (reason?: unknown) => void
     const rejectedSend = new Promise<never>((_, reject) => {
       rejectSend = reject
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the rejected send keeps the promise identity this scenario asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- simulates a rejected send while matching the existing mock return type
       rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('reconnect held'))
@@ -1546,6 +1576,8 @@ describe('ChatRoomDomain exact application port', () => {
       resolveSend = resolve
     })
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      // SAFETY: the held send keeps the promise identity this scenario asserts on.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- simulates a held send while matching the existing mock return type
       heldSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('reconnect success'))

@@ -41,6 +41,7 @@ const createFixture = (danmakuEnabled: boolean) => {
   const push = vi.fn()
   const mount = vi.fn()
   const unmount = vi.fn()
+  // SAFETY: the storage double returns the seeded user record for every requested key.
   const storage: Storage = {
     get: async <T extends StorageValue>() => user as T,
     set: async () => {},

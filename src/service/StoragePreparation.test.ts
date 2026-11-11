@@ -19,14 +19,17 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw storage records for the fixture
 const createFixture = (initial: Record<string, unknown>) => {
   const values = { ...initial }
   const installedListeners: Array<() => Promise<void>> = []
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
   const messageListeners: Array<(message: unknown) => Promise<{ readonly ready: boolean }> | undefined> = []
   const storage = {
     get: vi.fn(async (key: string) =>
       Object.prototype.hasOwnProperty.call(values, key) ? { [key]: values[key] } : {}
     ),
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw storage records for the fixture
     set: vi.fn(async (items: Record<string, unknown>) => {
       Object.assign(values, items)
     }),
@@ -40,10 +43,12 @@ const createFixture = (initial: Record<string, unknown>) => {
       addListener: vi.fn((listener: () => Promise<void>) => installedListeners.push(listener))
     },
     onMessage: {
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
       addListener: vi.fn((listener: (message: unknown) => Promise<{ readonly ready: boolean }> | undefined) =>
         messageListeners.push(listener)
       )
     },
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
     sendMessage: vi.fn(async (message: unknown) => {
       for (const listener of messageListeners) {
         const response = listener(message)

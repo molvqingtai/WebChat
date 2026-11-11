@@ -7,7 +7,7 @@ const useWindowResize = (callback?: ({ width, height }: { width: number; height:
   useEffect(() => {
     const handler = () => {
       // Cancel previous frame to ensure only one update per frame
-      rafRef.current && cancelAnimationFrame(rafRef.current)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
 
       rafRef.current = requestAnimationFrame(() => {
         const width = window.innerWidth
@@ -21,7 +21,7 @@ const useWindowResize = (callback?: ({ width, height }: { width: number; height:
     window.addEventListener('resize', handler)
     return () => {
       window.removeEventListener('resize', handler)
-      rafRef.current && cancelAnimationFrame(rafRef.current)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
   }, [callback])
 

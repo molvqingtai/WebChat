@@ -10,6 +10,7 @@ export interface InitializationDependencies {
   prepareBrowserSyncStorage: () => Promise<void>
   prepareLocalStorage: () => Promise<void>
   prepareMessageDatabase: () => Promise<void>
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored
   initializeRuntime: () => Promise<unknown | null>
   detachRuntime: () => void
 }

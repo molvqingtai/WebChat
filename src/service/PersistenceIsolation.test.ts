@@ -15,11 +15,14 @@ import { installTestWebLocks } from '@/utils/withPreparationLock.test-utils'
 import { createTestLocalStorage } from '@/utils/storage.test-utils'
 import { registerBrowserSyncStoragePreparation, requestBrowserSyncStoragePreparation } from './StoragePreparation'
 
+// SAFETY: the hoisted fixture narrows the browser storage stub to the shape this test exercises.
 const browserFixture = vi.hoisted(() => ({
+  // oxlint-disable-next-line anti-slop/no-known-value-widening -- browser storage stub keyed by area
   storage: {
     sync: {},
     local: {},
     session: {}
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- browser storage stub for the fixture
   } as Record<string, unknown>
 }))
 
@@ -43,6 +46,7 @@ const writeStatusFields = (storage: Storage, value: string) =>
   statusFieldKeys.forEach((key) => storage.setItem(localKey(key), value))
 const readStatusFields = (storage: Storage) => statusFieldKeys.map((key) => storage.getItem(localKey(key)))
 
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw storage records for the fixture
 const createBrowserArea = (initial: Record<string, unknown>) => {
   const values = { ...initial }
   return {
@@ -50,6 +54,7 @@ const createBrowserArea = (initial: Record<string, unknown>) => {
     get: vi.fn(async (key: string) =>
       Object.prototype.hasOwnProperty.call(values, key) ? { [key]: values[key] } : {}
     ),
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw storage records for the fixture
     set: vi.fn(async (items: Record<string, unknown>) => {
       Object.assign(values, items)
     }),
@@ -60,15 +65,18 @@ const createBrowserArea = (initial: Record<string, unknown>) => {
 }
 
 const prepareBrowserSync = async (storage?: ReturnType<typeof createBrowserArea>) => {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
   const listeners: Array<(message: unknown) => Promise<{ readonly ready: boolean }> | undefined> = []
   const runtime = {
     id: `persistence-isolation-${fixtureId++}`,
     onInstalled: { addListener: vi.fn() },
     onMessage: {
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
       addListener: vi.fn((listener: (message: unknown) => Promise<{ readonly ready: boolean }> | undefined) =>
         listeners.push(listener)
       )
     },
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
     sendMessage: vi.fn(async (message: unknown) => {
       for (const listener of listeners) {
         const response = listener(message)
@@ -93,6 +101,7 @@ const loadLocalPreparation = async (origin: string, localStorage: Storage) => {
   }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- the seeded value is forwarded to the store as-is
 const seedTargetMessage = async (value: unknown) => {
   databaseNames.add(STORAGE_NAME)
   await prepareIndexedDBMessageDatabase()

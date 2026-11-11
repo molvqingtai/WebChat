@@ -31,6 +31,7 @@ const SELF: UserInfo = {
 
 const deferred = () => {
   let resolve!: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<void>((onResolve, onReject) => {
     resolve = onResolve
@@ -68,6 +69,7 @@ const createFixture = (readiness?: Readiness) => {
     onSessions: () => () => {},
     onError: () => () => {}
   }
+  // SAFETY: the storage double returns its own seeded record for every requested key.
   const storage: Storage = {
     get: async <Value extends StorageValue>() => SELF as Value,
     set: async () => {},
@@ -318,6 +320,7 @@ describe('application feedback ownership', () => {
       .mockRejectedValue(nativeError)
     const lease = new DocumentClient({
       coordinator: { registerPage },
+      // SAFETY: the client only reads the snapshot surface from this stubbed server.
       server: { getSnapshot: async () => snapshot } as never,
       domain
     })
@@ -327,6 +330,7 @@ describe('application feedback ownership', () => {
         lease.whenHostPhase((phase) => callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting'))
     })
     const sending = deferred()
+    // SAFETY: the mock replaces the chat sender with the deferred promise used by this scenario.
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(sending.promise as never)
     markReady(fixture)
     await join(fixture)

@@ -19,6 +19,7 @@ const SITE = { origin: DOMAIN, title: 'Example' }
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<T>((onResolve, onReject) => {
     resolve = onResolve
@@ -29,6 +30,7 @@ const deferred = <T>() => {
 
 const fixture = () => {
   let join = async (_roomId: string) => {}
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- JSON codec stub for arbitrary payloads
   let decode = async (value: string): Promise<unknown> => JSON.parse(value)
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const store = Remesh.store({
@@ -92,6 +94,7 @@ const fixture = () => {
     setDecode: (next: typeof decode) => {
       decode = next
     },
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary inbound values
     receive: (roomId: string, sourcePeerId: string, value: unknown) => {
       messageListener?.(roomId, sourcePeerId, JSON.stringify(value))
     },
@@ -526,16 +529,23 @@ describe('ConnectionDomain dual epoch shared gate', () => {
         worldGeneration: runtime.store.query(runtime.wire.query.RoomGenerationQuery(getWorldRoomId())) + 1
       }
       expect(expected.chatGeneration).not.toBe(expected.worldGeneration)
-      const payload =
-        invalid === 'missing Chat'
-          ? ({ ...expected, chatGeneration: undefined } as unknown as typeof expected)
-          : invalid === 'missing World'
-            ? ({ ...expected, worldGeneration: undefined } as unknown as typeof expected)
-            : {
-                ...expected,
-                chatGeneration: expected.worldGeneration,
-                worldGeneration: expected.chatGeneration
-              }
+      const payload = ((): typeof expected => {
+        if (invalid === 'missing Chat') {
+          // SAFETY: the test deliberately drops the chat generation to exercise the invalid frame.
+          // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately malformed test frame
+          return { ...expected, chatGeneration: undefined } as unknown as typeof expected
+        }
+        if (invalid === 'missing World') {
+          // SAFETY: the test deliberately drops the world generation to exercise the invalid frame.
+          // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately malformed test frame
+          return { ...expected, worldGeneration: undefined } as unknown as typeof expected
+        }
+        return {
+          ...expected,
+          chatGeneration: expected.worldGeneration,
+          worldGeneration: expected.chatGeneration
+        }
+      })()
 
       runtime.store.send(runtime.connection.command.BeginDualEpochReplacementCommand(payload))
 

@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// SAFETY: the hoisted fixture holds the listener the mocked runtime installs.
 const fixture = vi.hoisted(() => ({
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- test double mirrors the runtime listener contract
   listener: undefined as ((message: unknown) => unknown) | undefined,
   invalidate: vi.fn(),
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- test double for the extension proxy surface
   proxy: {} as Record<string, unknown>
 }))
 
@@ -11,6 +14,7 @@ vi.mock('#imports', () => ({
     runtime: {
       id: 'test-extension',
       onMessage: {
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- test double mirrors the runtime listener contract
         addListener: (listener: (message: unknown) => unknown) => {
           fixture.listener = listener
         }

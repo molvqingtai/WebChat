@@ -17,6 +17,7 @@ const ToastDomain = Remesh.domain({
       method: (message: string, options?: ToastOptions | number) => number | string,
       input: ToastMessage
     ) => {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- discrimination of the typed string-or-message union
       if (typeof input === 'string') return method(input)
       const { message, ...options } = input
       return method(message, options)

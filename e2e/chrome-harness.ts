@@ -14,6 +14,7 @@ type WebSocketConstructor = new (url: string) => WebSocketLike
 type CdpMessage = {
   id?: number
   method?: string
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP request parameters as sent on the wire
   params: Record<string, any>
   sessionId: string
   result?: any
@@ -22,6 +23,7 @@ type CdpMessage = {
 
 type CdpWaiter = {
   resolve: (value: any) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a CDP request can reject with any protocol error
   reject: (error: unknown) => void
   timer: NodeJS.Timeout
 }
@@ -47,6 +49,7 @@ export type CleanupFailureEvidence = {
 export type CleanupAttempt = {
   resource: string
   phase: string
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the harness never interprets the cleanup step result
   run: (remainingMs: number) => unknown | PromiseLike<unknown>
 }
 
@@ -55,7 +58,9 @@ export type ChromeTeardownOptions = {
   cleanupTimeoutMs: number
   hasCdp: () => boolean
   closeCdp: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the harness only awaits browser close
   closeBrowser: () => PromiseLike<unknown>
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the harness only awaits the exit probe
   waitForBrowserExit: (remainingMs: number) => PromiseLike<unknown>
   remainingAttempts: () => CleanupAttempt[]
   cleanupComplete: () => boolean
@@ -71,11 +76,13 @@ type CleanupOptions = {
   termTimeoutMs?: number
   killTimeoutMs?: number
   pollIntervalMs?: number
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the injected sleep result is not interpreted
   sleep?: (durationMs: number) => Promise<unknown>
 }
 
 export const delay = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 export const readDevToolsActivePort = async (
@@ -85,6 +92,7 @@ export const readDevToolsActivePort = async (
   try {
     return (await read(path)).trim() || null
   } catch (error) {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a thrown fs error
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null
     throw error
   }
@@ -92,6 +100,7 @@ export const readDevToolsActivePort = async (
 
 export const createProfileRemovalVerificationAttempt = (
   path: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the harness only awaits the profile-access probe
   accessPath: (path: string) => PromiseLike<unknown>,
   setRemoved: (removed: boolean) => void
 ): CleanupAttempt => ({
@@ -102,6 +111,7 @@ export const createProfileRemovalVerificationAttempt = (
     try {
       await accessPath(path)
     } catch (error) {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a thrown fs error
       if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
         setRemoved(true)
         return
@@ -188,6 +198,7 @@ export const appendCleanupFailure = (
   deadlineAt: number,
   resource: string,
   phase: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a cleanup step can fail with any thrown value
   error: unknown,
   now: () => number = Date.now
 ) => {
@@ -231,6 +242,7 @@ export const runCleanupAttempts = async (
   }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- CDP harness selects between raw run/cleanup errors
 export const selectTerminalError = (runError: unknown, cleanupError: Error | undefined): unknown =>
   runError ?? cleanupError
 
@@ -247,6 +259,7 @@ export const createChromeTeardown = (options: ChromeTeardownOptions) => {
         appendCleanupFailure(options.errors, beginCleanup(), 'cdp', 'timeout-close', error, now)
       }
     },
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the run error is recorded as-is for the report
     finish: async (runError: unknown) => {
       const attempts: CleanupAttempt[] = options.hasCdp()
         ? [
@@ -275,6 +288,7 @@ export const createChromeTeardown = (options: ChromeTeardownOptions) => {
 
 export const evaluateRuntimeMessage = <T>(
   evaluate: (expression: string) => Promise<T>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the runtime message is serialized as-is
   message: unknown
 ): Promise<T> => {
   const serialized = JSON.stringify(message)
@@ -290,10 +304,13 @@ export class CdpClient {
   handlers = new Set<(message: CdpMessage) => void>()
 
   constructor(url: string, options: CdpClientOptions = {}) {
+    // SAFETY: the harness casts the global WebSocket to the structural constructor it drives.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness cast of the global WebSocket
     const WebSocketImpl = options.WebSocketImpl ?? (WebSocket as unknown as WebSocketConstructor)
     this.requestTimeoutMs = options.requestTimeoutMs ?? 5000
     this.socket = new WebSocketImpl(url)
     this.socket.addEventListener('message', ({ data }) => {
+      // SAFETY: compatibility assertion keeping the existing CDP message type; the decoded fields are not validated here.
       const message = JSON.parse(String(data)) as CdpMessage
       if (message.id) {
         const waiter = this.pending.get(message.id)
@@ -315,6 +332,7 @@ export class CdpClient {
     })
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the harness only awaits the CDP connect handshake
   connect(): Promise<unknown> {
     return withDeadline(
       new Promise((resolve, reject) => {
@@ -331,6 +349,7 @@ export class CdpClient {
     return () => this.handlers.delete(handler)
   }
 
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw CDP request parameters assembled by the caller
   send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++
@@ -340,6 +359,7 @@ export class CdpClient {
       }, this.requestTimeoutMs)
       this.pending.set(id, { resolve, reject, timer })
       try {
+        // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- sessionId is omitted for the browser-level channel
         this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
       } catch (error) {
         clearTimeout(timer)

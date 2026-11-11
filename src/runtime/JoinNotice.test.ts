@@ -84,6 +84,7 @@ class DeterministicNetwork {
     const frame = this.deliveredFrames.findLast(
       (item) =>
         item.sourcePeerId === sourcePeerId &&
+        // SAFETY: the harness decodes the frame payload it captured in this test.
         (JSON.parse(item.payload) as { type?: unknown }).type === MESSAGE_TYPE.SESSION
     )
     if (!frame) throw new Error(`Missing SESSION frame from ${sourcePeerId}`)
@@ -92,6 +93,7 @@ class DeterministicNetwork {
 
   messageCount(sourcePeerId: string, type: string) {
     return this.deliveredFrames.filter(
+      // SAFETY: the harness decodes the frame payload it captured in this test.
       (item) => item.sourcePeerId === sourcePeerId && (JSON.parse(item.payload) as { type?: unknown }).type === type
     ).length
   }
@@ -128,6 +130,7 @@ class DeterministicNetwork {
       (item) =>
         item.sourcePeerId === sourcePeerId &&
         item.targetPeerId === targetPeerId &&
+        // SAFETY: the harness decodes the frame payload it captured in this test.
         (JSON.parse(item.payload) as { type?: unknown }).type === type
     )
     if (!frame) throw new Error(`Missing ${type} frame ${sourcePeerId}->${targetPeerId}`)
@@ -176,6 +179,7 @@ class DeterministicNetwork {
       },
       send: async (roomId, payload, to) => {
         const selected = to === undefined ? null : new Set(Array.isArray(to) ? to : [to])
+        // SAFETY: the harness decodes the payload it was given in this test.
         const parsed = JSON.parse(payload) as { type?: unknown }
         this.discover(roomId, peerId)
         await Promise.resolve()
@@ -291,6 +295,7 @@ const createStack = async (
   // and the hint drives the genuine document-local drain (register/read -> appliers).
   const tabId = stacks.length + 1
   const tabs = new Map([[tabId, { id: tabId, url: `${DOMAIN}/` }]])
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary runtime messages
   const messageListeners = new Set<(message: unknown) => void>()
   const server = createServer({
     transport: network.transport(peerId),
@@ -305,6 +310,7 @@ const createStack = async (
           return tab
         },
         query: async () => [...tabs.values()],
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness accepts arbitrary runtime messages
         sendMessage: async (_id: number, message: unknown) => {
           messageListeners.forEach((listener) => listener(message))
         }
@@ -332,6 +338,7 @@ const createStack = async (
   }
   const client = new DocumentClient({ coordinator, server: serverFacade, domain: DOMAIN })
   messageListeners.add((message) => {
+    // SAFETY: the listener narrows the runtime message to the state-changed marker it forwards.
     if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
   })
   const database = createMemoryMessageDatabase(`join-notice-${databaseId++}`)
@@ -357,6 +364,7 @@ const createStack = async (
   client.whenFailure((error) => errors.push(error.message))
   adapter.onError((error) => errors.push(error.message))
   await client.init()
+  // SAFETY: the storage double returns the seeded user info record for every requested key.
   const storage: Storage = {
     get: async <Value extends StorageValue>() => userInfo(user) as Value,
     set: async () => {},
@@ -642,10 +650,12 @@ describe('single live release owner', () => {
     await vi.waitFor(async () =>
       expect((await noticeUsers(a)).filter((id) => id === 'reconnect-user-b')).toHaveLength(1)
     )
+    // SAFETY: the helper narrows the captured SESSION frame to the fields this scenario compares.
     const before = network.lastSession('reconnect-peer-b') as { presenceId: string; sessionId: string }
 
     await b.adapter.leaveRoom()
     await b.adapter.joinRoom({ user: { id: 'reconnect-user-b', name: 'B', avatar: '' }, site: SITE })
+    // SAFETY: the helper narrows the captured SESSION frame to the fields this scenario compares.
     const after = network.lastSession('reconnect-peer-b') as { presenceId: string; sessionId: string }
 
     expect(after.presenceId).toBe(before.presenceId)

@@ -4,6 +4,7 @@ import { BREAKPOINTS } from '@/constants/config'
 const _useBreakpoint = createBreakpoint(BREAKPOINTS)
 
 const useBreakpoint = () => {
+  // SAFETY: createBreakpoint(BREAKPOINTS) only returns one of the configured BREAKPOINTS keys.
   const breakpoint = _useBreakpoint() as keyof typeof BREAKPOINTS
 
   return {

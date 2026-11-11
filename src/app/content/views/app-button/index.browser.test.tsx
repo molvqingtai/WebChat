@@ -72,6 +72,7 @@ describe('AppButton unread indicator', () => {
       const durations = indicator
         .getAnimations()
         .map((animation) => animation.effect?.getTiming().duration)
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the animation timing value
         .filter((duration): duration is number => typeof duration === 'number')
       expect(durations).toContain(100)
     })

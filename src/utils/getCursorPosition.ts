@@ -29,6 +29,7 @@ const getCursorPosition = (target: HTMLInputElement | HTMLTextAreaElement) => {
 
         const copyStyle = getComputedStyle(target)
 
+        // SAFETY: Array.from yields exactly the own enumerable keys of the CSSStyleDeclaration.
         Array.from(copyStyle).forEach((key) =>
           Reflect.set(copyInput.style, key, copyStyle[key as keyof CSSStyleDeclaration])
         )

@@ -99,13 +99,18 @@ export const createRoomTransport = (): RoomTransport => {
           owner.room = undefined
           if (owners.get(owner.roomId) === owner) owners.delete(owner.roomId)
         },
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the leave failure path rethrows an arbitrary error
         (error: unknown) => {
           // A failed leave keeps the room occupied: the owner is retained so no second Room is
           // ever created for this roomId, and later joins reject with this exact failure.
           owner.leaveError = { value: error }
           if (reportFailure) {
-            if (owner.leaveDiagnostic) console.error(error)
-            else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+            if (owner.leaveDiagnostic) {
+              console.error(error)
+            } else {
+              // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
+              errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+            }
           }
           throw error
         }
@@ -113,8 +118,12 @@ export const createRoomTransport = (): RoomTransport => {
     } catch (error) {
       owner.leaveError = { value: error }
       if (reportFailure) {
-        if (owner.leaveDiagnostic) console.error(error)
-        else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        if (owner.leaveDiagnostic) {
+          console.error(error)
+        } else {
+          // SAFETY: compatibility assertion keeping the Error-typed interface; the caught value is forwarded unchanged and is not validated here.
+          errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        }
       }
       return Promise.reject(error)
     }
@@ -241,7 +250,10 @@ const roomActions = new WeakMap<Room, TrysteroMessageAction>()
 const roomAction = (room: Room): TrysteroMessageAction => {
   const cached = roomActions.get(room)
   if (cached) return cached
-  const action = room.makeAction('message') as unknown as TrysteroMessageAction
+  // SAFETY: makeAction('message') returns the trystero action for the message channel; widen once.
+  const rawAction = room.makeAction('message') as unknown
+  // SAFETY: rawAction is the trystero message action narrowed to the local TrysteroMessageAction contract.
+  const action = rawAction as TrysteroMessageAction
   roomActions.set(room, action)
   return action
 }

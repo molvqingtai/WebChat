@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// SAFETY: the hoisted fixture fields are typed to the values this transport scenario records.
 const fixture = vi.hoisted(() => ({
   peerStates: [] as ('ready' | 'connecting' | 'disconnected')[],
   peers: [] as {
