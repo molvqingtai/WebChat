@@ -1,3 +1,4 @@
+minimumReleaseAge: 0
 allowBuilds:
   bufferutil: true
   core-js: false
