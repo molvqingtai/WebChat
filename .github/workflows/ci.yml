@@ -115,6 +115,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Upload Chrome MV3 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: webchat-chrome-mv3
+          path: .output/chrome-mv3
+          if-no-files-found: error
       - name: Build Firefox MV2 and verify Runtime capability boundaries
         run: |
           pnpm exec wxt build -b firefox
