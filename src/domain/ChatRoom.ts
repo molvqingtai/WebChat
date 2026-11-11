@@ -62,7 +62,7 @@ type ConnectionOperation = {
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
-/** The call was cut off by the page or its Runtime connection going away; never shown as an error. */
+/** The call was cut off by the page or its host connection going away; never shown as an error. */
 const isCancelled = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
 const ChatRoomDomain = Remesh.domain({

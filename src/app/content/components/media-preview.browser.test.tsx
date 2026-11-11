@@ -156,15 +156,17 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
   createIndexedDBMessageDatabase: vi.fn(),
   prepareIndexedDBMessageDatabase: vi.fn()
 }))
-vi.mock('@/domain/impls/runtime/Client', () => ({
-  detachClient: fixture.detachClient,
-  initClient: vi.fn(),
-  whenHostPhase: vi.fn(),
-  whenFailure: vi.fn()
+vi.mock('@/runtime/locator', () => ({ createHostLocator: vi.fn() }))
+vi.mock('@/domain/impls/ChatRoom', () => ({
+  createRuntimePorts: () => ({
+    chatRoom: {},
+    worldRoom: {},
+    readiness: {},
+    start: vi.fn(),
+    stop: fixture.detachClient,
+    onHistoryFeedback: vi.fn()
+  })
 }))
-vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: vi.fn() }))
-vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: vi.fn() }))
-vi.mock('@/domain/impls/Readiness', () => ({ createReadinessImpl: vi.fn() }))
 vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
