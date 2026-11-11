@@ -1,3 +1,4 @@
+minimumReleaseAge: 0
 allowBuilds:
   bufferutil: true
   core-js: false
@@ -5,5 +6,3 @@ allowBuilds:
   spawn-sync: true
   utf-8-validate: true
   wxt: true
-patchedDependencies:
-  '@shadcn/react@0.3.0': patches/@shadcn__react@0.3.0.patch
