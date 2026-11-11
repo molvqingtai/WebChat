@@ -37,8 +37,11 @@ export const connectServices = <Local extends object, Remote extends object>(
   closed.catch(() => {})
   return new Proxy({} as Remote, {
     get: (_, key) =>
-      (...args: unknown[]) =>
-        Promise.race([(remote as Record<PropertyKey, (...args: unknown[]) => unknown>)[key]!(...args), closed])
+      // Not thenable: an async function may return this proxy.
+      key === 'then'
+        ? undefined
+        : (...args: unknown[]) =>
+            Promise.race([(remote as Record<PropertyKey, (...args: unknown[]) => unknown>)[key]!(...args), closed])
   })
 }
 

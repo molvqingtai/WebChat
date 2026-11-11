@@ -1,3 +1,4 @@
+import type { Channel } from './Contract'
 import type { RoomTransport } from './RoomTransport'
 
 type Listeners<Args extends unknown[]> = Set<(...args: Args) => void>
@@ -68,4 +69,31 @@ export const createMemoryHub = () => {
   }
 
   return { createTransport: () => new MemoryTransport() }
+}
+/** Two Channel ends backed by a MessageChannel: the same shape a worker host would use. */
+export const createChannelPair = (domain: string) => {
+  const { port1, port2 } = new MessageChannel()
+  const closers = new Set<() => void>()
+  const close = () => {
+    closers.forEach((listener) => listener())
+    closers.clear()
+    port1.close()
+    port2.close()
+  }
+  const wrap = (port: MessagePort): Channel => ({
+    domain,
+    post: (frame) => port.postMessage(frame),
+    onMessage: (listener) => {
+      const handler = (event: MessageEvent) => listener(event.data)
+      port.addEventListener('message', handler)
+      port.start()
+      return () => port.removeEventListener('message', handler)
+    },
+    onClose: (listener) => {
+      closers.add(listener)
+      return () => closers.delete(listener)
+    },
+    close
+  })
+  return { host: wrap(port1), page: wrap(port2), close }
 }

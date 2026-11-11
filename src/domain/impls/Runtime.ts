@@ -43,6 +43,13 @@ export const createRuntimeClient = ({ locator, service, onDisconnect }: RuntimeC
     return () => listeners.delete(listener)
   }
 
+  const disconnect = () => {
+    if (!channel) return
+    channel = null
+    remote = null
+    onDisconnect()
+  }
+
   const loop = async (id: number) => {
     let delay = RETRY_MIN_MS
     while (id === run) {
@@ -59,10 +66,8 @@ export const createRuntimeClient = ({ locator, service, onDisconnect }: RuntimeC
         )
         setState('ready')
         await closed
-        channel = null
-        remote = null
-        onDisconnect()
         if (id !== run) return
+        disconnect()
         setState('connecting')
       } catch (error) {
         if (id !== run) return
@@ -104,7 +109,9 @@ export const createRuntimeClient = ({ locator, service, onDisconnect }: RuntimeC
     },
     stop: () => {
       run += 1
-      channel?.close()
+      const open = channel
+      disconnect()
+      open?.close()
       setState('connecting')
     },
     runtime: async (): Promise<RuntimeService> => {
