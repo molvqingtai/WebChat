@@ -54,7 +54,7 @@ vi.mock('remesh', async (importOriginal) => {
     ...actual,
     Remesh: {
       ...actual.Remesh,
-      store: () => ({ discard: fixture.discard })
+      store: () => ({ discard: fixture.discard, send: fixture.send, getDomain: () => ({ command: {} }) })
     }
   }
 })
@@ -176,7 +176,10 @@ vi.mock('@/utils/withPreparationLock', () => ({
   createDirectPreparationCoordinator: () => ({}),
   createWebLocksPreparationCoordinator: () => ({})
 }))
-vi.mock('@/domain/MessageStore', () => ({ MessageDatabaseExtern: { impl: () => ({}) } }))
+vi.mock('@/domain/MessageStore', () => ({
+  MessageDatabaseExtern: { impl: () => ({}) },
+  createMessageStore: () => ({})
+}))
 vi.mock('@/domain/externs/ChatRoom', () => ({ ChatRoomExtern: { impl: () => ({}) } }))
 vi.mock('@/domain/externs/WorldRoom', () => ({ WorldRoomExtern: { impl: () => ({}) } }))
 vi.mock('@/domain/externs/Readiness', () => ({ ReadinessExtern: { impl: () => ({}) } }))
