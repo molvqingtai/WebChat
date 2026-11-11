@@ -26,16 +26,19 @@ const createChannelPair = (domain: string) => {
     onClose: (listener) => {
       closers.add(listener)
       return () => closers.delete(listener)
-    }
+    },
+    close: () => close()
   })
+  const close = () => {
+    closers.forEach((listener) => listener())
+    closers.clear()
+    port1.close()
+    port2.close()
+  }
   return {
     host: wrap(port1),
     page: wrap(port2),
-    close: () => {
-      closers.forEach((listener) => listener())
-      port1.close()
-      port2.close()
-    }
+    close
   }
 }
 

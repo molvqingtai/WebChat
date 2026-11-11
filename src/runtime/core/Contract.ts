@@ -7,7 +7,11 @@ export interface Channel {
   post: (frame: unknown) => void
   onMessage: (listener: (frame: unknown) => void) => () => void
   onClose: (listener: () => void) => () => void
+  close: () => void
 }
+
+/** Thrown by a locator when no host can ever be reached from this page again. */
+export class HostUnavailableError extends Error {}
 
 /** Page side: the one thing that differs between hosts. Wakes the host when needed. */
 export interface HostLocator {

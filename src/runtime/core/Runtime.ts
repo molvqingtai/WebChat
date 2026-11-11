@@ -33,7 +33,7 @@ export const connectServices = <Local extends object, Remote extends object>(
   const [, inject] = defineProxy(() => ({}) as Remote, { ...proxyOptions, namespace: remoteNamespace })
   const remote = inject(adapter)
   // A call still pending when the channel closes would never settle; fail it instead.
-  const closed = new Promise<never>((_, reject) => channel.onClose(() => reject(new Error('Runtime channel closed'))))
+  const closed = new Promise<never>((_, reject) => channel.onClose(() => reject(new DOMException('Runtime channel closed', 'AbortError'))))
   closed.catch(() => {})
   return new Proxy({} as Remote, {
     get: (_, key) =>

@@ -1,12 +1,10 @@
 import { browser, defineBackground } from '#imports'
 import { ProvideAdapter } from '@/service/adapter/runtime'
-import { defineProxy } from 'comctx'
 import { AppAction } from '@/service/AppAction'
 import { defineAppActionProxy, defineNotificationProxy } from '@/service/Contract'
 import { Notification } from '@/service/Notification'
-import { COORDINATOR_NAMESPACE } from '@/runtime/Contract'
-import type { RuntimeCoordinator } from '@/runtime/Contract'
-import { registerPage, restore, watchTabs } from '@/runtime/Background'
+import { registerEnsureHost } from '@/runtime/ensureHost'
+import { startHost } from '@/runtime/host'
 import { registerActionClick } from '@/app/background/ActionRegistration'
 import { registerBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
@@ -22,13 +20,13 @@ export default defineBackground({
 
     const appAction = provideAppAction(new ProvideAdapter())
 
-    // Pages enter the single Background-owned Runtime host through this control endpoint.
-    const [provideCoordinator] = defineProxy<() => RuntimeCoordinator>(() => ({ registerPage }), {
-      namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}`
-    })
-    provideCoordinator(new ProvideAdapter())
-    watchTabs()
-    void restore()
+    if (import.meta.env.FIREFOX) {
+      // Firefox's background is a document, so it hosts the Runtime itself.
+      startHost()
+      registerEnsureHost(async () => {})
+    } else {
+      registerEnsureHost()
+    }
 
     registerActionClick(browser, () => appAction.openOptionsPage())
   }

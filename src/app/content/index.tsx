@@ -9,16 +9,11 @@ import App from './App'
 import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
-import { detachClient, initClient, whenFailure, whenHostPhase } from '@/domain/impls/runtime/Client'
+import { createRuntimePorts } from '@/domain/impls/ChatRoom'
+import { createHostLocator } from '@/runtime/locator'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
-import { createChatRoomImpl } from '@/domain/impls/ChatRoom'
-import type { ChatRoom as RuntimeChatRoom } from '@/domain/impls/runtime/ChatRoom'
-import { createWorldRoomImpl } from '@/domain/impls/WorldRoom'
-import { createReadinessImpl } from '@/domain/impls/Readiness'
-import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
-import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { AppActionImpl } from '@/domain/impls/AppAction'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import 'sonner/dist/styles.css'
@@ -26,24 +21,15 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import AppFeedbackDomain from '@/domain/AppFeedback'
-import { createDocumentLifecycleOwner } from './documentLifecycle'
+import { bindDocumentLifecycle } from './documentLifecycle'
 import ToastDomain from '@/domain/Toast'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 import { createDirectPreparationCoordinator, createWebLocksPreparationCoordinator } from '@/utils/withPreparationLock'
-import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/MessageStore'
-import {
-  ChatRoomExtern,
-  type ChatRoom,
-  type SendMessageCommand,
-  type SendReactionCommand,
-  type SendTextCommand
-} from '@/domain/externs/ChatRoom'
-import type { ChatMessage, ReactionMessage, TextMessage } from '@/protocol/ChatRoom'
-import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
-import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
-import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
-import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createMessageStore, MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/MessageStore'
+import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
+import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 import {
@@ -81,62 +67,26 @@ const preparationLockCoordinator = import.meta.env.FIREFOX
   ? createDirectPreparationCoordinator()
   : createWebLocksPreparationCoordinator()
 
-// oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored by the lifecycle owner
-let initializeRuntimeImpl: () => Promise<unknown> = () => {
-  throw new Error('Content store has not been created')
-}
-
-const initializationDependencies: InitializationDependencies = {
-  prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
-  prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator),
-  prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator),
-  initializeRuntime: () => initializeRuntimeImpl(),
-  detachRuntime: detachClient
-}
-
 const createDeferredValue = <Value,>() => {
   let current: Value | null = null
-  let resolvePromise!: (value: Value) => void
-  const promise = new Promise<Value>((resolve) => {
-    resolvePromise = resolve
-  })
-
+  const { promise, resolve } = Promise.withResolvers<Value>()
   return {
     get: () => (current === null ? promise : Promise.resolve(current)),
     resolve: (value: Value) => {
       if (current !== null) throw new Error('Application dependency is already initialized')
       current = value
-      resolvePromise(value)
+      resolve(value)
     }
   }
 }
 
-const subscribeDeferred = <Value,>(
-  deferred: ReturnType<typeof createDeferredValue<Value>>,
-  subscribe: (value: Value) => () => void
-) => {
-  let active = true
-  let unsubscribe: (() => void) | null = null
-  void deferred.get().then((value) => {
-    if (!active) return
-    const next = subscribe(value)
-    if (active) unsubscribe = next
-    else next()
-  })
-  return () => {
-    active = false
-    unsubscribe?.()
-  }
-}
-
+/**
+ * Storage must be prepared (migrated) before anything reads it, but the store and its domains are
+ * created first. These two ports therefore wait for `activateStorage`.
+ */
 const createContentStore = () => {
   const browserSyncStorage = createDeferredValue<Storage>()
   const messageDatabase = createDeferredValue<Database<MessageDatabaseSchema>>()
-  const chatRoom = createDeferredValue<ChatRoom>()
-  let realizedChatRoom: RuntimeChatRoom | null = null
-  const worldRoom = createDeferredValue<WorldRoom>()
-  const readiness = createDeferredValue<Readiness>()
-  const connectionLifecycle = createDeferredValue<ConnectionLifecycle>()
 
   const deferredBrowserSyncStorage: Storage = {
     get: async <Value extends StorageValue>(key: string) => (await browserSyncStorage.get()).get<Value>(key),
@@ -147,137 +97,70 @@ const createContentStore = () => {
   const deferredMessageDatabase: Database<MessageDatabaseSchema> = {
     read: async (stores, operation, signal) => (await messageDatabase.get()).read(stores, operation, signal),
     write: async (stores, operation, signal) => (await messageDatabase.get()).write(stores, operation, signal),
-    watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener))
-  }
-  async function deferredSendMessage(command: SendTextCommand): Promise<TextMessage>
-  async function deferredSendMessage(command: SendReactionCommand): Promise<ReactionMessage>
-  async function deferredSendMessage(command: SendMessageCommand): Promise<ChatMessage>
-  async function deferredSendMessage(command: SendMessageCommand): Promise<ChatMessage> {
-    return (await chatRoom.get()).sendMessage(command)
-  }
-  const deferredChatRoom: ChatRoom = {
-    joinRoom: (command) => {
-      // Mint the exact invocation token synchronously (before any await), pass it explicitly into the
-      // realized adapter, and bind this public-port task to it so the domain reads only this result.
-      const token = deferredConnectionLifecycle.mint()
-      // SAFETY: chatRoom is the deferred placeholder until realizedChatRoom exists; widen once.
-      const unrealizedChatRoom = chatRoom as unknown
-      // SAFETY: unrealizedChatRoom is either the deferred placeholder or the realized RuntimeChatRoom.
-      const room = realizedChatRoom ?? (unrealizedChatRoom as RuntimeChatRoom)
-      const task = room.joinRoomWithToken(token, command)
-      deferredConnectionLifecycle.bindTask(task, token)
-      return task
-    },
-    leaveRoom: () => {
-      const token = deferredConnectionLifecycle.mint()
-      // SAFETY: chatRoom is the deferred placeholder until realizedChatRoom exists; widen once.
-      const unrealizedChatRoom = chatRoom as unknown
-      // SAFETY: unrealizedChatRoom is either the deferred placeholder or the realized RuntimeChatRoom.
-      const room = realizedChatRoom ?? (unrealizedChatRoom as RuntimeChatRoom)
-      const task = room.leaveRoomWithToken(token)
-      deferredConnectionLifecycle.bindTask(task, token)
-      return task
-    },
-    sendMessage: deferredSendMessage,
-    onMessage: (listener) => subscribeDeferred(chatRoom, (room) => room.onMessage(listener)),
-    onJoinRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onJoinRoom(listener)),
-    onLeaveRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onLeaveRoom(listener)),
-    onSessions: (listener) => subscribeDeferred(chatRoom, (room) => room.onSessions(listener)),
-    onError: (listener) => subscribeDeferred(chatRoom, (room) => room.onError(listener))
-  }
-  const deferredWorldRoom: WorldRoom = {
-    getState: async () => (await worldRoom.get()).getState(),
-    onState: (listener) => subscribeDeferred(worldRoom, (room) => room.onState(listener)),
-    onError: (listener) => subscribeDeferred(worldRoom, (room) => room.onError(listener))
-  }
-  const deferredReadiness: Readiness = {
-    onState: (listener) => subscribeDeferred(readiness, (value) => value.onState(listener))
-  }
-  let currentConnectionLifecycle: ConnectionLifecycle | null = null
-  const deferredConnectionLifecycle: ConnectionLifecycle = {
-    mint: () =>
-      currentConnectionLifecycle
-        ? currentConnectionLifecycle.mint()
-        : (() => {
-            throw new Error('ConnectionLifecycle not ready')
-          })(),
-    bindTask: (task, token) => currentConnectionLifecycle?.bindTask(task, token),
-    getTaskResult: (task) => currentConnectionLifecycle?.getTaskResult(task) ?? 'active'
+    watch: (stores, listener) => {
+      let active = true
+      let unsubscribe = () => {}
+      void messageDatabase.get().then((database) => {
+        if (active) unsubscribe = database.watch(stores, listener)
+      })
+      return () => {
+        active = false
+        unsubscribe()
+      }
+    }
   }
 
-  const sendLifecycleInstance = createSendLifecycle()
+  const runtime = createRuntimePorts(createHostLocator(), createMessageStore(deferredMessageDatabase))
+
   const store = Remesh.store({
     externs: [
       LocalStorageImpl,
       BrowserSyncStorageExtern.impl(deferredBrowserSyncStorage),
       MessageDatabaseExtern.impl(deferredMessageDatabase),
-      ChatRoomExtern.impl(deferredChatRoom),
-      WorldRoomExtern.impl(deferredWorldRoom),
-      ReadinessExtern.impl(deferredReadiness),
-      ConnectionLifecycleExtern.impl(deferredConnectionLifecycle),
-      SendLifecycleExtern.impl(sendLifecycleInstance),
+      ChatRoomExtern.impl(runtime.chatRoom),
+      WorldRoomExtern.impl(runtime.worldRoom),
+      ReadinessExtern.impl(runtime.readiness),
       AppActionImpl,
       ToastImpl,
       DanmakuImpl,
       NotificationImpl
     ]
-    // inspectors: __DEV__ ? [RemeshLogger()] : []
   })
+  const toast = store.getDomain(ToastDomain())
 
-  let applicationDependenciesActivated = false
-  const activateApplicationDependencies = () => {
-    if (applicationDependenciesActivated) return
-    applicationDependenciesActivated = true
-    // A watcher failure on the page's own database owns a current visible/persistence-dependent
-    // projection: it reaches this page's existing toast route once with the original message.
-    const database = createIndexedDBMessageDatabase({
-      onWatcherError: (error) =>
-        store.send(
-          store.getDomain(ToastDomain()).command.ErrorCommand(error instanceof Error ? error.message : String(error))
-        )
-    })
-    const runtimeChatRoom = createChatRoomImpl(database)
-    const WorldRoomImpl = createWorldRoomImpl()
-    const ReadinessImpl = createReadinessImpl(whenHostPhase)
-    const lifecycleBundle = createConnectionLifecycle()
-    runtimeChatRoom.bindConnectionResultReporter(lifecycleBundle.report)
-    // One attempt-owned History loading Toast per incoming sync: the Runtime projects activate/dismiss
-    // with a complete attempt owner id, and the page maps it to the generic loading Toast (no count,
-    // no fixed duration). The owner id guarantees one sync never dismisses another or an unrelated Toast.
-    runtimeChatRoom.onHistoryFeedback((event) => {
-      store.send(
-        event.type === 'loading'
-          ? store
-              .getDomain(ToastDomain())
-              .command.LoadingCommand({ id: event.ownerId, message: 'Syncing message history...' })
-          : store.getDomain(ToastDomain()).command.CancelCommand(event.ownerId)
-      )
-    })
+  runtime.onHistoryFeedback((event) =>
+    store.send(
+      event.type === 'loading'
+        ? toast.command.LoadingCommand({ id: event.ownerId, message: 'Syncing message history...' })
+        : toast.command.CancelCommand(event.ownerId)
+    )
+  )
 
+  let storageActivated = false
+  const activateStorage = () => {
+    if (storageActivated) return
+    storageActivated = true
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
-    messageDatabase.resolve(database)
-    chatRoom.resolve(runtimeChatRoom)
-    realizedChatRoom = runtimeChatRoom
-    worldRoom.resolve(WorldRoomImpl.value)
-    readiness.resolve(ReadinessImpl.value)
-    currentConnectionLifecycle = lifecycleBundle.value
-    connectionLifecycle.resolve(lifecycleBundle.value)
+    messageDatabase.resolve(
+      createIndexedDBMessageDatabase({
+        onWatcherError: (error) =>
+          store.send(toast.command.ErrorCommand(error instanceof Error ? error.message : String(error)))
+      })
+    )
   }
 
-  // Every distinct real control-plane failure surfaces as a fresh original-message toast while the
-  // runtime attachment is active; detach ends the lifecycle and therefore further failures.
-  whenFailure((error) => {
-    store.send(store.getDomain(ToastDomain()).command.ErrorCommand(error.message))
-  })
-
-  // The production readiness barrier: the Chat, persistence, and World appliers exist before the
-  // first drain pull, so initialization readiness is published only after every stage settles.
-  initializeRuntimeImpl = async () => {
-    activateApplicationDependencies()
-    return initClient()
+  const initialization: InitializationDependencies = {
+    prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
+    prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator),
+    prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator),
+    initializeRuntime: () => {
+      activateStorage()
+      return runtime.start()
+    },
+    detachRuntime: runtime.stop
   }
 
-  return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }
+  return { store, runtime, activateStorage, initialization }
 }
 
 export default defineContentScript({
@@ -286,10 +169,6 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://accounts.google.com/*'],
   async main(ctx) {
-    // Page lifecycle registration happens before any UI/Runtime initialization can run or suspend, so
-    // an early failure still has exactly one cleanup owner (never a second lease authority).
-    const documentLifecycle = createDocumentLifecycleOwner()
-
     let mediaPreviewTransitionStyle: HTMLStyleElement | null = null
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
@@ -303,8 +182,13 @@ export default defineContentScript({
         const app = createElement('<div id="root"></div>')
         container.append(app)
         const root = createRoot(app)
-        const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        documentLifecycle.bind({ store, sendLifecycle, initRuntime: initClient, detachRuntime: detachClient })
+        const { store, runtime, activateStorage, initialization } = createContentStore()
+        const unbindDocumentLifecycle = bindDocumentLifecycle({
+          store,
+          startRuntime: runtime.start,
+          stopRuntime: runtime.stop
+        })
+
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>
@@ -316,21 +200,21 @@ export default defineContentScript({
         )
         const stopInitialization = startInitializationLifecycle({
           store,
-          dependencies: initializationDependencies,
-          activateApplicationDependencies
+          dependencies: initialization,
+          activateApplicationDependencies: activateStorage
         })
-        return { root, store, stopInitialization, sendLifecycle, disposeDocumentLifecycle: documentLifecycle.dispose }
+        return { root, store, stopInitialization, unbindDocumentLifecycle }
       },
       onRemove: (content) => {
-        content?.disposeDocumentLifecycle()
+        content?.unbindDocumentLifecycle()
         content?.stopInitialization()
-        content?.sendLifecycle.cancelActiveSends()
         content?.root.unmount()
         content?.store.discard()
         mediaPreviewTransitionStyle?.remove()
         mediaPreviewTransitionStyle = null
       }
     })
+
     mediaPreviewTransitionStyle = installMediaPreviewTransitionStyle(ui.shadowHost)
     try {
       ui.mount()
