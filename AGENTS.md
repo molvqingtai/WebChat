@@ -197,9 +197,7 @@ Public peer-message schemas use Valibot (not Zod):
 ```typescript
 import * as v from 'valibot'
 
-const schema = v.object({
-  /* ... */
-})
+const schema = v.object({/* ... */})
 const isValid = v.safeParse(schema, data).success
 ```
 

@@ -292,15 +292,13 @@ const HistoryDomain = Remesh.domain({
       }
       const users = new Map(message.users.map((user) => [user.id, user]))
       const now = clock.now()
-      const records = message.messages.map(
-        (item): ChatMessageRecord => ({
-          type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: item.id,
-          message: item,
-          user: users.get(item.userId) ?? { id: item.userId, name: item.userId, avatar: '' },
-          receivedAt: now
-        })
-      )
+      const records = message.messages.map((item): ChatMessageRecord => ({
+        type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+        id: item.id,
+        message: item,
+        user: users.get(item.userId) ?? { id: item.userId, name: item.userId, avatar: '' },
+        receivedAt: now
+      }))
       try {
         const inserted = records.length > 0 ? await pages.persist(request.domain, records, false) : 0
         const latest = message.messages.toSorted(compareEventPosition).at(-1)
