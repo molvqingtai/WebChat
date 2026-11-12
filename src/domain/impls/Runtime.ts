@@ -99,7 +99,7 @@ export const createRuntimeClient = ({ locator, service, onDisconnect }: RuntimeC
   return {
     onState,
     /** Resolves true once connected, or null when the host can never be reached. */
-    start: async () => {
+    start: async (): Promise<boolean | null> => {
       if (!channel) {
         run += 1
         setState('connecting')

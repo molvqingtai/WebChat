@@ -8,37 +8,47 @@ interface ShadowRootOptions {
   onRemove: (owner: unknown) => void
 }
 
-const fixture = vi.hoisted(() => ({
-  runtime: {
-    chatRoom: {},
-    worldRoom: {},
-    readiness: {},
-    start: vi.fn(async () => true),
-    stop: vi.fn(),
-    onHistoryFeedback: vi.fn()
-  },
-  createRuntimePorts: vi.fn(),
-  storeSend: vi.fn(),
-  discard: vi.fn(),
-  stopInitialization: vi.fn(),
-  initialization: [] as Array<{
-    dependencies: { initializeRuntime: () => Promise<unknown>; detachRuntime: () => void }
-  }>,
-  createIndexedDBMessageDatabase: vi.fn(() => ({})),
-  remove: null as (() => void) | null
-}))
+interface RemoveHandle {
+  current: (() => void) | null
+}
 
-const command = (name: string) => (payload?: unknown) => ({ name, payload })
+interface InitializationOptions {
+  dependencies: { initializeRuntime: () => Promise<boolean | null>; detachRuntime: () => void }
+}
+
+const fixture = vi.hoisted(() => {
+  const initialization: InitializationOptions[] = []
+  const remove: RemoveHandle = { current: null }
+  return {
+    runtime: {
+      chatRoom: {},
+      worldRoom: {},
+      readiness: {},
+      start: vi.fn(async () => true),
+      stop: vi.fn(),
+      onHistoryFeedback: vi.fn()
+    },
+    createRuntimePorts: vi.fn(),
+    storeSend: vi.fn(),
+    discard: vi.fn(),
+    stopInitialization: vi.fn(),
+    initialization,
+    createIndexedDBMessageDatabase: vi.fn(() => ({})),
+    remove
+  }
+})
+
+const command = (name: string) => (payload?: string | { id: string; message: string }) => ({ name, payload })
 
 vi.mock('#imports', () => ({
   defineContentScript: <Definition>(definition: Definition) => definition,
-  createShadowRootUi: async (_context: unknown, options: ShadowRootOptions) => {
+  createShadowRootUi: async (_context: Record<never, never>, options: ShadowRootOptions) => {
     const shadowHost = document.createElement('web-chat')
     return {
       shadowHost,
       mount: () => {
         const owner = options.onMount(document.createElement('div'))
-        fixture.remove = () => options.onRemove(owner)
+        fixture.remove.current = () => options.onRemove(owner)
       }
     }
   }
@@ -68,7 +78,7 @@ vi.mock('remesh', async (importOriginal) => {
 vi.mock('react-dom/client', () => ({ createRoot: () => ({ render: vi.fn(), unmount: vi.fn() }) }))
 vi.mock('@/app/content/App', () => ({ default: () => null }))
 vi.mock('@/app/content/Initialization', () => ({
-  startInitializationLifecycle: (options: (typeof fixture.initialization)[number]) => {
+  startInitializationLifecycle: (options: InitializationOptions) => {
     fixture.initialization.push(options)
     return fixture.stopInitialization
   }
@@ -108,7 +118,7 @@ beforeEach(async () => {
   await content.main({} as never)
 })
 
-afterEach(() => fixture.remove?.())
+afterEach(() => fixture.remove.current?.())
 
 describe('content composition root', () => {
   it('creates one Runtime connection and hands its start and stop to initialization', async () => {
@@ -152,8 +162,8 @@ describe('content composition root', () => {
   })
 
   it('releases everything when the UI is removed', () => {
-    fixture.remove!()
-    fixture.remove = null
+    fixture.remove.current!()
+    fixture.remove.current = null
     expect(fixture.stopInitialization).toHaveBeenCalledOnce()
     expect(fixture.discard).toHaveBeenCalledOnce()
     pageTransition('pagehide', false)

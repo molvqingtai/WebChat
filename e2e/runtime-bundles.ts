@@ -310,6 +310,7 @@ const chromeBackgroundSource = [...chromeBackgroundClosure.values()].join('\n')
   assert(!chromeBackgroundSource.includes(marker), `Chrome background must not contain ${marker}`)
 )
 assert(chromeBackground.includes('createDocument'), 'Chrome background must create the Offscreen host')
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- the closure set holds build output paths
 assert(!chromeBackgroundClosure.has(chromeHostPath), 'Chrome background must not import the Runtime host')
 // oxlint-disable-next-line anti-slop/no-known-value-widening -- the marker scan reads build output as text
 assert(!firefoxBackground.includes('createDocument'), 'Firefox background must not create an Offscreen host')

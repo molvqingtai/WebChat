@@ -1,11 +1,12 @@
+import type { Message } from 'comctx'
 import type { ChatMessageRecord } from '@/domain/Message'
 import type { ChatSession, ChatSite, ChatUser, MentionedUser, ReactionType } from '@/protocol'
 
 /** One connected page as the core sees it. Hosts wrap a chrome Port or a MessagePort into this. */
 export interface Channel {
   readonly domain: string
-  post: (frame: unknown) => void
-  onMessage: (listener: (frame: unknown) => void) => () => void
+  post: (frame: Message) => void
+  onMessage: (listener: (frame: Message) => void) => () => void
   onClose: (listener: () => void) => () => void
   close: () => void
 }

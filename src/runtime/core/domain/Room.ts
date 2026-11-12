@@ -2,6 +2,7 @@ import { Remesh } from 'remesh'
 import { filter, map, mergeMap, timer } from 'rxjs'
 import { MESSAGE_RECORD_TYPE, type ChatMessageRecord } from '@/domain/Message'
 import { MESSAGE_TYPE, type ChatMessage, type ChatSite, type ChatUser, type HLC, type SessionMessage } from '@/protocol'
+import isEqual from '@/utils/isEqual'
 import stringToHex from '@/utils/stringToHex'
 import { CHAT_ROOM_NAMESPACE, JOIN_RETRY_MS, PEER_LEAVE_GRACE_MS } from '../Config'
 import type { SendCommand } from '../Contract'
@@ -39,8 +40,6 @@ interface Attempt {
   domain: string
   connection: number
 }
-
-const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
 
 const allocate = (clock: HLC, now: number): HLC =>
   now > clock.timestamp ? { timestamp: now, counter: 0 } : { timestamp: clock.timestamp, counter: clock.counter + 1 }
@@ -119,7 +118,7 @@ const RoomDomain = Remesh.domain({
         const rooms = get(RoomsState())
         const exist = rooms.find((room) => room.domain === input.domain)
         if (exist) {
-          if (same(exist.user, input.user) && same(exist.site, input.site)) return null
+          if (isEqual(exist.user, input.user) && isEqual(exist.site, input.site)) return null
           return [
             RoomsState().new(replace(rooms, { ...exist, user: input.user, site: input.site })),
             IdentityChangedEvent(input.domain),

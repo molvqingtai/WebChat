@@ -38,7 +38,7 @@ export const createRoomTransport = (): RoomTransport => {
       })
       owner.pending?.resolve()
     } catch (error) {
-      owner.pending?.reject(error as Error)
+      owner.pending?.reject(error instanceof Error ? error : new Error(String(error)))
     }
     owner.pending = undefined
   }

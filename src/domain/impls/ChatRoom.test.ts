@@ -13,6 +13,15 @@ const DOMAIN = 'https://example.com'
 const site = { origin: DOMAIN }
 let databases = 0
 
+interface Seen {
+  sessions: (readonly ChatSession[])[]
+  joins: string[]
+  leaves: string[]
+  messages: string[]
+  errors: string[]
+  states: ReadinessState[]
+}
+
 /** A browser whose host can be killed; the locator starts a new one on demand, like ensure-host. */
 const createBrowser = (hub: ReturnType<typeof createMemoryHub>, name: string) => {
   let host: { runtime: Runtime; close: Set<() => void> } | null = null
@@ -36,14 +45,7 @@ const createBrowser = (hub: ReturnType<typeof createMemoryHub>, name: string) =>
   const openPage = (store = createMessageStore(createMemoryMessageDatabase(`db-${++databases}`))) => {
     const ports = createRuntimePorts(locator, store)
     const user = { id: `user-${name}`, name, avatar: '' }
-    const seen = {
-      sessions: [] as (readonly ChatSession[])[],
-      joins: [] as string[],
-      leaves: [] as string[],
-      messages: [] as string[],
-      errors: [] as string[],
-      states: [] as ReadinessState[]
-    }
+    const seen: Seen = { sessions: [], joins: [], leaves: [], messages: [], errors: [], states: [] }
     ports.chatRoom.onSessions((sessions) => seen.sessions.push(sessions))
     ports.chatRoom.onJoinRoom((session) => seen.joins.push(session.user.name))
     ports.chatRoom.onLeaveRoom((session) => seen.leaves.push(session.user.name))
@@ -111,9 +113,14 @@ describe('page Runtime ports', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     aliceBrowser.killHost()
     alice.stop()
-    await vi.advanceTimersByTimeAsync(6000)
+    // The leave reaches bob's Runtime after async frame decoding, so keep yielding real time
+    // while the fake clock runs past the 5 s leave grace.
+    for (let step = 0; step < 50 && bob.seen.leaves.length === 0; step += 1) {
+      await vi.advanceTimersByTimeAsync(1000)
+      await new Promise((resolve) => setImmediate(resolve))
+    }
     vi.useRealTimers()
-    await vi.waitFor(() => expect(bob.seen.leaves).toEqual(['alice']))
+    expect(bob.seen.leaves).toEqual(['alice'])
     expect(bob.online()).toEqual(['bob'])
   })
 

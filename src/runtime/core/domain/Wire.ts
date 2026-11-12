@@ -40,6 +40,7 @@ export const joinWithTimeout = async (transport: RoomTransport, roomId: string) 
   }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 export const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 interface Source {

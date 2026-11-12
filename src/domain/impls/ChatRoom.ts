@@ -1,11 +1,17 @@
 import EventHub from '@resreq/event-hub'
 import { isInvalidMessageRecordError, type MessageStore } from '@/domain/MessageStore'
-import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
+import type {
+  ChatRoom as ChatRoomPort,
+  JoinRoomCommand,
+  SendMessageCommand,
+  SendReactionCommand,
+  SendTextCommand
+} from '@/domain/externs/ChatRoom'
 import type { WorldRoom as WorldRoomPort, WorldState } from '@/domain/externs/WorldRoom'
 import type { Readiness } from '@/domain/externs/Readiness'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, isChatMessageRecord, type SystemNoticeRecord } from '@/domain/Message'
 import type { Unsubscribe } from '@/domain/Subscription'
-import type { ChatMessage, ChatSession } from '@/protocol'
+import type { ChatMessage, ChatSession, ReactionMessage, TextMessage } from '@/protocol'
 import type { HostLocator, PageService, RuntimeEvent, RuntimeSession } from '@/runtime/core/Contract'
 import { stringToHex } from '@/utils'
 import { createRuntimeClient } from './Runtime'
@@ -48,6 +54,7 @@ export const createRuntimePorts = (locator: HostLocator, messageStore: MessageSt
   let loading: string[] = []
   let world: WorldState = []
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
   const emitError = (error: unknown) => hub.emit('error', error instanceof Error ? error : new Error(String(error)))
   const subscribe =
     <Value>(event: string) =>
@@ -124,6 +131,9 @@ export const createRuntimePorts = (locator: HostLocator, messageStore: MessageSt
     }
   })
 
+  async function sendMessage(command: SendTextCommand): Promise<TextMessage>
+  async function sendMessage(command: SendReactionCommand): Promise<ReactionMessage>
+  async function sendMessage(command: SendMessageCommand): Promise<ChatMessage>
   async function sendMessage(command: SendMessageCommand): Promise<ChatMessage> {
     const record = await (await client.runtime()).send(command)
     // Text returns as soon as it is on its way; a reaction is visible only once stored.
@@ -132,7 +142,7 @@ export const createRuntimePorts = (locator: HostLocator, messageStore: MessageSt
     return record.message
   }
 
-  const chatRoom = {
+  const chatRoom: ChatRoomPort = {
     joinRoom: async (command: JoinRoomCommand) => {
       const runtime = await client.runtime()
       const session = await runtime.join(presence ? { ...command, resume: presence } : command)
@@ -148,8 +158,7 @@ export const createRuntimePorts = (locator: HostLocator, messageStore: MessageSt
     onLeaveRoom: subscribe<ChatSession>('leave'),
     onSessions: subscribe<readonly ChatSession[]>('sessions'),
     onError: subscribe<Error>('error')
-    // SAFETY: sendMessage narrows its result by command type on the Runtime side.
-  } as ChatRoomPort
+  }
 
   const worldRoom: WorldRoomPort = {
     getState: async () => world,

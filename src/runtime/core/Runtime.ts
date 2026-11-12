@@ -39,12 +39,12 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
 
   /** Asks one page of the site, moving on to the next when that page has gone away. */
   const askPage = async <Result>(site: string, ask: (page: PageService) => Promise<Result>): Promise<Result> => {
-    let failure: unknown = new Error('No page is available for this site')
+    let failure = new Error('No page is available for this site')
     for (const page of pagesOf(site)) {
       try {
         return await ask(page)
       } catch (error) {
-        failure = error
+        failure = error instanceof Error ? error : new Error(String(error))
       }
     }
     throw failure

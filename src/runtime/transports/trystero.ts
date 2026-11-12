@@ -3,15 +3,13 @@ import type { Room } from 'trystero'
 import type { RoomTransport } from '@/runtime/core/RoomTransport'
 import { createTransportEvents } from './events'
 
-interface MessageAction {
-  send: (data: string, options?: { target?: string | string[] | null }) => Promise<void>
-  onMessage: ((data: string, context: { peerId: string }) => void) | null
-}
-
 interface Owner {
   room: Room
-  action: MessageAction
+  action: StringAction
 }
+
+type StringAction = ReturnType<typeof makeStringAction>
+const makeStringAction = (room: Room) => room.makeAction<string>('message')
 
 /** Trystero uses one peer id for every room and never reports a room close. */
 export const createRoomTransport = (): RoomTransport => {
@@ -45,12 +43,13 @@ export const createRoomTransport = (): RoomTransport => {
           events.error.emit(new Error(details.error), roomId)
         }
       })
-      // SAFETY: the action is created for string payloads only.
-      const action = room.makeAction('message') as unknown as MessageAction
+      const action = makeStringAction(room)
       const owner: Owner = { room, action }
       const live = () => owners.get(roomId) === owner
       owners.set(roomId, owner)
-      action.onMessage = (payload, context) => live() && events.message.emit(roomId, context.peerId, payload)
+      action.onMessage = (payload, context) => {
+        if (live()) events.message.emit(roomId, context.peerId, payload)
+      }
       room.onPeerJoin = (peerId) => live() && events.peerJoin.emit(roomId, peerId)
       room.onPeerLeave = (peerId) => live() && events.peerLeave.emit(roomId, peerId)
     },

@@ -3,7 +3,7 @@ import AppFeedbackDomain from '@/domain/AppFeedback'
 
 interface DocumentLifecycleDeps {
   store: RemeshStore
-  startRuntime: () => Promise<unknown>
+  startRuntime: () => Promise<boolean | null>
   stopRuntime: () => void
 }
 
