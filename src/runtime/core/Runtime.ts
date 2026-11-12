@@ -125,9 +125,6 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
         store.subscribeEvent(room.event.JoinedEvent, (joined) => {
           if (joined === site) settle(() => resolve(roomOf(site)!))
         }),
-        store.subscribeEvent(room.event.JoinFailedEvent, (failed) => {
-          if (failed.domain === site) settle(() => reject(new Error(failed.message)))
-        }),
         store.subscribeEvent(room.event.ClosedEvent, (closed) => {
           if (closed.domain === site) settle(() => reject(new Error('Room was closed')))
         })

@@ -33,6 +33,8 @@ export interface Room {
   joined: boolean
   /** Bumped on every (re)join so results of an older attempt are ignored. */
   connection: number
+  /** Consecutive failed joins since the last success; only the third one is reported. */
+  failures: number
   peers: Peer[]
 }
 
@@ -85,7 +87,9 @@ const RoomDomain = Remesh.domain({
 
     const JoinRequestedEvent = domain.event<Attempt & { leaveFirst: boolean }>({ name: 'Room.JoinRequestedEvent' })
     const JoinedEvent = domain.event<string>({ name: 'Room.JoinedEvent' })
-    const JoinFailedEvent = domain.event<Attempt & { message: string }>({ name: 'Room.JoinFailedEvent' })
+    const JoinFailedEvent = domain.event<Attempt & { failures: number; message: string }>({
+      name: 'Room.JoinFailedEvent'
+    })
     const ClosedEvent = domain.event<{ domain: string; roomId: string }>({ name: 'Room.ClosedEvent' })
     const IdentityChangedEvent = domain.event<string>({ name: 'Room.IdentityChangedEvent' })
     /** The set of open rooms, or a room's user or site, changed. */
@@ -137,6 +141,7 @@ const RoomDomain = Remesh.domain({
           joinedAt,
           joined: false,
           connection: 0,
+          failures: 0,
           peers: []
         }
         return [
@@ -164,6 +169,7 @@ const RoomDomain = Remesh.domain({
               sessionId: identity.nextId(),
               joined: false,
               connection,
+              failures: 0,
               peers: exist.peers.map((peer) => ({ ...peer, leaving: true }))
             })
           ),
@@ -192,10 +198,18 @@ const RoomDomain = Remesh.domain({
         const room = rooms.find((item) => item.domain === result.domain)
         if (!room || room.joined || room.connection !== result.connection) return null
         if (result.error !== undefined) {
-          return JoinFailedEvent({ domain: result.domain, connection: result.connection, message: result.error })
+          return [
+            RoomsState().new(replace(rooms, { ...room, failures: room.failures + 1 })),
+            JoinFailedEvent({
+              domain: result.domain,
+              connection: result.connection,
+              failures: room.failures + 1,
+              message: result.error
+            })
+          ]
         }
         return [
-          RoomsState().new(replace(rooms, { ...room, joined: true })),
+          RoomsState().new(replace(rooms, { ...room, joined: true, failures: 0 })),
           JoinedEvent(room.domain),
           SessionsChangedEvent(room.domain)
         ]
@@ -370,19 +384,21 @@ const RoomDomain = Remesh.domain({
         )
     })
 
+    // Retries are silent until the third consecutive timeout, so one failure is not user-facing.
+    domain.effect({
+      name: 'Room.JoinFailureEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(JoinFailedEvent).pipe(
+          filter((failed) => failed.failures === 3),
+          map(({ domain: roomDomain, message }) => ErrorEvent({ domain: roomDomain, message }))
+        )
+    })
+
     domain.effect({
       name: 'Room.JoinRetryEffect',
       impl: ({ fromEvent }) =>
         fromEvent(JoinFailedEvent).pipe(
           mergeMap((attempt) => timer(JOIN_RETRY_MS).pipe(map(() => RetryJoinCommand(attempt))))
-        )
-    })
-
-    domain.effect({
-      name: 'Room.JoinFailureEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(JoinFailedEvent).pipe(
-          map(({ domain: roomDomain, message }) => ErrorEvent({ domain: roomDomain, message }))
         )
     })
 

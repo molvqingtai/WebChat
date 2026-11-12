@@ -104,7 +104,7 @@ export const startInitializationLifecycle = ({
     store.send(
       toast.command.LoadingCommand({
         id: INITIALIZATION_TOAST_ID,
-        message: 'Preparing WebChat',
+        message: 'Loading…',
         dismissible: false
       })
     )

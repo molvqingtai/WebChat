@@ -32,7 +32,7 @@ export const joinWithTimeout = async (transport: RoomTransport, roomId: string) 
     await Promise.race([
       transport.join(roomId),
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('Physical room join timed out')), JOIN_TIMEOUT_MS)
+        timeout = setTimeout(() => reject(new Error('Room join timeout')), JOIN_TIMEOUT_MS)
       })
     ])
   } finally {

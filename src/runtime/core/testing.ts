@@ -17,10 +17,13 @@ export const createMemoryHub = () => {
     private readonly roomClose: Listeners<[string]> = new Set()
     private readonly error: Listeners<[Error, string]> = new Set()
     failJoin = false
+    /** Never settles, so the caller's join timeout is what fails the attempt. */
+    hangJoin = false
 
     peerIdOf = (roomId: string) => (rooms.get(roomId)?.has(this.peerId) ? this.peerId : '')
 
     join = async (roomId: string) => {
+      if (this.hangJoin) return new Promise<void>(() => {})
       if (this.failJoin) throw new Error('join failed')
       const members = rooms.get(roomId) ?? new Map<string, MemoryTransport>()
       rooms.set(roomId, members)

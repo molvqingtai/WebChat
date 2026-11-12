@@ -130,7 +130,9 @@ const WorldDomain = Remesh.domain({
       impl: ({ get }, result: { connection: number; error?: string }) => {
         const state = get(ConnectionState())
         if (!state.active || state.joined || state.connection !== result.connection) return null
-        if (result.error !== undefined) return [ErrorEvent(result.error), JoinFailedEvent(result.connection)]
+        // A world-room join timeout is transient and retried; only real publish/leave failures are
+        // reported, so the UI keeps its single connecting state instead of re-toasting.
+        if (result.error !== undefined) return JoinFailedEvent(result.connection)
         return [ConnectionState().new({ ...state, joined: true }), TaskEvent({ kind: 'publish' })]
       }
     })

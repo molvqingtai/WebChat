@@ -130,7 +130,7 @@ describe('initialization lifecycle ownership', () => {
     work.reject(new Error(`${stage} unavailable`))
     await vi.waitFor(() => expect(phase(fixture)).toBe('unavailable'))
 
-    expect(fixture.toast.loading).toHaveBeenCalledWith('Preparing WebChat', {
+    expect(fixture.toast.loading).toHaveBeenCalledWith('Loading…', {
       id: INITIALIZATION_TOAST_ID,
       dismissible: false
     })

@@ -244,7 +244,7 @@ afterEach(() => {
 describe('App browser ancestry', () => {
   it('renders the real Sonner Toaster inside the positioned AppMain panel before initialization is ready', async () => {
     await render(<App />)
-    const toastId = toast.loading('Preparing WebChat')
+    const toastId = toast.loading('Loading…')
 
     await vi.waitFor(() => expect(document.querySelector('[data-sonner-toaster]')).not.toBeNull())
     const panel = getPanel()!

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import type { ChatMessageRecord } from '@/domain/Message'
-import { PEER_LEAVE_GRACE_MS } from '../Config'
+import { JOIN_RETRY_MS, JOIN_TIMEOUT_MS, PEER_LEAVE_GRACE_MS } from '../Config'
 import { IdentityExtern, RoomTransportExtern } from '../Externs'
 import { createMemoryHub } from '../testing'
 import RoomDomain from './Room'
@@ -164,15 +164,35 @@ describe('RoomDomain', () => {
     expect(alice.state()!.sessionId).not.toBe(sessionId)
   })
 
-  it('reports a failed join and leaves the room on close', async () => {
+  it('reports one error on the third join timeout and keeps retrying silently', async () => {
     const hub = createMemoryHub()
     const alice = createPeer(hub, 'alice')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     const errors: string[] = []
     alice.store.subscribeEvent(alice.room.event.ErrorEvent, (error) => errors.push(error.message))
-    alice.transport.failJoin = true
+    alice.transport.hangJoin = true
     alice.open()
-    await vi.waitFor(() => expect(errors).toEqual(['join failed']))
-    expect(alice.state()?.joined).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(JOIN_TIMEOUT_MS + 1)
+    expect(errors).toEqual([])
+    await vi.advanceTimersByTimeAsync(JOIN_TIMEOUT_MS + JOIN_RETRY_MS)
+    expect(errors).toEqual([])
+    await vi.advanceTimersByTimeAsync(JOIN_TIMEOUT_MS + JOIN_RETRY_MS)
+    expect(errors).toEqual(['Room join timeout'])
+
+    // Later timeouts stay silent so the user is not re-toasted every cycle.
+    await vi.advanceTimersByTimeAsync(JOIN_TIMEOUT_MS + JOIN_RETRY_MS)
+    expect(errors).toEqual(['Room join timeout'])
+
+    alice.transport.hangJoin = false
+    await vi.advanceTimersByTimeAsync(JOIN_TIMEOUT_MS + JOIN_RETRY_MS)
+    expect(alice.state()?.joined).toBe(true)
+  })
+
+  it('leaves the room on close', () => {
+    const hub = createMemoryHub()
+    const alice = createPeer(hub, 'alice')
+    alice.open()
     alice.store.send(alice.room.command.CloseCommand(DOMAIN))
     expect(alice.state()).toBeNull()
   })
