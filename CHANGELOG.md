@@ -1,3 +1,17 @@
+## [2.8.2](https://github.com/molvqingtai/WebChat/compare/v2.8.1...v2.8.2) (2026-11-12)
+
+### Bug Fixes
+
+- **database:** restore the baseline empty-string index fallback ([99af008](https://github.com/molvqingtai/WebChat/commit/99af008445b423f24b534a1ef8c4829c6e597344))
+- **e2e:** also disable no-unknown-returns for selectTerminalError ([3ab5704](https://github.com/molvqingtai/WebChat/commit/3ab5704d19c044d863d22695a20416733539cc64))
+- **e2e:** restore truthiness OR in the bound failure predicates ([878745b](https://github.com/molvqingtai/WebChat/commit/878745b18f968a7661853eb880967d70cb433fc7))
+- **history:** restore inert identical-page replay; add replay regression tests ([53b941d](https://github.com/molvqingtai/WebChat/commit/53b941da757861dfdfb897f582f077f75f1bd83f))
+- **runtime:** report a join timeout once instead of every retry ([94adf7e](https://github.com/molvqingtai/WebChat/commit/94adf7e602237c039e50228f62a1008a2b6383e2))
+
+### Reverts
+
+- **e2e:** keep the pre-target phase inline ([267efa9](https://github.com/molvqingtai/WebChat/commit/267efa93638aeb9a763de65c9ec016963cee5804))
+
 ## [2.8.1](https://github.com/molvqingtai/WebChat/compare/v2.8.0...v2.8.1) (2026-09-11)
 
 ### Bug Fixes
