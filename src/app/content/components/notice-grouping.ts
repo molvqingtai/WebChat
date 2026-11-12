@@ -16,7 +16,7 @@ export const messageRowKey = (message: GroupedMessage): string => {
 
 export const groupAdjacentNotices = <T extends Message>(messages: readonly T[]): GroupedMessage<T>[] => {
   const grouped: GroupedMessage<T>[] = []
-  for (let index = 0; index < messages.length; ) {
+  for (let index = 0; index < messages.length;) {
     const message = messages[index]
     if (message.type === 'text') {
       grouped.push(message)

@@ -1,10 +1,12 @@
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
+import svgr from 'vite-plugin-svgr'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [react()],
+  // SVG imports are React components in the build, so tests must see the same thing.
+  plugins: [react(), svgr({ include: '**/*.svg' })],
   resolve: {
     alias: {
       '#imports': path.resolve(import.meta.dirname, 'vitest.wxt-imports.ts'),

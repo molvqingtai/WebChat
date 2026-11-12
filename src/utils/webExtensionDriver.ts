@@ -1,4 +1,4 @@
-import { type Driver, type WatchCallback, defineDriver } from 'unstorage'
+import type { Driver, WatchCallback } from 'unstorage'
 import type { Browser } from '#imports'
 import { browser } from '#imports'
 
@@ -6,7 +6,7 @@ export interface WebExtensionDriverOptions {
   storageArea: 'sync' | 'local' | 'managed' | 'session'
 }
 
-const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDriver((opts) => {
+const webExtensionDriver = (opts: WebExtensionDriverOptions): Driver => {
   const checkPermission = () => {
     if (browser.storage == null) throw Error("You must request the 'storage' permission to use webExtensionDriver")
   }
@@ -80,6 +80,6 @@ const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDr
       }
     }
   }
-})
+}
 
 export default webExtensionDriver

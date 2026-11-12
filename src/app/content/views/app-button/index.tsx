@@ -29,6 +29,10 @@ import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import type { ChatUser } from '@/protocol/Session'
 
+/** The daily logo is chosen once per document load, so rendering stays pure. */
+const DAILY_LOGOS = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6]
+const DAILY_LOGO_INDEX = Math.min(Math.max(getDay(new Date()), 0), DAILY_LOGOS.length - 1)
+
 export const getReconnectLabel = ({
   userConfigured,
   joined,
@@ -63,7 +67,7 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
   onClick,
   onContextMenu
 }) => {
-  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
+  const DayLogo = DAILY_LOGOS[DAILY_LOGO_INDEX]
   const reduceMotion = useReducedMotion()
   const content = useMemo(() => {
     const identityKey = author ? `author:${author.id}` : 'daily-logo'

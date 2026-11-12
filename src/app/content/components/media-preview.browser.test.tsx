@@ -206,7 +206,6 @@ vi.mock('@/hooks/useDraggable', () => ({
 }))
 vi.mock('@/hooks/useTriggerAway', () => ({ default: () => ({ setRef: fixture.setRef }) }))
 vi.mock('date-fns', () => ({ getDay: () => 0 }))
-vi.mock('@/assets/images/logo-0.svg', () => ({ default: () => <svg aria-hidden="true" /> }))
 
 const { default: content } = await import('@/app/content')
 

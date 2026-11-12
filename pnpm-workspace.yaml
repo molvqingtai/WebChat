@@ -6,4 +6,4 @@ allowBuilds:
   utf-8-validate: true
   wxt: true
 patchedDependencies:
-  '@shadcn/react@0.3.0': patches/@shadcn__react@0.3.0.patch
+  '@shadcn/react@0.3.1': patches/@shadcn__react@0.3.1.patch

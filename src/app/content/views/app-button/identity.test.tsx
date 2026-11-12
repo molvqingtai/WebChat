@@ -8,9 +8,6 @@ const fixture = vi.hoisted(() => ({
 }))
 
 vi.mock('date-fns', () => ({ getDay: () => 0 }))
-vi.mock('@/assets/images/logo-0.svg', () => ({
-  default: () => <svg data-testid="daily-logo" aria-hidden="true" />
-}))
 vi.mock('framer-motion', async (importOriginal) => {
   const original = await importOriginal<typeof FramerMotionModule>()
   return {
@@ -58,7 +55,7 @@ describe('AppButton reduced-motion identity', () => {
         onClick={() => {}}
       />
     )
-    expect(button.querySelector('[data-testid="daily-logo"]')).toBeNull()
+    expect(button.querySelector('svg')).toBeNull()
     expect(button.querySelectorAll('[data-slot="avatar"]')).toHaveLength(1)
     expect(button.querySelector('[data-slot="avatar"]')?.textContent).toBe('A')
 
@@ -75,7 +72,7 @@ describe('AppButton reduced-motion identity', () => {
 
     view.rerender(<AppLauncherButton label="Open WebChat" size={44} onClick={() => {}} />)
     expect(button.querySelector('[data-slot="avatar"]')).toBeNull()
-    expect(button.querySelectorAll('[data-testid="daily-logo"]')).toHaveLength(1)
+    expect(button.querySelectorAll('svg')).toHaveLength(1)
     expect(button.querySelectorAll('[data-slot="app-launcher-identity"]')).toHaveLength(1)
   })
 })

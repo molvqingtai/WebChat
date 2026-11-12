@@ -147,7 +147,6 @@ vi.mock('@/app/content/components/danmaku-container', async () => {
   return { default: React.forwardRef(() => <div data-testid="danmaku" />) }
 })
 vi.mock('date-fns', () => ({ getDay: () => 0 }))
-vi.mock('@/assets/images/logo-0.svg', () => ({ default: () => <svg aria-hidden="true" /> }))
 vi.mock('@/utils', () => ({
   checkDarkMode: () => false,
   safeUrl: (value: string) => value,
@@ -216,6 +215,9 @@ const dragHandToPoint = async (point: { x: number; y: number }) => {
   document.addEventListener('mouseup', recordRelease)
   try {
     await userEvent.dragAndDrop(hand, document.documentElement, {
+      // The launcher keeps animating its attention ring, so actionability's "stable" check never
+      // settles; the drag itself is a real browser mouse sequence either way.
+      force: true,
       sourcePosition: { x: handRect.width / 2, y: handRect.height / 2 },
       targetPosition: {
         x: handRect.left + handRect.width / 2 + point.x - current.x - target.left,
