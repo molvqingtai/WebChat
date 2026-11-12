@@ -19,6 +19,7 @@
     "lint:check": "oxlint .",
     "clear": "rimraf .output node_modules",
     "test": "vitest run",
+    "test:tools": "node --test --experimental-strip-types tools/oxlint/anti-slop/*/*.test.ts tools/oxlint/anti-slop/*/*/*.test.ts",
     "test:e2e:chrome": "cross-env NODE_ENV=production pnpm build:chrome && node e2e/chrome-runtime.ts",
     "check": "wxt prepare && tsc --noEmit && tsc -p tsconfig.core.json",
     "prepare": "husky",

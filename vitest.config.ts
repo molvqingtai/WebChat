@@ -32,6 +32,9 @@ export default defineConfig({
         test: {
           name: 'browser',
           include: ['src/**/*.browser.test.ts', 'src/**/*.browser.test.tsx'],
+          // Every file drives the same browser and measures real geometry; running them in
+          // parallel makes scroll behaviour race the CPU rather than the test's own frames.
+          fileParallelism: false,
           browser: {
             enabled: true,
             headless: true,

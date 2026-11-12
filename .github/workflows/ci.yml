@@ -89,6 +89,8 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Generate WXT types
         run: pnpm exec wxt prepare
+      - name: Rule tests for the repository lint plugin
+        run: pnpm run test:tools
       - run: pnpm run test
 
   build:
