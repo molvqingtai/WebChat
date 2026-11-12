@@ -14,6 +14,9 @@ export default defineConfig({
     }
   },
   test: {
+    // CI runners are slower than a developer machine; the behaviours under test are real browser
+    // and DOM interactions, so give them room instead of racing the 5 s default.
+    testTimeout: 20000,
     projects: [
       {
         extends: true,
