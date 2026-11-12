@@ -6,12 +6,16 @@ import getCursorPosition from '@/utils/getCursorPosition'
 const useCursorPosition = () => {
   const [position, setPosition] = useState<Position>({ x: 0, y: 0, selectionStart: 0, selectionEnd: 0 })
 
-  const handler = async (e: Event) => {
-    const newPosition = await getCursorPosition(e.target as HTMLInputElement | HTMLTextAreaElement)
-    if (JSON.stringify(newPosition) !== JSON.stringify(position)) {
-      setPosition(newPosition)
-    }
-  }
+  const handler = useCallback(
+    async (e: Event) => {
+      // SAFETY: the listeners are attached to an input/textarea element ref by this hook.
+      const newPosition = await getCursorPosition(e.target as HTMLInputElement | HTMLTextAreaElement)
+      if (JSON.stringify(newPosition) !== JSON.stringify(position)) {
+        setPosition(newPosition)
+      }
+    },
+    [position]
+  )
 
   const handleRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { cn } from '@/utils'
-import { cva, VariantProps } from 'class-variance-authority'
+import { cva, type VariantProps } from 'class-variance-authority'
 
 interface AvatarCirclesProps {
   className?: string

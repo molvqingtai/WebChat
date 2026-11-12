@@ -135,7 +135,11 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     // own enumerable `__proto__` key. The inherited prototype must not satisfy own-key
     // membership (Object.hasOwn), so the typed incoming record is a conflict and the raw
     // first row is retained.
+    // SAFETY: the test builds an intentionally malformed record to exercise the store boundary.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/no-known-value-widening, anti-slop/no-unsafe-dictionary-type -- deliberately malformed test record
     const protoOccupant = { ...first, message: { ...first.message } } as unknown as Record<string, unknown>
+    // SAFETY: the nested message is the malformed record the test mutates below.
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- deliberately malformed test record
     const message = protoOccupant.message as Record<string, unknown>
     delete message.body
     Object.defineProperty(message, '__proto__', {
@@ -160,6 +164,8 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
     // The nested message carries an extra `receivedAt` key: it differs from the canonical
     // content (only the ROOT receivedAt is receiver-local), so it is a conflict.
+    // SAFETY: the test builds a deliberately non-canonical nested message for the conflict case.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately malformed test record
     const nestedDifference = {
       ...first,
       message: { ...first.message, receivedAt: 999 }
@@ -329,6 +335,8 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     }
 
     for (const input of [prefixedButUntyped, { id: 'missing-fields' }]) {
+      // SAFETY: the test feeds deliberately untyped inputs to the store boundary.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- deliberately untyped test input
       await expect(messageStore.insert(input as unknown as MessageRecord)).resolves.toEqual({ inserted: true })
     }
     await expect(messageStore.query()).resolves.toEqual([])
@@ -418,7 +426,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       { signal: {} }
     ]
 
+    // The invalid query shapes only need to be forwarded to the store boundary.
     for (const query of invalid) {
+      // SAFETY: the test forwards deliberately invalid query shapes to the store boundary.
       await expect(messageStore.query(query as MessageQuery)).rejects.toThrow(TypeError)
     }
     expect(read).not.toHaveBeenCalled()

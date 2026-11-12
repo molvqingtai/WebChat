@@ -39,6 +39,7 @@ const rightmostMatchingTab = (window: BrowserWindow, origin: string) =>
 const mostRecentlyAccessedMatch = (windows: BrowserWindow[], origin: string) => {
   const candidates = windows.flatMap((window) => matchingTabs(window, origin))
   return candidates.reduce<BrowserTab | null>((selected, tab) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a platform tab record
     if (typeof tab.lastAccessed !== 'number' || !Number.isFinite(tab.lastAccessed)) return selected
     return selected === null || (tab.lastAccessed ?? 0) > (selected.lastAccessed ?? 0) ? tab : selected
   }, null)

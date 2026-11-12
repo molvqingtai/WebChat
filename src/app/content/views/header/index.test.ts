@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Header from '.'
 
+// SAFETY: the hoisted query queue is filled by each test before render.
 const queries = vi.hoisted(() => [] as unknown[][])
 
 vi.mock('remesh-react', () => ({
@@ -22,6 +23,7 @@ vi.mock('@/components/ui/hover-card', async () => {
 })
 
 vi.mock('@/utils', async (importOriginal) => ({
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- partial module mock of the real module surface
   ...(await importOriginal<Record<string, unknown>>()),
   getSiteMeta: () => ({ origin: 'https://current.test', title: 'Current' })
 }))

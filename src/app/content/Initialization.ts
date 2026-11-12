@@ -10,6 +10,7 @@ export interface InitializationDependencies {
   prepareBrowserSyncStorage: () => Promise<void>
   prepareLocalStorage: () => Promise<void>
   prepareMessageDatabase: () => Promise<void>
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the runtime init settlement value is ignored
   initializeRuntime: () => Promise<unknown | null>
   detachRuntime: () => void
 }
@@ -103,7 +104,7 @@ export const startInitializationLifecycle = ({
     store.send(
       toast.command.LoadingCommand({
         id: INITIALIZATION_TOAST_ID,
-        message: 'Preparing WebChat',
+        message: 'Loading…',
         dismissible: false
       })
     )

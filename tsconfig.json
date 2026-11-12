@@ -7,6 +7,9 @@
     "jsx": "react-jsx",
     "allowJs": true,
     "strict": true,
+    // WXT 0.21 turns this on for the generated base config; the codebase predates it.
+    // Adopting it is a separate change covering unrelated call sites.
+    "noUncheckedIndexedAccess": false,
     "skipLibCheck": true
   }
 }

@@ -10,6 +10,7 @@ interface MountedShadowUi {
   remove: () => void
 }
 
+// SAFETY: the hoisted fixture fields are typed to the values this preview scenario records.
 const fixture = vi.hoisted(() => ({
   ui: null as MountedShadowUi | null,
   send: vi.fn(),
@@ -32,7 +33,9 @@ vi.mock('#imports', async () => {
   const { default: css } = await import('@/assets/styles/tailwind.css?inline')
   return {
     defineContentScript: <Definition,>(definition: Definition) => definition,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unsafe-dictionary-type -- content-script mock forwards the loader context and options
     createShadowRootUi: async (context: unknown, options: Record<string, unknown>) => {
+      // SAFETY: the mock forwards the loader context to the real shadow-root helper.
       const ui = (await createShadowRootUi(
         context as never,
         {
@@ -51,7 +54,7 @@ vi.mock('remesh', async (importOriginal) => {
     ...actual,
     Remesh: {
       ...actual.Remesh,
-      store: () => ({ discard: fixture.discard })
+      store: () => ({ discard: fixture.discard, send: fixture.send, getDomain: () => ({ command: {} }) })
     }
   }
 })
@@ -59,6 +62,7 @@ vi.mock('remesh-react', async () => {
   return {
     RemeshRoot: ({ children }: { children?: ReactNode }) => <>{children}</>,
     RemeshScope: ({ children }: { children?: ReactNode }) => <>{children}</>,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- module mock forwards the domain identity it is given
     useRemeshDomain: (domain: unknown) => domain,
     useRemeshSend: () => fixture.send,
     useRemeshQuery: (query: string) => {
@@ -152,15 +156,17 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
   createIndexedDBMessageDatabase: vi.fn(),
   prepareIndexedDBMessageDatabase: vi.fn()
 }))
-vi.mock('@/domain/impls/runtime/Client', () => ({
-  detachClient: fixture.detachClient,
-  initClient: vi.fn(),
-  whenHostPhase: vi.fn(),
-  whenFailure: vi.fn()
+vi.mock('@/runtime/locator', () => ({ createHostLocator: vi.fn() }))
+vi.mock('@/domain/impls/ChatRoom', () => ({
+  createRuntimePorts: () => ({
+    chatRoom: {},
+    worldRoom: {},
+    readiness: {},
+    start: vi.fn(),
+    stop: fixture.detachClient,
+    onHistoryFeedback: vi.fn()
+  })
 }))
-vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: vi.fn() }))
-vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: vi.fn() }))
-vi.mock('@/domain/impls/Readiness', () => ({ createReadinessImpl: vi.fn() }))
 vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
@@ -170,7 +176,10 @@ vi.mock('@/utils/withPreparationLock', () => ({
   createDirectPreparationCoordinator: () => ({}),
   createWebLocksPreparationCoordinator: () => ({})
 }))
-vi.mock('@/domain/MessageStore', () => ({ MessageDatabaseExtern: { impl: () => ({}) } }))
+vi.mock('@/domain/MessageStore', () => ({
+  MessageDatabaseExtern: { impl: () => ({}) },
+  createMessageStore: () => ({})
+}))
 vi.mock('@/domain/externs/ChatRoom', () => ({ ChatRoomExtern: { impl: () => ({}) } }))
 vi.mock('@/domain/externs/WorldRoom', () => ({ WorldRoomExtern: { impl: () => ({}) } }))
 vi.mock('@/domain/externs/Readiness', () => ({ ReadinessExtern: { impl: () => ({}) } }))
@@ -197,7 +206,6 @@ vi.mock('@/hooks/useDraggable', () => ({
 }))
 vi.mock('@/hooks/useTriggerAway', () => ({ default: () => ({ setRef: fixture.setRef }) }))
 vi.mock('date-fns', () => ({ getDay: () => 0 }))
-vi.mock('@/assets/images/logo-0.svg', () => ({ default: () => <svg aria-hidden="true" /> }))
 
 const { default: content } = await import('@/app/content')
 
@@ -222,6 +230,7 @@ interface InputPoint {
 }
 
 const browserPoint = ({ x, y }: InputPoint): InputPoint => {
+  // SAFETY: the frame element is the iframe host when this test runs framed.
   const frame = window.frameElement as HTMLElement | null
   if (!frame) return { x, y }
   const rect = frame.getBoundingClientRect()
@@ -270,6 +279,7 @@ const settleNativeViewTransitions = async () => {
 
 const activeViewTransitionPseudos = (root: Document | ShadowRoot) =>
   root.getAnimations().flatMap((animation) => {
+    // SAFETY: the animation effect is a keyframe effect for the view-transition pseudo targets.
     const effect = animation.effect as KeyframeEffect | null
     const pseudoElement = effect?.pseudoElement
     return pseudoElement ? [pseudoElement] : []
@@ -288,7 +298,9 @@ const startContent = async () => {
   document.body.append(hostile)
   document.addEventListener('click', recordHostDocumentClick)
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the loaded module export
   if (typeof content.main !== 'function') throw new Error('Content main is unavailable')
+  // SAFETY: the loader receives the options the content script declares in this test.
   await content.main({ options: {}, onInvalidated: fixture.onInvalidated } as never)
   await vi.waitFor(() => expect(currentUi().shadow.querySelector('#app')).not.toBeNull())
   return hostile
@@ -399,6 +411,7 @@ describe('MediaPreview production browser boundary', () => {
     const overlapBottom = Math.min(imageRect.bottom, panelRect.bottom)
     expect(overlapRight).toBeGreaterThan(overlapLeft)
     expect(overlapBottom).toBeGreaterThan(overlapTop)
+    // SAFETY: the harness reads the shadow root's elementFromPoint for the overlap probe.
     const shadowAtOverlap = (
       shadow as ShadowRoot & { elementFromPoint: Document['elementFromPoint'] }
     ).elementFromPoint((overlapLeft + overlapRight) / 2, (overlapTop + overlapBottom) / 2)
@@ -657,6 +670,7 @@ describe('MediaPreview production browser boundary', () => {
     await vi.waitFor(() => expect(previewScale()).toBe(0.25))
     expect(image.style.transform).toBe('translate3d(0px, 0px, 0px) scale(0.25)')
 
+    // SAFETY: the queried preview control is a rendered <button> element.
     const zoomOut = (await page.getByRole('button', { name: 'Zoom out' }).findElement()) as HTMLButtonElement
     expect(zoomOut.disabled).toBe(true)
     const lowerBoundary = image.style.transform

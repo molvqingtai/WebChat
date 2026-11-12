@@ -7,8 +7,6 @@ import { DanmakuExtern } from '@/domain/externs/Danmaku'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
-import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
-import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { type ChatMessage, type ChatSession } from '@/protocol'
 
@@ -41,6 +39,7 @@ const createFixture = (danmakuEnabled: boolean) => {
   const push = vi.fn()
   const mount = vi.fn()
   const unmount = vi.fn()
+  // SAFETY: the storage double returns the seeded user record for every requested key.
   const storage: Storage = {
     get: async <T extends StorageValue>() => user as T,
     set: async () => {},
@@ -70,7 +69,6 @@ const createFixture = (danmakuEnabled: boolean) => {
       DanmakuExtern.impl({ push, mount, unmount }),
       BrowserSyncStorageExtern.impl(storage),
       ChatRoomExtern.impl(chatRoom),
-      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({ onState: () => () => {} }),
       MessageDatabaseExtern.impl(database)
     ]

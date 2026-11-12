@@ -30,6 +30,16 @@
     "src/components/ui",
     "src/components/magicui",
     "src/lib/uglyAvatar",
-    "tools/oxlint/anti-slop/**"
+    "tools/oxlint/anti-slop/**",
+    ".pi/**",
+    ".agents/skills/archify/**"
+  ],
+  "overrides": [
+    {
+      "files": ["**/*.test.*", "**/*.browser.test.*", "e2e/**"],
+      "rules": {
+        "anti-slop/no-module-mocking": "off"
+      }
+    }
   ]
 }

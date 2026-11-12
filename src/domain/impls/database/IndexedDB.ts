@@ -25,7 +25,9 @@ import {
 import { withPreparationLock, type PreparationLockCoordinator } from '@/utils/withPreparationLock'
 
 type StoreName<Schema> = keyof Schema & string
+type StoreHandle<Definition> = { store: IDBObjectStore; definition: Definition }
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- AbortSignal.reason is an untyped platform value; callers only rethrow it
 const abortError = (signal: AbortSignal): unknown => signal.reason ?? new DOMException('Aborted', 'AbortError')
 const inactiveError = () => new DOMException('Database transaction is inactive', 'TransactionInactiveError')
 
@@ -68,6 +70,7 @@ const openDatabase = <Schema extends DatabaseSchema<Schema>>(
         const transaction = request.transaction
         if (!transaction) throw new Error('IndexedDB upgrade transaction is unavailable')
         Object.entries(definition.stores).forEach(([storeName, rawStore]) => {
+          // SAFETY: rawStore comes from this definition's store map, keyed by the iterated store name.
           const storeDefinition = rawStore as StoreDefinition<Schema[StoreName<Schema>]>
           const store = database.objectStoreNames.contains(storeName)
             ? transaction.objectStore(storeName)
@@ -107,6 +110,7 @@ const toKeyRange = (query: ValidatedQuery): RangeResult => {
   const hasUpper = Object.prototype.hasOwnProperty.call(range, 'upper')
   if (hasLower && hasUpper) {
     if (range.lower === range.upper && (range.lowerOpen === true || range.upperOpen === true)) return 'empty'
+    // SAFETY: validateQuery accepted both bounds as DatabaseKey before this range is built.
     return IDBKeyRange.bound(
       range.lower as IDBValidKey,
       range.upper as IDBValidKey,
@@ -114,8 +118,14 @@ const toKeyRange = (query: ValidatedQuery): RangeResult => {
       range.upperOpen === true
     )
   }
-  if (hasLower) return IDBKeyRange.lowerBound(range.lower as IDBValidKey, range.lowerOpen === true)
-  if (hasUpper) return IDBKeyRange.upperBound(range.upper as IDBValidKey, range.upperOpen === true)
+  if (hasLower) {
+    // SAFETY: hasLower established that `lower` passed assertDatabaseKey in validateRange.
+    return IDBKeyRange.lowerBound(range.lower as IDBValidKey, range.lowerOpen === true)
+  }
+  if (hasUpper) {
+    // SAFETY: hasUpper established that `upper` passed assertDatabaseKey in validateRange.
+    return IDBKeyRange.upperBound(range.upper as IDBValidKey, range.upperOpen === true)
+  }
   return undefined
 }
 
@@ -203,12 +213,7 @@ class IndexedDBTransaction<
     return operation
   }
 
-  private store<Store extends Allowed>(
-    name: Store
-  ): {
-    store: IDBObjectStore
-    definition: StoreDefinition<Schema[Store]>
-  } {
+  private store<Store extends Allowed>(name: Store): StoreHandle<StoreDefinition<Schema[Store]>> {
     if (!this.active) throw inactiveError()
     this.signal?.throwIfAborted()
     if (!this.allowed.has(name)) throw new TypeError(`Store is outside transaction scope: ${name}`)
@@ -232,6 +237,7 @@ class IndexedDBTransaction<
         assertDatabaseKey(key, definition.key)
         const value = await requestResult(store.get(key))
         this.signal?.throwIfAborted()
+        // SAFETY: the store's values were validated by validateStoreValue on insert/put.
         return value === undefined ? undefined : cloneStoredValue(value as Schema[Store]['value'])
       })()
     )
@@ -265,6 +271,8 @@ class IndexedDBTransaction<
                 return
               }
               const key = query.index ? cursor.primaryKey : cursor.key
+              // SAFETY: cursor keys/values come from this store, whose keys passed assertDatabaseKey
+              // and whose values were validated by validateStoreValue on insert/put.
               items.push({
                 key: key as Schema[Store]['key'],
                 value: cloneStoredValue(cursor.value as Schema[Store]['value'])
@@ -329,6 +337,7 @@ class IndexedDBTransaction<
                   reject(new Error(`Database insert conflicted without an existing value: ${String(key)}`))
                   return
                 }
+                // SAFETY: the existing value read from this store was validated by validateStoreValue.
                 resolve({ inserted: false, existing: cloneStoredValue(existing as Schema[Store]['value']) })
               }, reject)
             },
@@ -389,10 +398,12 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 
   constructor(
     private readonly definition: DatabaseDefinition<Schema>,
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- watcher errors cross an external callback boundary
     private readonly onWatcherError?: (error: unknown) => void
   ) {
     this.channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(definition.channelName)
     this.channel?.addEventListener('message', (event: MessageEvent<unknown>) => {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of a cross-tab broadcast payload
       if (!Array.isArray(event.data) || !event.data.every((store) => typeof store === 'string')) return
       this.notify(event.data)
     })
@@ -405,6 +416,7 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
   private async database(): Promise<IDBDatabase> {
     this.databasePromise ??= openDatabase(this.definition).then(
       (database) => ({ ok: true as const, database }),
+      // oxlint-disable-next-line anti-slop/no-unknown-parameters -- IndexedDB open failure rejects with a platform value
       (error: unknown) => ({ ok: false as const, error })
     )
     const result = await this.databasePromise
@@ -460,6 +472,7 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       const transaction = database.transaction(scope, writable ? 'readwrite' : 'readonly')
       const settled = transactionResult(transaction).then(
         () => ({ ok: true as const }),
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters -- IndexedDB transaction failure rejects with a platform value
         (error: unknown) => ({ ok: false as const, error })
       )
       const abort = () => {
@@ -591,6 +604,7 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 
 export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- watcher errors cross an external callback boundary
   options?: { onWatcherError?: (error: unknown) => void }
 ): IndexedDBDatabase<Schema> => new IndexedDBDatabase(definition, options?.onWatcherError)
 
@@ -660,6 +674,7 @@ export const prepareIndexedDBMessageDatabase = (coordinator?: PreparationLockCoo
 }
 
 export const createIndexedDBMessageDatabase = (options?: {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- watcher errors cross an external callback boundary
   onWatcherError?: (error: unknown) => void
 }): IndexedDBDatabase<MessageDatabaseSchema> =>
   createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION), options)

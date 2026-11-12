@@ -30,7 +30,7 @@ export const assembleURL = (url: string, params: Record<string, string>) => {
  *
  * reference: https://github.com/axios/axios/blob/v1.x/lib/core/buildFullPath.js
  */
-export const buildFullURL = (baseURL: string = '', pathURL: string = '', params: Record<string, any> = {}) => {
+export const buildFullURL = (baseURL: string = '', pathURL: string = '', params: Record<string, string> = {}) => {
   const url = cleanURL(isAbsoluteURL(pathURL) ? pathURL : `${baseURL}/${pathURL}`)
   return assembleURL(url, params)
 }
@@ -41,6 +41,7 @@ export const buildFullURL = (baseURL: string = '', pathURL: string = '', params:
  * @returns Sanitized URL or empty string if invalid
  */
 export const safeUrl = (url: string): string => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- defensive check: this sanitizer also guards untrusted callers
   if (!url || typeof url !== 'string') return ''
 
   // Block dangerous protocols

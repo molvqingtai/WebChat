@@ -2,10 +2,8 @@ import { render } from 'vitest-browser-react'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('date-fns', () => ({ getDay: () => 0 }))
-vi.mock('@/assets/images/logo-0.svg', () => ({
-  default: () => <svg data-testid="daily-logo" aria-hidden="true" />
-}))
 
+// The daily logo is a real SVG import, so `svg` marks it and the avatar never renders one.
 import { AppLauncherButton } from '@/app/content/views/app-button'
 
 const hasClasses = (element: Element, classes: string[]) =>
@@ -48,7 +46,7 @@ describe('AppButton unread indicator', () => {
 
     await view.rerender(<AppLauncherButton label="Open WebChat" size={44} onClick={() => {}} />)
     await vi.waitFor(() => expect(button.querySelector('[data-slot="avatar"]')).toBeNull())
-    expect(button.querySelector('[data-testid="daily-logo"]')).not.toBeNull()
+    expect(button.querySelector('svg')).not.toBeNull()
   })
 
   it('renders the exact count-free orange ping and 0.1-second presence transition only while unread', async () => {
@@ -72,6 +70,7 @@ describe('AppButton unread indicator', () => {
       const durations = indicator
         .getAnimations()
         .map((animation) => animation.effect?.getTiming().duration)
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the animation timing value
         .filter((duration): duration is number => typeof duration === 'number')
       expect(durations).toContain(100)
     })
@@ -89,10 +88,10 @@ describe('AppButton unread indicator', () => {
     const view = await render(<AppLauncherButton label="Open WebChat" size={44} onClick={() => {}} />)
     const button = document.querySelector('button')!
 
-    expect(button.querySelector('[data-testid="daily-logo"]')).not.toBeNull()
+    expect(button.querySelector('svg')).not.toBeNull()
 
     await view.rerender(<AppLauncherButton author={alpha} label="Open WebChat" size={44} onClick={() => {}} />)
-    const exitingLogo = button.querySelector('[data-testid="daily-logo"]')!
+    const exitingLogo = button.querySelector('svg')!
     const alphaAvatar = Array.from(button.querySelectorAll('[data-slot="avatar"]')).find(
       (avatar) => avatar.textContent === 'A'
     )!
@@ -120,14 +119,14 @@ describe('AppButton unread indicator', () => {
     expect(opacity(incomingBeta.parentElement!)).toBeLessThan(1)
 
     await view.rerender(<AppLauncherButton label="Open WebChat" size={44} onClick={() => {}} />)
-    const incomingLogo = button.querySelector('[data-testid="daily-logo"]')!
+    const incomingLogo = button.querySelector('svg')!
     expect(incomingLogo).not.toBeNull()
     expect(incomingBeta.isConnected).toBe(true)
     expect(opacity(incomingLogo.parentElement!)).toBeLessThan(1)
 
     await vi.waitFor(() => {
       expect(button.querySelectorAll('[data-slot="avatar"]')).toHaveLength(0)
-      expect(button.querySelectorAll('[data-testid="daily-logo"]')).toHaveLength(1)
+      expect(button.querySelectorAll('svg')).toHaveLength(1)
     })
   })
 })

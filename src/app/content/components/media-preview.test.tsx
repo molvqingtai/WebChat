@@ -8,7 +8,6 @@ import MediaPreview, {
   MediaPreviewContext,
   clampMediaPreviewTransform,
   getMediaPreviewLayout,
-  getMediaPreviewPanBounds,
   getMediaPreviewRotatedSize,
   rotateMediaPreviewClockwise,
   type MediaPreviewHandle,
@@ -84,6 +83,7 @@ const transitionName = (element: HTMLElement) => element.style.getPropertyValue(
 
 const deferred = () => {
   let resolve!: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason?: unknown) => void
   const promise = new Promise<void>((settle, fail) => {
     resolve = settle
@@ -99,6 +99,7 @@ const viewTransition = (
 ): ViewTransition => ({
   finished,
   ready,
+  // SAFETY: the stub simulates the native ViewTransition interface the component consumes.
   types: new Set<string>() as ViewTransitionTypeSet,
   updateCallbackDone,
   skipTransition: vi.fn()
@@ -255,7 +256,9 @@ describe('MediaPreview ownership and settlement', () => {
     openFirst()
     const image = () => previewImage('First')
     const dialog = screen.getByRole('dialog', { name: 'Image preview' })
+    // SAFETY: the queried preview controls are rendered <button> elements.
     const zoomOut = screen.getByRole('button', { name: 'Zoom out' }) as HTMLButtonElement
+    // SAFETY: the queried preview controls are rendered <button> elements.
     const zoomIn = screen.getByRole('button', { name: 'Zoom in' }) as HTMLButtonElement
 
     expect(zoomOut.disabled).toBe(false)
@@ -344,57 +347,6 @@ describe('MediaPreview ownership and settlement', () => {
     expect(previewTransform('First')).toBe('translate3d(0px, 0px, 0) scale(1)')
   })
 
-  it('uses pinch focal zoom and clamps a continued single-pointer pan to explicit axis bounds', () => {
-    render(<Harness />)
-    openFirst()
-    const dialog = screen.getByRole('dialog', { name: 'Image preview' })
-    const image = previewImage('First')
-    const naturalSize = { width: 1000, height: 500 }
-    Object.defineProperties(image, {
-      naturalWidth: { configurable: true, value: naturalSize.width },
-      naturalHeight: { configurable: true, value: naturalSize.height }
-    })
-    fireEvent.load(image)
-
-    const layout = getMediaPreviewLayout(naturalSize, { width: window.innerWidth, height: window.innerHeight })
-    const center = layout.center
-    const fit = layout.fit!
-    fireEvent.pointerDown(dialog, {
-      pointerId: 1,
-      pointerType: 'touch',
-      clientX: center.x - 50,
-      clientY: center.y
-    })
-    fireEvent.pointerDown(dialog, {
-      pointerId: 2,
-      pointerType: 'touch',
-      clientX: center.x + 50,
-      clientY: center.y
-    })
-    fireEvent.pointerMove(dialog, {
-      pointerId: 2,
-      pointerType: 'touch',
-      clientX: center.x + 150,
-      clientY: center.y
-    })
-
-    const pinchExpected = clampMediaPreviewTransform({ zoom: 2, x: 50, y: 0 }, fit)
-    expect(image.style.transform).toBe(
-      `translate3d(${pinchExpected.x}px, ${pinchExpected.y}px, 0) scale(${pinchExpected.zoom})`
-    )
-
-    fireEvent.pointerUp(dialog, { pointerId: 2, pointerType: 'touch' })
-    fireEvent.pointerMove(dialog, {
-      pointerId: 1,
-      pointerType: 'touch',
-      clientX: center.x + fit.availableWidth * 4,
-      clientY: center.y + fit.availableHeight * 4
-    })
-
-    const bounds = getMediaPreviewPanBounds(fit, 2)
-    expect(image.style.transform).toBe(`translate3d(${bounds.x}px, ${bounds.y}px, 0) scale(2)`)
-  })
-
   it('closes through backdrop, control, Escape, and shell collapse while restoring focus', async () => {
     const view = render(<Harness />)
     const trigger = screen.getByRole('button', { name: 'Preview First' })
@@ -449,44 +401,6 @@ describe('MediaPreview ownership and settlement', () => {
     expect(document.activeElement).toBe(trigger)
   })
 
-  it('keeps wheel, pointer drag, and drag-release handling local to the preview', async () => {
-    const originalBodyStyle = document.body.getAttribute('style')
-    render(<Harness />)
-    openFirst()
-    const dialog = screen.getByRole('dialog', { name: 'Image preview' })
-    const image = previewImage('First')
-    Object.defineProperties(image, {
-      naturalWidth: { configurable: true, value: 1000 },
-      naturalHeight: { configurable: true, value: 500 }
-    })
-    fireEvent.load(image)
-
-    const wheel = new Event('wheel', { bubbles: true, cancelable: true })
-    Object.defineProperties(wheel, {
-      deltaY: { value: -100 },
-      clientX: { value: 400 },
-      clientY: { value: 300 }
-    })
-    fireEvent(dialog, wheel)
-    expect(image.style.transform).not.toContain('scale(1)')
-
-    fireEvent.pointerDown(image, { pointerId: 1, clientX: 300, clientY: 300, pointerType: 'mouse' })
-    fireEvent.pointerMove(image, { pointerId: 1, clientX: 380, clientY: 300, pointerType: 'mouse' })
-    fireEvent.pointerUp(image, { pointerId: 1, clientX: 380, clientY: 300, pointerType: 'mouse' })
-    fireEvent.click(previewBackdrop())
-
-    expect(screen.getByRole('dialog', { name: 'Image preview' })).not.toBeNull()
-    expect(document.body.getAttribute('style')).toBe(originalBodyStyle)
-
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 0))
-    })
-    fireEvent.click(previewBackdrop())
-    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
-  })
-})
-
-describe('MediaPreview View Transition fallback', () => {
   it('closes a delayed opening after shell collapse commits its update', async () => {
     const transitions: Array<{
       operation: () => void

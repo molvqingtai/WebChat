@@ -62,6 +62,7 @@ const imageDataUrlToBlob = (source: string) => {
 const textContent = (children: ReactNode): string =>
   Children.toArray(children)
     .map((child) => {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the React node union
       if (typeof child === 'string' || typeof child === 'number') return String(child)
       return isValidElement<{ children?: ReactNode }>(child) ? textContent(child.props.children) : ''
     })

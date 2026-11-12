@@ -1,5 +1,5 @@
 import { clamp, isInRange } from '@/utils'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 export interface DragOptions {
   x: number
@@ -15,9 +15,12 @@ const useDraggable = ({ x, y, maxX, minX, maxY, minY, onChange }: DragOptions) =
   const mousePosition = useRef({ x: 0, y: 0 })
   const position = { x: clamp(x, minX, maxX), y: clamp(y, minY, maxY) }
   const positionRef = useRef(position)
-  positionRef.current = position
   const onChangeRef = useRef(onChange)
-  onChangeRef.current = onChange
+  // Keep the refs aligned with the latest props after commit; handlers only read them post-commit.
+  useEffect(() => {
+    positionRef.current = position
+    onChangeRef.current = onChange
+  })
 
   const isMove = useRef(false)
   const rafRef = useRef<number | null>(null)

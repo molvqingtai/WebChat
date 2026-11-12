@@ -3,8 +3,6 @@ import { Remesh } from 'remesh'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import { type ProjectedTextMessage } from '@/domain/Message'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
-import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
-import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import NotificationDomain from '@/domain/Notification'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -51,6 +49,7 @@ const createMessage = ({
 
 const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
   const push = vi.fn(async () => 'notification-1')
+  // SAFETY: the storage double returns the seeded user record for every requested key.
   const storage: Storage = {
     get: async <T extends StorageValue>() => user as T,
     set: async () => {},
@@ -65,6 +64,8 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
   const chatRoom: ChatRoom = {
     joinRoom: async () => {},
     leaveRoom: async () => {},
+    // SAFETY: the harness sender is cast to the room-message sender surface this fixture installs.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- harness cast of the room sender surface
     sendMessage: (async (command: SendMessageCommand) => {
       if (command.type === 'reaction') throw new Error('not used')
       return {
@@ -88,7 +89,6 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
       NotificationExtern.impl({ push }),
       BrowserSyncStorageExtern.impl(storage),
       ChatRoomExtern.impl(chatRoom),
-      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({ onState: () => () => {} }),
       MessageDatabaseExtern.impl(database)
     ]

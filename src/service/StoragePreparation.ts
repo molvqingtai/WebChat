@@ -5,7 +5,9 @@ import { withPreparationLock } from '@/utils/withPreparationLock'
 const PREPARE_BROWSER_SYNC_STORAGE = 'WEB_CHAT_PREPARE_BROWSER_SYNC_STORAGE_V1'
 
 interface StorageArea {
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw browser storage records at this boundary
   get(key: string): Promise<Record<string, unknown>>
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw browser storage records at this boundary
   set(values: Record<string, unknown>): Promise<void>
   clear(): Promise<void>
 }
@@ -16,8 +18,10 @@ interface RuntimeApi {
     addListener(listener: () => Promise<void>): void
   }
   readonly onMessage: {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- runtime messages are untyped at this boundary
     addListener(listener: (message: unknown) => Promise<{ readonly ready: boolean }> | undefined): void
   }
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- runtime messages are untyped at this boundary
   sendMessage(message: unknown): Promise<unknown>
 }
 
@@ -37,8 +41,18 @@ const prepareConfigurationStorage = (identity: string, storage: StorageArea): Pr
     lock.checkpoint()
   })
 
-const runtimeApi = () => browser.runtime as unknown as RuntimeApi
-const syncStorage = () => browser.storage.sync as unknown as StorageArea
+const runtimeApi = () => {
+  // SAFETY: browser.runtime is the extension runtime object; widen once before re-narrowing.
+  const raw = browser.runtime as unknown
+  // SAFETY: raw is the browser.runtime object narrowed to the RuntimeApi contract used here.
+  return raw as RuntimeApi
+}
+const syncStorage = () => {
+  // SAFETY: browser.storage.sync is the extension sync area; widen once before re-narrowing.
+  const raw = browser.storage.sync as unknown
+  // SAFETY: raw is the browser.storage.sync area narrowed to the StorageArea contract used here.
+  return raw as StorageArea
+}
 
 export const registerBrowserSyncStoragePreparation = (
   runtime: RuntimeApi = runtimeApi(),
@@ -63,8 +77,11 @@ export const registerBrowserSyncStoragePreparation = (
 export const requestBrowserSyncStoragePreparation = async (runtime: RuntimeApi = runtimeApi()): Promise<void> => {
   const response = await runtime.sendMessage(PREPARE_BROWSER_SYNC_STORAGE)
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the runtime response
   if (typeof response === 'object' && response !== null && 'ready' in response) {
-    if ((response as { ready: unknown }).ready === true) return
+    // SAFETY: the `in` probe above established that this object carries a `ready` field.
+    const ready = (response as { ready: unknown }).ready
+    if (ready === true) return
   }
 
   throw new Error('Browser sync configuration preparation unavailable')

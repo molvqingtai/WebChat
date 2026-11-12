@@ -1,7 +1,7 @@
 import { Remesh } from 'remesh'
 
 export type StorageValue = null | string | number | boolean | object
-export type WatchCallback = () => unknown
+export type WatchCallback = () => void
 export type Unwatch = () => Promise<void>
 
 export interface Storage {

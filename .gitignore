@@ -16,3 +16,6 @@ web-ext.config.ts
 *.zip
 .idea
 
+
+# Vitest browser failure artifacts
+.vitest/

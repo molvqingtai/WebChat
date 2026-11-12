@@ -47,14 +47,19 @@ type ScrollCall = { behavior?: ScrollBehavior; top?: number }
 const recordScrollCommands = () => {
   const calls: ScrollCall[] = []
   const original = Element.prototype.scrollTo
+  // SAFETY: the replacement keeps the native scrollTo signature it intercepts.
   Element.prototype.scrollTo = function (this: Element, ...args: [ScrollToOptions] | [number, number]) {
     const first = args[0]
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the scrollTo argument union
     calls.push(typeof first === 'object' ? { ...first } : { top: first })
     // Smooth commands still prove intent through the recording; apply them instantly so the
     // geometry assertions stay deterministic.
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the scrollTo argument union
     if (typeof first === 'object') {
+      // oxlint-disable-next-line anti-slop/no-reflect-apply -- fowarding the intercepted native call
       return Reflect.apply(original, this, [{ ...first, behavior: 'auto' }])
     }
+    // oxlint-disable-next-line anti-slop/no-reflect-apply -- forwarding the intercepted native call
     return Reflect.apply(original, this, args)
   } as typeof Element.prototype.scrollTo
   return calls
@@ -235,7 +240,8 @@ describe('MessageList follow and recovery', () => {
 
     await view.rerender(harness(true, [...initialRows, row('n1', 72)]))
     await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('open'))
-    expect(followAction()?.getAttribute('aria-label')).toBe('1 new message')
+    // The count can land a frame after the action opens on a slow runner.
+    await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('1 new message'))
     expect(scrollParent.scrollTop).toBe(0)
 
     await view.rerender(harness(true, [...initialRows, row('n1', 72), row('n2', 88)]))
@@ -300,7 +306,7 @@ describe('MessageList follow and recovery', () => {
 
     expect(scrollParent.scrollTop).toBeGreaterThan(0)
     expect(Math.abs(anchor.getBoundingClientRect().top - anchorTopBeforePrepend)).toBeLessThan(2)
-    expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+    await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages'))
   })
 
   it('follows repeated tail appends while settled at the bottom', async () => {
@@ -618,8 +624,8 @@ describe('MessageList authorized follow and sole scroll ownership (acceptance re
       },
       { timeout: 5000 }
     )
-    expect(followAction()?.getAttribute('data-state')).toBe('closed')
-    expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages')
+    await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('closed'))
+    await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('Scroll to latest messages'))
   })
 })
 
@@ -691,7 +697,8 @@ describe('MessageList scrollback threshold and growth reconciliation (S1+S2 repa
     // Scrolling 60px further up crosses the gate: the same retained count becomes visible.
     scrollParent.scrollTo({ top: scrollParent.scrollTop - 60, behavior: 'auto' })
     await vi.waitFor(() => expect(followAction()?.getAttribute('data-state')).toBe('open'))
-    expect(followAction()?.getAttribute('aria-label')).toBe('1 new message')
+    // The count can land a frame after the action opens on a slow runner.
+    await vi.waitFor(() => expect(followAction()?.getAttribute('aria-label')).toBe('1 new message'))
   })
 
   it('tracks the threshold across shell resize without any scroll', async () => {

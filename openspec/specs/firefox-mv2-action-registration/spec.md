@@ -49,7 +49,7 @@ A terminated Firefox process/Background Page generation SHALL leave no current l
 
 ### Requirement: The repair preserves manifests, Runtime, and unrelated product behavior
 
-The source repair SHALL preserve the existing WXT manifest declarations and permissions: Chrome MV3 retains its `action` surface and Firefox MV2 retains the generated `browser_action` surface. It SHALL preserve the AppAction contract and options-page behavior, coordinator/provider setup, restore ordering and semantics, Chrome Offscreen relay boundary, Firefox persistent Background Page Runtime, protocol, storage/database, content UI, dependencies, and release metadata.
+The source repair SHALL preserve the existing WXT manifest declarations and permissions: Chrome MV3 retains its `action` surface and Firefox MV2 retains the generated `browser_action` surface. It SHALL preserve the AppAction contract and options-page behavior, the Runtime hosts, protocol, storage/database, content UI, dependencies, and release metadata.
 
 The implementation MAY add one source-local registration helper only to make platform selection and listener behavior directly testable. It SHALL NOT introduce a generic browser API facade or change unrelated notification, tab, window, action, or Runtime APIs.
 
@@ -61,7 +61,7 @@ The implementation MAY add one source-local registration helper only to make pla
 #### Scenario: Runtime remains a protected control
 
 - **WHEN** Chrome or Firefox starts after the action repair
-- **THEN** its existing coordinator/Runtime readiness and traffic SHALL remain functional, but Runtime success SHALL NOT substitute for proving action registration and one-click delivery
+- **THEN** its existing Runtime readiness and traffic SHALL remain functional, but Runtime success SHALL NOT substitute for proving action registration and one-click delivery
 
 ### Requirement: Acceptance binds to a fresh product exact before tooling resumes
 

@@ -34,6 +34,7 @@ const persistNotice = async (messageStore: MessageStore, record: SystemNoticeRec
   }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
 interface CanonicalQueryRequest {

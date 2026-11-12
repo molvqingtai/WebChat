@@ -6,6 +6,7 @@ import { ProviderAdapter, type MessageMeta } from '@/service/adapter/runtime/Pro
 import { TabsProviderAdapter } from '@/service/adapter/runtime/Tabs'
 
 const createMessaging = () => {
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
   const listeners = new Set<(...args: unknown[]) => unknown>()
   const sendMessage = vi.fn()
   return {
@@ -13,7 +14,9 @@ const createMessaging = () => {
       id: 'test-extension',
       sendMessage,
       onMessage: {
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
         addListener: (listener: (...args: unknown[]) => unknown) => listeners.add(listener),
+        // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- messaging stub mirrors the runtime listener contract
         removeListener: (listener: (...args: unknown[]) => unknown) => listeners.delete(listener)
       }
     },
@@ -62,6 +65,7 @@ describe('Runtime browser adapters', () => {
     adapter.onMessage(received)
 
     const request = providerMessage('request', { sender: { type: 'injector' }, meta: {} })
+    // SAFETY: the harness delivers the sender record the listener receives in production.
     listeners.forEach((listener) => listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never))
     adapter.sendMessage(providerMessage('response'), [])
 
@@ -100,6 +104,7 @@ describe('Runtime browser adapters', () => {
     })
     const trustedTab = { id: 7, url: 'https://example.com/' }
 
+    // SAFETY: the harness delivers the sender record the listener receives in production.
     listeners.forEach((listener) => listener(request, { tab: trustedTab } as never))
 
     expect(received).toHaveBeenCalledWith({
@@ -114,6 +119,7 @@ describe('Runtime browser adapters', () => {
       path: ['getSnapshot'],
       args: [{ domain: 'https://example.com' }]
     })
+    // SAFETY: the harness delivers the sender record the listener receives in production.
     listeners.forEach((listener) => listener(read, { tab: trustedTab } as never))
     expect(received).toHaveBeenLastCalledWith({
       ...read,
@@ -126,6 +132,7 @@ describe('Runtime browser adapters', () => {
       path: ['sendChatMessage'],
       args: [{ domain: 'https://example.com', caller: { tab: claimedLease.tab } }]
     })
+    // SAFETY: the harness delivers the sender record the listener receives in production.
     listeners.forEach((listener) => listener(mutation, { tab: trustedTab } as never))
     expect(received).toHaveBeenLastCalledWith({
       ...mutation,
@@ -196,6 +203,7 @@ describe('Runtime browser adapters', () => {
       { sender: { type: 'provider' } },
       providerMessage('invalid-schema', { id: '' })
     ]
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the harness forwards arbitrary provider messages and senders
     const dispatch = (message: unknown, sender: unknown) => {
       listeners.forEach((listener) => listener(message, sender))
     }
@@ -211,6 +219,7 @@ describe('Runtime browser adapters', () => {
     expect(injectReceived).not.toHaveBeenCalled()
 
     const providerRequest = providerMessage('provider-valid', { sender: { type: 'injector' }, meta: {} })
+    // SAFETY: the harness delivers the sender record the listener receives in production.
     providerListener(providerRequest, { tab: { id: 7, url: 'https://example.com/' } } as never)
     expect(providerReceived).toHaveBeenCalledWith({
       ...providerRequest,
@@ -222,6 +231,7 @@ describe('Runtime browser adapters', () => {
     expect(injectReceived).toHaveBeenCalledWith(injectResponse)
 
     provider.dispose()
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the injector stub may not have been installed
     if (typeof disposeInject === 'function') disposeInject()
     expect(listeners.size).toBe(0)
   })

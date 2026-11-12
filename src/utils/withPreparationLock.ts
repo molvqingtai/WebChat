@@ -16,6 +16,7 @@ export interface PreparationLockCoordinator {
 interface PreparationCompletion {
   readonly promise: Promise<void>
   readonly resolve: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   readonly reject: (reason: unknown) => void
 }
 
@@ -30,6 +31,7 @@ const preparations = new Map<string, PreparationGeneration>()
 
 const createCompletion = (): PreparationCompletion => {
   let resolve!: () => void
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
   let reject!: (reason: unknown) => void
   const promise = new Promise<void>((onResolve, onReject) => {
     resolve = onResolve
@@ -38,6 +40,7 @@ const createCompletion = (): PreparationCompletion => {
   return { promise, resolve, reject }
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- AbortSignal.reason is an untyped platform value; callers only rethrow it
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException('Persistence preparation superseded', 'AbortError')
 
@@ -142,6 +145,7 @@ export const withPreparationLock = (
   })
   void preparation.then(
     () => settleGeneration(identity, generation, { status: 'resolved' }),
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
     (error: unknown) => settleGeneration(identity, generation, { status: 'rejected', error })
   )
   return completion.promise

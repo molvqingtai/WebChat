@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- the action listener contract returns a value the test ignores
 type ClickListener = () => unknown
 
 type ActionNamespace = {
@@ -8,7 +9,9 @@ type ActionNamespace = {
   }
 }
 
+// SAFETY: the hoisted fixture narrows the browser stub to the shape this test exercises.
 const fixture = vi.hoisted(() => ({
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- browser stub for the background fixture
   browser: { runtime: { id: 'background-test' } } as Record<string, unknown> & {
     runtime: { id: string }
   },
@@ -31,12 +34,8 @@ vi.mock('@/service/Contract', () => ({
   defineNotificationProxy: () => [fixture.provideNotification]
 }))
 vi.mock('@/service/Notification', () => ({ Notification: class Notification {} }))
-vi.mock('@/runtime/Contract', () => ({ COORDINATOR_NAMESPACE: 'test-coordinator' }))
-vi.mock('@/runtime/Background', () => ({
-  registerPage: vi.fn(),
-  restore: vi.fn(),
-  watchTabs: vi.fn()
-}))
+vi.mock('@/runtime/ensureHost', () => ({ ensureOffscreen: vi.fn(), registerEnsureHost: vi.fn() }))
+vi.mock('@/runtime/host', () => ({ startHost: vi.fn() }))
 vi.mock('@/service/StoragePreparation', () => ({
   registerBrowserSyncStoragePreparation: fixture.registerBrowserSyncStoragePreparation
 }))
@@ -79,6 +78,7 @@ const usePlatform = (firefox: boolean, selectedNamespace: ActionNamespace | unde
 }
 
 const startBackground = () => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the loaded module export
   if (typeof background.main !== 'function') throw new Error('Background main is unavailable')
   return background.main()
 }

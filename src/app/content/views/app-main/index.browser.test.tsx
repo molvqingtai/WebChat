@@ -19,8 +19,11 @@ const fixture = vi.hoisted(() => {
     listeners.forEach((listener) => listener())
   }
 
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- spy accepts the forwarded remesh command
   const send = vi.fn((command: unknown) => {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the forwarded command
     if (typeof command !== 'object' || command === null) return
+    // SAFETY: the spy narrows the forwarded command to the two shapes this scenario sends.
     const value = command as { type: 'open'; value: boolean } | { type: 'position'; value: { x: number; y: number } }
     if (value.type === 'open') update({ open: value.value })
     if (value.type === 'position') {
@@ -55,6 +58,7 @@ const fixture = vi.hoisted(() => {
 vi.mock('remesh-react', async () => {
   const { useSyncExternalStore } = await import('react')
   return {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- module mock forwards the domain identity it is given
     useRemeshDomain: (domain: unknown) => domain,
     useRemeshSend: () => fixture.send,
     useRemeshQuery: (query: string) => {
@@ -143,7 +147,6 @@ vi.mock('@/app/content/components/danmaku-container', async () => {
   return { default: React.forwardRef(() => <div data-testid="danmaku" />) }
 })
 vi.mock('date-fns', () => ({ getDay: () => 0 }))
-vi.mock('@/assets/images/logo-0.svg', () => ({ default: () => <svg aria-hidden="true" /> }))
 vi.mock('@/utils', () => ({
   checkDarkMode: () => false,
   safeUrl: (value: string) => value,
@@ -152,6 +155,7 @@ vi.mock('@/utils', () => ({
   cn: (...values: Array<string | Record<string, boolean> | undefined>) =>
     values
       .flatMap((value) =>
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the query fixture union
         typeof value === 'string'
           ? value
           : Object.entries(value ?? {})
@@ -211,6 +215,9 @@ const dragHandToPoint = async (point: { x: number; y: number }) => {
   document.addEventListener('mouseup', recordRelease)
   try {
     await userEvent.dragAndDrop(hand, document.documentElement, {
+      // The launcher keeps animating its attention ring, so actionability's "stable" check never
+      // settles; the drag itself is a real browser mouse sequence either way.
+      force: true,
       sourcePosition: { x: handRect.width / 2, y: handRect.height / 2 },
       targetPosition: {
         x: handRect.left + handRect.width / 2 + point.x - current.x - target.left,
@@ -237,7 +244,7 @@ afterEach(() => {
 describe('App browser ancestry', () => {
   it('renders the real Sonner Toaster inside the positioned AppMain panel before initialization is ready', async () => {
     await render(<App />)
-    const toastId = toast.loading('Preparing WebChat')
+    const toastId = toast.loading('Loading…')
 
     await vi.waitFor(() => expect(document.querySelector('[data-sonner-toaster]')).not.toBeNull())
     const panel = getPanel()!

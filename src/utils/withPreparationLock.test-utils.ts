@@ -15,6 +15,7 @@ export const createTestLockManager = ({ beforeGrant }: TestLockManagerOptions = 
 
     const operation = previous.then(async () => {
       await beforeGrant?.(name, requestNumber)
+      // SAFETY: the lock stub never inspects the granted lock beyond its name and mode.
       return callback({ name, mode: 'exclusive' } as Lock)
     })
     const completion = operation.then(
@@ -28,6 +29,7 @@ export const createTestLockManager = ({ beforeGrant }: TestLockManagerOptions = 
     return operation
   }
 
+  // SAFETY: the stub implements the request surface the coordinator uses for this test double.
   return { request: request as LockManager['request'] }
 }
 

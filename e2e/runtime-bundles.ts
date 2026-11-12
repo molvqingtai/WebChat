@@ -15,6 +15,7 @@ type ExtensionManifest = {
 }
 
 const readJson = async (path: string): Promise<ExtensionManifest> =>
+  // SAFETY: the manifest file is the build output this check parses.
   JSON.parse(await readFile(path, 'utf8')) as ExtensionManifest
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
@@ -110,6 +111,7 @@ const collectStaticLocalEsmClosure = async (
     } catch {
       throw new Error(`Unable to resolve static local module: ${modulePath}`)
     }
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the assertion helper accepts any checked value
     assert(!hasDynamicImport(source), `Dynamic import is not allowed in static module closure: ${modulePath}`)
     closure.set(modulePath, source)
     pending.push(...staticLocalDependencies(resolvedRoot, modulePath, source))
@@ -121,10 +123,12 @@ const assertCodecBoundary = (target: string, sources: Iterable<string>) => {
   const source = [...sources].join('\n')
   requiredCodecMarkers.forEach((marker) => assert(source.includes(marker), `${target} must contain ${marker}`))
   prohibitedCodecResidue.forEach((residue) =>
+    // oxlint-disable-next-line anti-slop/no-known-value-widening -- the synchronous residue scan reads a literal residue string from the packaged source
     assert(!source.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
   )
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- the helper returns the rejected operation outcome
 const expectRejected = async (operation: () => Promise<unknown>, message: string): Promise<unknown> => {
   try {
     await operation()
@@ -279,37 +283,38 @@ assert(chromeManifest.background?.service_worker === 'background.js', 'Expected 
 assert(firefoxManifest.manifest_version === 2, 'Expected the production Firefox MV2 manifest')
 assert(firefoxManifest.background?.scripts?.includes('background.js'), 'Expected the Firefox background-page host')
 
-const chromeTransportChunk = chromeChunks.find((file) => file.startsWith('TransportHost-') && file.endsWith('.js'))
-assert(chromeTransportChunk, 'Expected the production Chrome Offscreen transport chunk')
+const offscreenHtml = await readFile(join(chromeRoot, 'offscreen.html'), 'utf8')
+const chromeHostEntry = offscreenHtml.match(/src="\/(chunks\/[^"]+\.js)"/)?.[1]
+assert(chromeHostEntry, 'Expected the Offscreen document to load the Runtime host entry')
+assert(chromeChunks.includes(chromeHostEntry.slice('chunks/'.length)), 'Expected the Runtime host chunk in the build')
 const chromeOutputRoot = resolve(chromeRoot)
 const chromeBackgroundPath = resolve(chromeRoot, 'background.js')
-const chromeTransportPath = resolve(chromeRoot, 'chunks', chromeTransportChunk)
+const chromeHostPath = resolve(chromeRoot, chromeHostEntry)
 const chromeContentEntries = chromeManifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []
 const firefoxContentEntries = firefoxManifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []
 assert(chromeContentEntries.length > 0, 'Expected at least one production Chrome content entry')
 assert(firefoxContentEntries.length > 0, 'Expected at least one production Firefox content entry')
-const [chromeTransport, chromeContent, firefoxContent] = await Promise.all([
-  readFile(join(chromeRoot, 'chunks', chromeTransportChunk), 'utf8'),
+const [chromeContent, firefoxContent] = await Promise.all([
   Promise.all(chromeContentEntries.map((entry) => readFile(join(chromeRoot, entry), 'utf8'))),
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
-assert(!chromeTransport.includes('tabs.query'), 'Chrome Offscreen transport must not contain tabs.query')
-assert(
-  staticLocalDependencies(chromeOutputRoot, chromeBackgroundPath, chromeBackground).includes(chromeTransportPath),
-  'Chrome background must statically import the production transport chunk'
+const readOutput: ReadText = (path) => readFile(path, 'utf8')
+const [chromeBackgroundClosure, chromeHostClosure] = await Promise.all([
+  collectStaticLocalEsmClosure(chromeOutputRoot, chromeBackgroundPath, readOutput),
+  collectStaticLocalEsmClosure(chromeOutputRoot, chromeHostPath, readOutput)
+])
+// The Chromium service worker only creates the host: no Runtime, codec or WebRTC code in it.
+const chromeBackgroundSource = [...chromeBackgroundClosure.values()].join('\n')
+;[...requiredCodecMarkers, 'RTCPeerConnection', 'onConnect'].forEach((marker) =>
+  // oxlint-disable-next-line anti-slop/no-known-value-widening -- the marker scan reads build output as text
+  assert(!chromeBackgroundSource.includes(marker), `Chrome background must not contain ${marker}`)
 )
-const chromeRuntimeClosure = await collectStaticLocalEsmClosure(chromeOutputRoot, chromeBackgroundPath, (path) =>
-  readFile(path, 'utf8')
-)
-;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
-  assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
-)
-;['untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
-  assert(
-    !firefoxBackground.includes(relayMarker),
-    `Firefox background must not contain Chrome relay marker ${relayMarker}`
-  )
-)
+assert(chromeBackground.includes('createDocument'), 'Chrome background must create the Offscreen host')
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- the closure set holds build output paths
+assert(!chromeBackgroundClosure.has(chromeHostPath), 'Chrome background must not import the Runtime host')
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- the marker scan reads build output as text
+assert(!firefoxBackground.includes('createDocument'), 'Firefox background must not create an Offscreen host')
+assert(firefoxBackground.includes('onConnect'), 'Firefox background must host the Runtime itself')
 
 const expectedCoreJsImports = ['core-js/actual/typed-array/from-base64', 'core-js/actual/typed-array/to-base64']
 const coreJsImports = [...wireCodecSource.matchAll(/^import '([^']*core-js[^']*)'$/gm)].map((match) => match[1])
@@ -326,33 +331,25 @@ const codecPolyfillMarkers = [...requiredCodecMarkers, 'setFromBase64', 'fromHex
 ).forEach(([target, bundles]) =>
   bundles.forEach((bundle, index) =>
     codecPolyfillMarkers.forEach((marker) =>
+      // oxlint-disable-next-line anti-slop/no-known-value-widening -- the bundle scan reads build output as text
       assert(!bundle.includes(marker), `${target} entry ${index} must not contain codec polyfill marker ${marker}`)
     )
   )
 )
-assertCodecBoundary('Chrome background static module closure', chromeRuntimeClosure.values())
+assertCodecBoundary('Chrome Offscreen host static module closure', chromeHostClosure.values())
 assertCodecBoundary('Firefox background', [firefoxBackground])
 dynamicImportParser.close()
 
 console.log(
   JSON.stringify({
     chrome: {
-      manifestVersion: 3,
       contentBytes: chromeContent.reduce((total, bundle) => total + Buffer.byteLength(bundle), 0),
-      contentCodecPolyfill: false,
-      offscreenTabsQuery: false,
-      runtimeBytes: Buffer.byteLength(chromeBackground),
-      transportBytes: Buffer.byteLength(chromeTransport),
-      uint8ArrayBase64: true
+      backgroundBytes: Buffer.byteLength(chromeBackgroundSource),
+      hostBytes: [...chromeHostClosure.values()].reduce((total, source) => total + Buffer.byteLength(source), 0)
     },
     firefox: {
-      manifestVersion: 2,
       contentBytes: firefoxContent.reduce((total, bundle) => total + Buffer.byteLength(bundle), 0),
-      contentCodecPolyfill: false,
-      tabsProvider: true,
-      offscreenRelay: false,
-      runtimeBytes: Buffer.byteLength(firefoxBackground),
-      uint8ArrayBase64: true
+      backgroundBytes: Buffer.byteLength(firefoxBackground)
     },
     coreJsImports
   })

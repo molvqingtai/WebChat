@@ -10,8 +10,6 @@ import MessageInputDomain from '@/domain/MessageInput'
 import ReadinessDomain from '@/domain/Readiness'
 import UserInfoDomain from '@/domain/UserInfo'
 import StatusModule from '@/domain/modules/Status'
-import { ConnectionLifecycleExtern } from '@/domain/externs/ConnectionLifecycle'
-import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
 import type { ChatUser } from '@/protocol/Session'
 import type { ChatSession } from '@/protocol/Session'
@@ -61,14 +59,17 @@ type ConnectionOperation = {
   mode: 'join' | 'automatic'
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
 const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+
+/** The call was cut off by the page or its host connection going away; never shown as an error. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- classification of an arbitrary thrown value
+const isCancelled = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
   impl: (domain) => {
     const chatRoom = domain.getExtern(ChatRoomExtern)
-    const lifecycle = domain.getExtern(ConnectionLifecycleExtern)
-    const sendLifecycle = domain.getExtern(SendLifecycleExtern)
     const messageListDomain = domain.getDomain(MessageListDomain())
     const messageInputDomain = domain.getDomain(MessageInputDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
@@ -191,7 +192,8 @@ const ChatRoomDomain = Remesh.domain({
       // it; the user must submit again explicitly.
       impl: ({ get }, message: string | { body: string; mentions: MentionedUser[] }) =>
         get(CanSubmitTextQuery())
-          ? SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
+          ? // oxlint-disable-next-line anti-slop/no-runtime-typeof -- discrimination of the typed string-or-payload union
+            SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
           : null
     })
 
@@ -362,20 +364,12 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent, get }) =>
         fromEvent(ConnectionRequestedEvent).pipe(
           mergeMap(async (operation) => {
-            const task = chatRoom.joinRoom(operation.input)
             try {
-              await task
-              // Consume (release) the invocation's terminal token on success too.
-              lifecycle.getTaskResult(task)
+              await chatRoom.joinRoom(operation.input)
               return CompleteConnectionOperationCommand(operation)
             } catch (error) {
-              // Consume the exact task's result once (releases its terminal state) before any
-              // request-staleness branching, so a superseded operation never leaks its result.
-              const result = lifecycle.getTaskResult(task)
-              // A completion is silent cancellation only when it is no longer the current live request
-              // (superseded) or that exact public-port task's own token is `cancelled`. It is never
-              // classified from the caught error's content.
-              const cancelled = get(ConnectionRequestState())?.id !== operation.id || result === 'cancelled'
+              // Superseded by a newer request, or cut off: finish silently.
+              const cancelled = get(ConnectionRequestState())?.id !== operation.id || isCancelled(error)
               return CompleteConnectionOperationCommand({
                 ...operation,
                 ...(cancelled ? { cancelled: true } : { error: normalizeError(error) })
@@ -421,10 +415,8 @@ const ChatRoomDomain = Remesh.domain({
           concatMap(async (command) => {
             const user = get(userInfoDomain.query.UserInfoQuery())
             if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
-            const token = sendLifecycle.beginSend()
             try {
               const message = await chatRoom.sendMessage({ type: 'text', ...command })
-              sendLifecycle.settleSend(token, 'accepted')
               const record: TextMessageRecord = {
                 type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
                 id: message.id,
@@ -436,8 +428,7 @@ const ChatRoomDomain = Remesh.domain({
             } catch (error) {
               // A send is silent cancellation only when its own exact token was cancelled by final
               // release; otherwise the owning invocation settles it as a real failure.
-              if (sendLifecycle.getSendResult(token) === 'cancelled') return null
-              sendLifecycle.settleSend(token, 'failed')
+              if (isCancelled(error)) return null
               return OnErrorEvent(normalizeError(error))
             }
           })
@@ -464,16 +455,13 @@ const ChatRoomDomain = Remesh.domain({
                   reaction,
                   active: !users.some((user) => user.id === selfId)
                 }
-                const token = sendLifecycle.beginSend()
                 try {
                   await chatRoom.sendMessage(command)
-                  sendLifecycle.settleSend(token, 'accepted')
                   return null
                 } catch (error) {
                   // A send is silent cancellation only when its own exact token was cancelled by final
                   // release; otherwise the owning invocation settles it as a real failure.
-                  if (sendLifecycle.getSendResult(token) === 'cancelled') return null
-                  sendLifecycle.settleSend(token, 'failed')
+                  if (isCancelled(error)) return null
                   return OnErrorEvent(normalizeError(error))
                 }
               })
@@ -487,33 +475,14 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
           concatMap(async ({ id, input, mode }) => {
-            let leaveTask: Promise<void> | undefined
-            let joinTask: Promise<void> | undefined
             try {
-              if (mode === 'reconnect') {
-                // Leave is its own public-port invocation with its own exact token.
-                leaveTask = chatRoom.leaveRoom()
-                await leaveTask
-              }
-              joinTask = chatRoom.joinRoom(input)
-              await joinTask
-              // Consume (release) the invocation's terminal tokens on success too.
-              if (leaveTask) lifecycle.getTaskResult(leaveTask)
-              if (joinTask) lifecycle.getTaskResult(joinTask)
+              if (mode === 'reconnect') await chatRoom.leaveRoom()
+              await chatRoom.joinRoom(input)
               return mode === 'retry'
                 ? CompleteRetryOperationCommand({ id, input })
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
-              // Consume each started task's result exactly once (releases terminal state) before deciding,
-              // so a reconnect's leave/join results are never leaked. A reconnect request is single-lived
-              // (ReconnectCommand is gated while one is in flight), so there is no reachable
-              // request-staleness branch to short-circuit here; cancellation is solely by the exact leave/
-              // join task's own token. Late/dropped completions are fenced by CompleteReconnectOperation
-              // Command's own request-id gate.
-              const leaveResult = leaveTask ? lifecycle.getTaskResult(leaveTask) === 'cancelled' : false
-              const joinResult = joinTask ? lifecycle.getTaskResult(joinTask) === 'cancelled' : false
-              const cancelled = leaveResult || joinResult
-              if (cancelled) {
+              if (isCancelled(error)) {
                 return mode === 'retry'
                   ? CompleteRetryOperationCommand({ id, input, cancelled: true })
                   : CompleteReconnectOperationCommand({ id })

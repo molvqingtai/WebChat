@@ -15,10 +15,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: lts/*
+          node-version: 26.13.1
       - uses: pnpm/action-setup@v5
         with:
-          version: latest
+          version: 12.16.1
       - name: Cache pnpm store
         uses: actions/cache@v5
         id: pnpm-cache
@@ -40,10 +40,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: lts/*
+          node-version: 26.13.1
       - uses: pnpm/action-setup@v5
         with:
-          version: latest
+          version: 12.16.1
       - name: Restore pnpm cache
         uses: actions/cache@v5
         with:
@@ -70,10 +70,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: lts/*
+          node-version: 26.13.1
       - uses: pnpm/action-setup@v5
         with:
-          version: latest
+          version: 12.16.1
       - name: Restore pnpm cache
         uses: actions/cache@v5
         with:
@@ -89,6 +89,8 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Generate WXT types
         run: pnpm exec wxt prepare
+      - name: Rule tests for the repository lint plugin
+        run: pnpm run test:tools
       - run: pnpm run test
 
   build:
@@ -99,10 +101,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: lts/*
+          node-version: 26.13.1
       - uses: pnpm/action-setup@v5
         with:
-          version: latest
+          version: 12.16.1
       - name: Restore pnpm cache
         uses: actions/cache@v5
         with:
@@ -123,7 +125,7 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: stable
+          chrome-version: 157.0.8103.78
           install-dependencies: true
       - name: Test Chrome MV3 shared Runtime
         env:

@@ -16,7 +16,7 @@ export const messageRowKey = (message: GroupedMessage): string => {
 
 export const groupAdjacentNotices = <T extends Message>(messages: readonly T[]): GroupedMessage<T>[] => {
   const grouped: GroupedMessage<T>[] = []
-  for (let index = 0; index < messages.length; ) {
+  for (let index = 0; index < messages.length;) {
     const message = messages[index]
     if (message.type === 'text') {
       grouped.push(message)
@@ -26,11 +26,16 @@ export const groupAdjacentNotices = <T extends Message>(messages: readonly T[]):
 
     const notices: SystemNoticeMessage[] = []
     while (index < messages.length && messages[index].type !== 'text') {
+      // SAFETY: the loop condition established that this entry is a system notice.
       notices.push(messages[index] as SystemNoticeMessage)
       index += 1
     }
-    if (notices.length === 1) grouped.push(notices[0] as T)
-    else grouped.push({ type: 'notice-group', id: `notice-group:${notices[0].id}`, notices })
+    if (notices.length === 1) {
+      // SAFETY: the grouped notice is the same shape as the surrounding message union member T.
+      grouped.push(notices[0] as T)
+    } else {
+      grouped.push({ type: 'notice-group', id: `notice-group:${notices[0].id}`, notices })
+    }
   }
   return grouped
 }
