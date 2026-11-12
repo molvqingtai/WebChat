@@ -34,12 +34,8 @@ vi.mock('@/service/Contract', () => ({
   defineNotificationProxy: () => [fixture.provideNotification]
 }))
 vi.mock('@/service/Notification', () => ({ Notification: class Notification {} }))
-vi.mock('@/runtime/Contract', () => ({ COORDINATOR_NAMESPACE: 'test-coordinator' }))
-vi.mock('@/runtime/Background', () => ({
-  registerPage: vi.fn(),
-  restore: vi.fn(),
-  watchTabs: vi.fn()
-}))
+vi.mock('@/runtime/ensureHost', () => ({ ensureOffscreen: vi.fn(), registerEnsureHost: vi.fn() }))
+vi.mock('@/runtime/host', () => ({ startHost: vi.fn() }))
 vi.mock('@/service/StoragePreparation', () => ({
   registerBrowserSyncStoragePreparation: fixture.registerBrowserSyncStoragePreparation
 }))

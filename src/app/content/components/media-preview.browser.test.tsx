@@ -54,7 +54,7 @@ vi.mock('remesh', async (importOriginal) => {
     ...actual,
     Remesh: {
       ...actual.Remesh,
-      store: () => ({ discard: fixture.discard })
+      store: () => ({ discard: fixture.discard, send: fixture.send, getDomain: () => ({ command: {} }) })
     }
   }
 })
@@ -156,15 +156,17 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
   createIndexedDBMessageDatabase: vi.fn(),
   prepareIndexedDBMessageDatabase: vi.fn()
 }))
-vi.mock('@/domain/impls/runtime/Client', () => ({
-  detachClient: fixture.detachClient,
-  initClient: vi.fn(),
-  whenHostPhase: vi.fn(),
-  whenFailure: vi.fn()
+vi.mock('@/runtime/locator', () => ({ createHostLocator: vi.fn() }))
+vi.mock('@/domain/impls/ChatRoom', () => ({
+  createRuntimePorts: () => ({
+    chatRoom: {},
+    worldRoom: {},
+    readiness: {},
+    start: vi.fn(),
+    stop: fixture.detachClient,
+    onHistoryFeedback: vi.fn()
+  })
 }))
-vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: vi.fn() }))
-vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: vi.fn() }))
-vi.mock('@/domain/impls/Readiness', () => ({ createReadinessImpl: vi.fn() }))
 vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
@@ -174,7 +176,10 @@ vi.mock('@/utils/withPreparationLock', () => ({
   createDirectPreparationCoordinator: () => ({}),
   createWebLocksPreparationCoordinator: () => ({})
 }))
-vi.mock('@/domain/MessageStore', () => ({ MessageDatabaseExtern: { impl: () => ({}) } }))
+vi.mock('@/domain/MessageStore', () => ({
+  MessageDatabaseExtern: { impl: () => ({}) },
+  createMessageStore: () => ({})
+}))
 vi.mock('@/domain/externs/ChatRoom', () => ({ ChatRoomExtern: { impl: () => ({}) } }))
 vi.mock('@/domain/externs/WorldRoom', () => ({ WorldRoomExtern: { impl: () => ({}) } }))
 vi.mock('@/domain/externs/Readiness', () => ({ ReadinessExtern: { impl: () => ({}) } }))

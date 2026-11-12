@@ -1,459 +1,172 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act } from 'react'
-import type { Root } from 'react-dom/client'
 import type * as RemeshExports from 'remesh'
 
-interface ContentOwner {
-  root: Root
-  store: { discard: () => void }
-  stopInitialization: () => void
-}
-
 interface ShadowRootOptions {
-  position: string
-  isolateEvents?: string[]
-  onMount: (container: HTMLElement) => ContentOwner
-  onRemove: (owner: ContentOwner | undefined) => void
+  // oxlint-disable-next-line anti-slop/no-unknown-returns -- the mounted owner is opaque to the fixture
+  onMount: (container: HTMLElement) => unknown
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the mounted owner is opaque to the fixture
+  onRemove: (owner: unknown) => void
 }
 
-// SAFETY: the hoisted fixture fields are typed to the values this content scenario records.
-const fixture = vi.hoisted(() => ({
-  createShadowRootUi: vi.fn(),
-  mount: vi.fn(),
-  createStore: vi.fn(),
-  discard: vi.fn(),
-  storeSend: vi.fn(),
-  silenceFeedback: vi.fn(),
-  resumeFeedback: vi.fn(),
-  loadingCommand: vi.fn(),
-  cancelCommand: vi.fn(),
-  historyFeedbackListener: null as null | ((event: { type: string; ownerId: string }) => void),
-  startInitializationLifecycle: vi.fn(),
-  stopInitialization: vi.fn(),
-  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw initialization options recorded by the fixture
-  initializationOptions: [] as Array<Record<string, unknown>>,
-  owners: [] as ContentOwner[],
-  removeUis: [] as Array<() => void>,
-  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw app props recorded by the fixture
-  appProps: [] as Array<Record<string, unknown>>,
-  requestBrowserSyncStoragePreparation: vi.fn(),
-  prepareLocalConfigurationStorage: vi.fn(),
-  prepareIndexedDBMessageDatabase: vi.fn(),
-  createIndexedDBMessageDatabase: vi.fn(),
-  initClient: vi.fn(async () => null),
-  detachClient: vi.fn(),
-  whenHostPhase: vi.fn(),
-  whenFailure: vi.fn(),
-  createChatRoomImpl: vi.fn(),
-  createWorldRoomImpl: vi.fn(),
-  createReadinessImpl: vi.fn(),
-  createSendLifecycle: vi.fn(() => ({
-    beginSend: vi.fn(),
-    getSendResult: vi.fn(),
-    settleSend: vi.fn(),
-    cancelActiveSends: vi.fn()
-  })),
-  createElement: vi.fn(),
-  scope: vi.fn(),
-  actions: {
-    notification: { owner: 'notification' },
-    appFeedback: { owner: 'app-feedback' }
-  },
-  database: { read: vi.fn(), write: vi.fn(), watch: vi.fn(), close: vi.fn() },
-  chat: {},
-  world: {},
-  readiness: {},
-  browserStorage: {}
-}))
+interface RemoveHandle {
+  current: (() => void) | null
+}
+
+interface InitializationOptions {
+  dependencies: { initializeRuntime: () => Promise<boolean | null>; detachRuntime: () => void }
+}
+
+const fixture = vi.hoisted(() => {
+  const initialization: InitializationOptions[] = []
+  const remove: RemoveHandle = { current: null }
+  return {
+    runtime: {
+      chatRoom: {},
+      worldRoom: {},
+      readiness: {},
+      start: vi.fn(async () => true),
+      stop: vi.fn(),
+      onHistoryFeedback: vi.fn()
+    },
+    createRuntimePorts: vi.fn(),
+    storeSend: vi.fn(),
+    discard: vi.fn(),
+    stopInitialization: vi.fn(),
+    initialization,
+    createIndexedDBMessageDatabase: vi.fn(() => ({})),
+    remove
+  }
+})
+
+const command = (name: string) => (payload?: string | { id: string; message: string }) => ({ name, payload })
 
 vi.mock('#imports', () => ({
   defineContentScript: <Definition>(definition: Definition) => definition,
-  createShadowRootUi: fixture.createShadowRootUi
+  createShadowRootUi: async (_context: Record<never, never>, options: ShadowRootOptions) => {
+    const shadowHost = document.createElement('web-chat')
+    return {
+      shadowHost,
+      mount: () => {
+        const owner = options.onMount(document.createElement('div'))
+        fixture.remove.current = () => options.onRemove(owner)
+      }
+    }
+  }
 }))
 vi.mock('remesh', async (importOriginal) => {
   const actual = await importOriginal<typeof RemeshExports>()
-  return { ...actual, Remesh: { ...actual.Remesh, store: fixture.createStore } }
-})
-vi.mock('remesh-react', async () => {
-  const React = await import('react')
   return {
-    RemeshRoot: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-    RemeshScope: ({ children, domains }: { children?: React.ReactNode; domains: unknown[] }) => {
-      fixture.scope(domains)
-      return React.createElement(React.Fragment, null, children)
+    ...actual,
+    Remesh: {
+      ...actual.Remesh,
+      store: () => ({
+        send: fixture.storeSend,
+        discard: fixture.discard,
+        getDomain: () => ({
+          command: {
+            SilenceFeedbackCommand: command('silence'),
+            ResumeFeedbackCommand: command('resume'),
+            LoadingCommand: command('loading'),
+            CancelCommand: command('cancel'),
+            ErrorCommand: command('error')
+          }
+        })
+      })
     }
   }
 })
-vi.mock('@/app/content/App', async () => {
-  const React = await import('react')
-  return {
-    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw app props forwarded to the mocked component
-    default: (props: Record<string, unknown>) => {
-      fixture.appProps.push(props)
-      return React.createElement('section', { 'data-testid': 'application-shell' })
-    }
-  }
-})
+vi.mock('react-dom/client', () => ({ createRoot: () => ({ render: vi.fn(), unmount: vi.fn() }) }))
+vi.mock('@/app/content/App', () => ({ default: () => null }))
 vi.mock('@/app/content/Initialization', () => ({
-  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw initialization options forwarded by the mock
-  startInitializationLifecycle: (options: Record<string, unknown>) => {
-    fixture.initializationOptions.push(options)
-    fixture.startInitializationLifecycle(options)
+  startInitializationLifecycle: (options: InitializationOptions) => {
+    fixture.initialization.push(options)
     return fixture.stopInitialization
   }
 }))
 vi.mock('@/domain/impls/Storage', () => ({
   LocalStorageImpl: {},
-  BrowserSyncStorageImpl: { value: fixture.browserStorage },
-  prepareLocalConfigurationStorage: fixture.prepareLocalConfigurationStorage
+  BrowserSyncStorageImpl: { value: {} },
+  prepareLocalConfigurationStorage: vi.fn()
 }))
 vi.mock('@/domain/impls/database/IndexedDB', () => ({
   createIndexedDBMessageDatabase: fixture.createIndexedDBMessageDatabase,
-  prepareIndexedDBMessageDatabase: fixture.prepareIndexedDBMessageDatabase
+  prepareIndexedDBMessageDatabase: vi.fn()
 }))
-vi.mock('@/domain/impls/runtime/Client', () => ({
-  detachClient: fixture.detachClient,
-  initClient: fixture.initClient,
-  whenHostPhase: fixture.whenHostPhase,
-  whenFailure: fixture.whenFailure
-}))
-vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: fixture.createChatRoomImpl }))
-vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: fixture.createWorldRoomImpl }))
-vi.mock('@/domain/impls/Readiness', () => ({ createReadinessImpl: fixture.createReadinessImpl }))
-vi.mock('@/domain/impls/SendLifecycle', () => ({ createSendLifecycle: fixture.createSendLifecycle }))
+vi.mock('@/domain/impls/ChatRoom', () => ({ createRuntimePorts: fixture.createRuntimePorts }))
+vi.mock('@/runtime/locator', () => ({ createHostLocator: () => ({}) }))
 vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
 vi.mock('@/domain/impls/AppAction', () => ({ AppActionImpl: {} }))
-vi.mock('@/domain/Notification', () => ({ default: () => fixture.actions.notification }))
-vi.mock('@/domain/AppFeedback', () => ({ default: () => fixture.actions.appFeedback }))
-vi.mock('@/utils', () => ({ createElement: fixture.createElement }))
-vi.mock('@/service/StoragePreparation', () => ({
-  requestBrowserSyncStoragePreparation: fixture.requestBrowserSyncStoragePreparation
-}))
+vi.mock('@/domain/Notification', () => ({ default: () => ({}) }))
+vi.mock('@/domain/AppFeedback', () => ({ default: () => ({}) }))
+vi.mock('@/domain/Toast', () => ({ default: () => ({}) }))
+vi.mock('@/service/StoragePreparation', () => ({ requestBrowserSyncStoragePreparation: vi.fn() }))
 
+vi.stubGlobal('__NAME__', 'web-chat')
 const { default: content } = await import('@/app/content')
 
-const startContent = async () => {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the loaded module export
-  if (typeof content.main !== 'function') throw new Error('Content main is unavailable')
-  // SAFETY: the loader receives the empty WXT context object in this test.
-  await act(async () => content.main({} as never))
-}
+const sent = () => fixture.storeSend.mock.calls.map(([action]) => action.name)
+const pageTransition = (type: string, persisted: boolean) =>
+  window.dispatchEvent(Object.assign(new Event(type), { persisted }))
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
-  vi.stubGlobal('__NAME__', 'WEB-CHAT')
-  fixture.initializationOptions.length = 0
-  fixture.owners.length = 0
-  fixture.removeUis.length = 0
-  fixture.appProps.length = 0
-  fixture.createStore.mockImplementation(() => ({
-    discard: fixture.discard,
-    send: fixture.storeSend,
-    getDomain: () => ({
-      command: {
-        SilenceFeedbackCommand: fixture.silenceFeedback,
-        ResumeFeedbackCommand: fixture.resumeFeedback,
-        LoadingCommand: fixture.loadingCommand,
-        CancelCommand: fixture.cancelCommand
-      }
-    })
-  }))
-  fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
-  fixture.createChatRoomImpl.mockReturnValue({
-    bindConnectionResultReporter: () => {},
-    bindStandaloneInvocation: () => {},
-    onHistoryFeedback: (listener: (event: { type: string; ownerId: string }) => void) => {
-      fixture.historyFeedbackListener = listener
-      return () => {}
-    }
-  })
-  fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })
-  fixture.createReadinessImpl.mockReturnValue({ value: fixture.readiness })
-  fixture.createElement.mockImplementation(() => {
-    const element = document.createElement('div')
-    element.id = 'root'
-    return element
-  })
-  // SAFETY: the mock receives the shadow-root options the loader passes in production.
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- the mock receives the loader context object
-  fixture.createShadowRootUi.mockImplementation(async (_context: unknown, options: ShadowRootOptions) => {
-    const container = document.createElement('div')
-    const shadowHost = document.createElement('web-chat-unit')
-    document.body.append(container)
-    const remove = () => options.onRemove(fixture.owners.shift())
-    fixture.removeUis.push(remove)
-    return {
-      shadowHost,
-      mount: () => {
-        fixture.mount()
-        fixture.owners.push(options.onMount(container))
-      },
-      remove
-    }
-  })
+  fixture.initialization.length = 0
+  fixture.createRuntimePorts.mockReturnValue(fixture.runtime)
+  // SAFETY: the content script context is unused by the mocked shadow root UI.
+  await content.main({} as never)
 })
 
-afterEach(async () => {
-  await act(async () => {
-    const pendingRemovals = fixture.removeUis.splice(0)
-    pendingRemovals.forEach((remove) => remove())
-    const pendingOwners = fixture.owners.splice(0)
-    pendingOwners.forEach((owner) => {
-      owner.stopInitialization()
-      owner.root.unmount()
-      owner.store.discard()
-    })
-  })
-  document.body.replaceChildren()
-  window.removeEventListener('beforeunload', fixture.detachClient)
-  vi.unstubAllGlobals()
-})
+afterEach(() => fixture.remove.current?.())
 
 describe('content composition root', () => {
-  it('mounts the prop-free normal shell with the current required Domain scope before activation', async () => {
-    await startContent()
-
-    expect(fixture.createShadowRootUi).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        position: 'overlay',
-        isolateEvents: ['keyup', 'keydown', 'keypress']
-      })
-    )
-    expect(document.querySelector('[data-testid="application-shell"]')).not.toBeNull()
-    expect(fixture.createStore).toHaveBeenCalledOnce()
-    expect(fixture.startInitializationLifecycle).toHaveBeenCalledOnce()
-    expect(fixture.scope).toHaveBeenCalled()
-    expect(fixture.scope).toHaveBeenLastCalledWith([fixture.actions.notification, fixture.actions.appFeedback])
-    expect(fixture.appProps.every((props) => Object.keys(props).length === 0)).toBe(true)
+  it('creates one Runtime connection and hands its start and stop to initialization', async () => {
+    expect(fixture.createRuntimePorts).toHaveBeenCalledOnce()
+    expect(fixture.initialization).toHaveLength(1)
+    const { dependencies } = fixture.initialization[0]!
+    // Storage is only opened once initialization has prepared it.
     expect(fixture.createIndexedDBMessageDatabase).not.toHaveBeenCalled()
-    expect(fixture.createChatRoomImpl).not.toHaveBeenCalled()
-    expect(fixture.createWorldRoomImpl).not.toHaveBeenCalled()
-    expect(fixture.createReadinessImpl).not.toHaveBeenCalled()
-  })
-
-  it('owns one document-scope part bridge per Shadow UI and removes it during UI cleanup', async () => {
-    await startContent()
-
-    const styles = document.head.querySelectorAll<HTMLStyleElement>('[data-webchat-media-preview-transition]')
-    expect(styles).toHaveLength(1)
-    expect(styles[0]!.textContent).toBe(
-      'web-chat-unit::part(webchat-media-preview-transition) {\n' +
-        '  view-transition-name: var(--webchat-media-preview-transition-name, none);\n' +
-        '}'
-    )
-
-    await act(async () => {
-      fixture.removeUis.shift()?.()
-    })
-
-    expect(styles[0]!.isConnected).toBe(false)
-  })
-
-  it('cancels active sends on Content onRemove teardown', async () => {
-    await startContent()
-    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
-    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
-
-    await act(async () => {
-      fixture.removeUis.shift()?.()
-    })
-
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
-  })
-
-  it('silences page feedback on beforeunload and cancels sends + detaches exactly once on non-persisted pagehide', async () => {
-    await startContent()
-    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
-    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
-
-    // Departure begins: feedback is silenced before any page-local readiness change.
-    window.dispatchEvent(new window.Event('beforeunload'))
-    expect(fixture.silenceFeedback).toHaveBeenCalledTimes(1)
-
-    // A non-persisted pagehide is the terminal exit: cancel page work and release the lease exactly once.
-    const pagehide = new window.Event('pagehide')
-    Object.defineProperty(pagehide, 'persisted', { value: false })
-    window.dispatchEvent(pagehide)
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
-    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
-
-    // Repeated signals are idempotent.
-    window.dispatchEvent(pagehide)
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
-    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
-  })
-
-  it('restores exactly one suspended document binding on persisted pageshow and resumes feedback', async () => {
-    await startContent()
-    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
-    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
-
-    // BFCache suspension: persisted pagehide silences feedback then cancels + detaches once.
-    const pagehide = new window.Event('pagehide')
-    Object.defineProperty(pagehide, 'persisted', { value: true })
-    window.dispatchEvent(pagehide)
-    expect(fixture.silenceFeedback).toHaveBeenCalledTimes(1)
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
-    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
-
-    // A duplicate persisted hide while already suspended is a no-op (at most one release per cycle).
-    window.dispatchEvent(pagehide)
-    expect(fixture.silenceFeedback).toHaveBeenCalledTimes(1)
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
-    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
-
-    // Persisted pageshow restores exactly one current attach/init and resumes feedback.
-    const pageshow = new window.Event('pageshow')
-    Object.defineProperty(pageshow, 'persisted', { value: true })
-    window.dispatchEvent(pageshow)
-    await Promise.resolve()
-    expect(fixture.initClient).toHaveBeenCalledTimes(1)
-    expect(fixture.resumeFeedback).toHaveBeenCalledTimes(1)
-
-    // Duplicate restore signals do not create a second binding.
-    window.dispatchEvent(pageshow)
-    await Promise.resolve()
-    expect(fixture.initClient).toHaveBeenCalledTimes(1)
-
-    // A second full Back/Forward cycle is honored: hide->show again detaches exactly once more and
-    // restores exactly once more (the document returns to active between cycles).
-    window.dispatchEvent(pagehide)
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(2)
-    expect(fixture.detachClient).toHaveBeenCalledTimes(2)
-    window.dispatchEvent(pageshow)
-    await Promise.resolve()
-    expect(fixture.initClient).toHaveBeenCalledTimes(2)
-    expect(fixture.resumeFeedback).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not resume feedback when a terminal exit lands while restore is in flight', async () => {
-    await startContent()
-    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
-    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
-
-    // Hold the restore's initClient pending, then a non-persisted terminal pagehide lands before it
-    // completes: the late completion must NOT resume feedback on an ended document.
-    let resolveInit!: () => void
-    fixture.initClient.mockReturnValueOnce(
-      new Promise<null>((resolve) => {
-        resolveInit = () => resolve(null)
-      })
-    )
-
-    const pagehide = new window.Event('pagehide')
-    Object.defineProperty(pagehide, 'persisted', { value: true })
-    window.dispatchEvent(pagehide)
-    const pageshow = new window.Event('pageshow')
-    Object.defineProperty(pageshow, 'persisted', { value: true })
-    window.dispatchEvent(pageshow)
-
-    const terminal = new window.Event('pagehide')
-    Object.defineProperty(terminal, 'persisted', { value: false })
-    window.dispatchEvent(terminal)
-    resolveInit()
-    await Promise.resolve()
-
-    expect(fixture.resumeFeedback).not.toHaveBeenCalled()
-  })
-
-  it('recovers a visible document on rejected restore by resuming feedback to real current truth', async () => {
-    await startContent()
-    fixture.initClient.mockRejectedValueOnce(new Error('restore failed'))
-
-    const pagehide = new window.Event('pagehide')
-    Object.defineProperty(pagehide, 'persisted', { value: true })
-    window.dispatchEvent(pagehide)
-    const pageshow = new window.Event('pageshow')
-    Object.defineProperty(pageshow, 'persisted', { value: true })
-    window.dispatchEvent(pageshow)
-    await Promise.resolve()
-
-    // The browser showed this document: a failed re-attach must not wedge it silent; feedback resumes
-    // so the page presents the real current truth through the existing rules.
-    expect(fixture.resumeFeedback).toHaveBeenCalledTimes(1)
-    expect(fixture.initClient).toHaveBeenCalledTimes(1)
-  })
-
-  it('invalidates an in-flight restore when a persisted hide lands during it', async () => {
-    await startContent()
-    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
-    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
-
-    // Hold the restore's initClient pending, then a persisted pagehide (second suspension) lands before
-    // it completes: the generation is invalidated and the lease is detached again, so the late init
-    // completion must NOT resume feedback on the re-suspended document.
-    let resolveInit!: () => void
-    fixture.initClient.mockReturnValueOnce(
-      new Promise<null>((resolve) => {
-        resolveInit = () => resolve(null)
-      })
-    )
-
-    const pagehide = new window.Event('pagehide')
-    Object.defineProperty(pagehide, 'persisted', { value: true })
-    window.dispatchEvent(pagehide)
-    const pageshow = new window.Event('pageshow')
-    Object.defineProperty(pageshow, 'persisted', { value: true })
-    window.dispatchEvent(pageshow)
-
-    const hideAgain = new window.Event('pagehide')
-    Object.defineProperty(hideAgain, 'persisted', { value: true })
-    window.dispatchEvent(hideAgain)
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(2)
-    expect(fixture.detachClient).toHaveBeenCalledTimes(2)
-
-    resolveInit()
-    await Promise.resolve()
-    expect(fixture.resumeFeedback).not.toHaveBeenCalled()
-  })
-
-  it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {
-    await startContent()
-    const activate = fixture.initializationOptions[0]?.activateApplicationDependencies
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the captured boundary hook
-    if (typeof activate !== 'function') throw new Error('Activation boundary is unavailable')
-
-    activate()
-
+    await dependencies.initializeRuntime()
     expect(fixture.createIndexedDBMessageDatabase).toHaveBeenCalledOnce()
-    expect(fixture.createChatRoomImpl).toHaveBeenCalledOnce()
-    expect(fixture.createChatRoomImpl).toHaveBeenCalledWith(fixture.database)
-    expect(fixture.createWorldRoomImpl).toHaveBeenCalledOnce()
-    expect(fixture.createReadinessImpl).toHaveBeenCalledOnce()
-    expect(fixture.createReadinessImpl).toHaveBeenCalledWith(fixture.whenHostPhase)
+    expect(fixture.runtime.start).toHaveBeenCalledOnce()
+    dependencies.detachRuntime()
+    expect(fixture.runtime.stop).toHaveBeenCalledOnce()
   })
 
-  it('maps one attempt-owned History loading owner to the exact loading Toast and dismiss', async () => {
-    await startContent()
-    const activate = fixture.initializationOptions[0]?.activateApplicationDependencies
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the captured boundary hook
-    if (typeof activate !== 'function') throw new Error('Activation boundary is unavailable')
-    activate()
-    if (!fixture.historyFeedbackListener) throw new Error('History feedback listener was never wired')
-
-    fixture.historyFeedbackListener({ type: 'loading', ownerId: 'history:owner-1' })
-    expect(fixture.loadingCommand).toHaveBeenCalledWith({
-      id: 'history:owner-1',
-      message: 'Syncing message history...'
-    })
-    expect(fixture.cancelCommand).not.toHaveBeenCalled()
-
-    fixture.historyFeedbackListener({ type: 'dismiss', ownerId: 'history:owner-1' })
-    expect(fixture.cancelCommand).toHaveBeenCalledWith('history:owner-1')
-    // One sync never dismisses another owner or an unrelated Toast.
-    expect(fixture.cancelCommand).toHaveBeenCalledTimes(1)
+  it('silences feedback and closes the connection when the page is hidden', () => {
+    window.dispatchEvent(new Event('beforeunload'))
+    expect(sent()).toEqual(['silence'])
+    expect(fixture.runtime.stop).not.toHaveBeenCalled()
+    pageTransition('pagehide', false)
+    expect(fixture.runtime.stop).toHaveBeenCalledOnce()
   })
 
-  it('creates one store and initialization owner per document generation', async () => {
-    await startContent()
-    await startContent()
+  it('reconnects and resumes feedback when the page returns from the back-forward cache', async () => {
+    pageTransition('pagehide', true)
+    pageTransition('pageshow', false)
+    expect(fixture.runtime.start).not.toHaveBeenCalled()
+    pageTransition('pageshow', true)
+    expect(fixture.runtime.start).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(sent()).toEqual(['silence', 'resume']))
+  })
 
-    expect(fixture.createStore).toHaveBeenCalledTimes(2)
-    expect(fixture.startInitializationLifecycle).toHaveBeenCalledTimes(2)
-    expect(fixture.createShadowRootUi).toHaveBeenCalledTimes(2)
-    expect(fixture.mount).toHaveBeenCalledTimes(2)
+  it('maps history loading to one toast and its dismissal', () => {
+    const listener = fixture.runtime.onHistoryFeedback.mock.calls[0]![0]
+    listener({ ownerId: 'sync-1', type: 'loading' })
+    listener({ ownerId: 'sync-1', type: 'dismiss' })
+    expect(fixture.storeSend.mock.calls.map(([action]) => action)).toEqual([
+      { name: 'loading', payload: { id: 'sync-1', message: 'Syncing message history...' } },
+      { name: 'cancel', payload: 'sync-1' }
+    ])
+  })
+
+  it('releases everything when the UI is removed', () => {
+    fixture.remove.current!()
+    fixture.remove.current = null
+    expect(fixture.stopInitialization).toHaveBeenCalledOnce()
+    expect(fixture.discard).toHaveBeenCalledOnce()
+    pageTransition('pagehide', false)
+    expect(fixture.runtime.stop).not.toHaveBeenCalled()
   })
 })

@@ -24,7 +24,7 @@ npm run dev                  # Chrome dev mode with hot reload
 npm run dev:firefox          # Firefox dev mode
 
 # Type checking
-npm run check                # Run TypeScript compiler without emitting files
+npm run check                # TypeScript, plus the DOM-free check of src/runtime/core
 
 # Linting
 npm run format               # oxfmt write mode (formats source in place)
@@ -54,9 +54,9 @@ npm run postinstall          # WXT preparation (auto-runs after install)
 
 WebChat uses WXT's app-based structure (not entrypoints):
 
-- **src/app/content/** - Content-script UI; each page connects to the shared Runtime through comctx
-- **src/app/background/** - Extension actions, notifications, Runtime coordination, and the Firefox MV2 Runtime host
-- **src/app/offscreen/** - Chrome MV3 host document for the shared headless Runtime
+- **src/app/content/** - Content-script UI; each page connects to the shared Runtime over a Port
+- **src/app/background/** - Extension actions, notifications, creating the Runtime host on demand, and the Firefox MV2 Runtime host
+- **src/app/offscreen/** - Chrome MV3 host document for the shared Runtime
 - **src/app/options/** - Options page UI for user profile settings
 - Entry files: `index.ts` or `index.tsx` in each app directory
 
@@ -73,39 +73,36 @@ Remesh is used across two ownership layers:
 - `domain/impls/` - Page-side adapters, including the origin-owned message store and Runtime client
 - `domain/modules/` - Reusable domain sub-modules
 
-**Headless Runtime Domains** (`src/domain/runtime/`):
+**Runtime Domains** (`src/runtime/core/domain/`):
 
-- `Network.ts` - Trusted peer transport, World/Chat room orchestration, identity binding, and bounded history synchronization
-- `Lifecycle.ts` - Per-origin page leases and the shared host lifecycle
-- `Delivery.ts` - Volatile delivery and durable-settlement acknowledgement
-- `runtime/Server.ts` creates the headless Remesh store and injects clock, identity, wire, and page-port externs through adapters.
+- `Wire.ts` - Transport events in, decoded and schema-checked frames out, in per-source order
+- `Lifecycle.ts` - Which sites have a connected page, and the five-second grace after the last one leaves
+- `Room.ts` - One Chat room per site: local presence, remote presences, the HLC clock, sending and receiving messages
+- `World.ts` - The single World room and the per-browser site list
+- `History.ts` - History sync with each newly met peer
+- `Runtime.ts` builds the store and serves the pages; it never touches DOM or `browser.*`
 
 ### P2P Communication Architecture
 
-The content pages are UI/comctx clients. They do not own peer rooms or duplicate durable history. A single shared headless Runtime lives in a Chrome MV3 offscreen document or the persistent Firefox MV2 background page. The Runtime owns one selected WebRTC room transport, trusted `sourcePeerId` context, World/Chat sessions, decode and delivery queues, and history scheduling, supply, cancellation, and admission. Artico is the shipped build-time default; Trystero remains a build-time alternative using its default Nostr strategy. `RoomTransportProvider.ts` instantiates exactly one provider for each Runtime host, with no runtime switch, automatic fallback, or simultaneous provider connection. After the last page for an origin detaches, that origin's domain state enters a five-second grace period; this does not release the shared Runtime or any other domain.
+WebRTC needs a document, so the Runtime runs in a Chrome MV3 offscreen document or the Firefox MV2 background page (`src/runtime/host.ts`). `src/runtime/core/` contains everything else and is compiled by `tsconfig.core.json` with `lib: ESNext + WebWorker` and no DOM, so it can move to a worker host unchanged when workers get WebRTC. Its only seams are `Channel` (one connected page) and `HostLocator` (how a page reaches the host), in `src/runtime/core/Contract.ts`.
 
-`src/protocol/` is the third-party-facing peer boundary:
+- Pages connect straight to the host with `runtime.connect`. The Chrome service worker only answers "make sure the host exists" and carries no Runtime code; it is not on the message path.
+- The page owns intent (joined or not, user, presence id) and the message store. When the host or the worker goes away, the Port closes, the page reconnects (waking the worker, which recreates the host) and replays its join with the same presence, so peers see neither a leave nor a join.
+- Page → Runtime: `join`, `reconnect`, `send`. Runtime → page: `persist`, `readHistory`, `publish`. Both directions use comctx over the Channel.
+- One Chat room per site, shared by all its tabs; one World room per browser. After the last page of a site disconnects, its room is kept for five seconds.
+- Artico is the build-time default transport; Trystero is the alternative. `ROOM_TRANSPORT_PROVIDER` selects one; there is no runtime switch.
 
-- Chat v2 is the closed union `session | text | reaction | history-request | history-response`.
-- World v2 has no message `type`; trusted room context selects its strict `{sessionId,user,sites}` shape.
-- Peer frames use the fixed `base64(deflate(UTF8(JSON)))` codec and strict schemas. Payload identity never replaces the transport-provided source identity.
+`src/protocol/` is the peer boundary (namespace `V5`):
 
-**Connection Flow**:
-
-1. A content page registers its `{ domain, pageId }` lease and attaches to the shared Runtime through comctx.
-2. The Runtime joins the v2 World room and the origin-derived v2 Chat room, then projects trusted snapshots and events to attached pages.
-3. The Runtime allocates event IDs/HLC values centrally; the page persists the canonical local record before transport is attempted.
-4. History is pulled recent-first with exclusive `(hlc, id)` cursors and settles into the requesting page's origin store.
-5. Detaching the last page starts that origin domain's five-second grace period. Reconnecting during the grace period retains that domain. Expiry releases only its origin Chat room, World presence contribution, sessions, and history/delivery state; the shared Runtime host and all other active or grace-period domains remain alive.
+- Chat messages are the closed union `session | text | reaction | history-messages-pull | history-messages-push`.
+- World presence has no `type`; the room selects its strict `{sessionId, user, sites}` shape.
+- Frames use the fixed `base64(deflate(UTF8(JSON)))` codec and strict schemas. The sender is always the transport-provided peer id, never a payload field.
 
 ### Storage Strategy
 
-Page-owned storage is split by purpose:
-
 - `src/domain/impls/Storage.ts` provides local storage for UI state and browser sync storage for the user profile.
-- `src/domain/impls/MessageStore.ts` owns the per-origin IndexedDB store of exact `LocalRecord` values.
-- Canonical records use atomic first-value-wins persistence. Durable event status is monotonic `pending -> sent`; received peer events use `received`. System notices and record metadata remain local-only.
-- The Runtime may buffer unacknowledged deliveries, but it does not own or copy durable history. A page acknowledges only after its origin store settles the record.
+- `src/domain/MessageStore.ts` is the per-origin IndexedDB message store. Inserts are first-value-wins by record id.
+- The Runtime keeps no history. It asks a page of the site to store live and history messages, and to read history for a peer. While a site has no page (grace period) live messages are held in memory and handed to the next page.
 
 Key storage keys in `src/constants/storage.ts`:
 
@@ -118,26 +115,25 @@ Key storage keys in `src/constants/storage.ts`:
 
 ### History Synchronization
 
-- `HISTORY_WINDOW_DAYS = 30` is a peer-history candidate window, not a local durable-retention or deletion policy.
-- The requester freezes `requesterNow - 30 days` once at sync start. Retries, pagination, and provider failover do not reread its injected clock.
-- Each provider independently freezes `providerNow - 30 days` at supply-session admission. Page failover, later cursors, and successor promotion retain that admitted cutoff.
-- Cutoffs are not sent on the wire and do not need to match. Provider filtering is non-destructive; the requester remains final acceptance authority.
-- Both sides accept an event exactly at their own cutoff and exclude or reject only earlier events. Clock skew may omit a boundary candidate but cannot expand the requester's window.
-- A history session is recent-first with no whole-session cumulative event-count or byte budget and a fixed 10-second no-progress timeout. Provider admission allows at most 4 active jobs, 32 admitted jobs including dormant successors, and 8KiB of queued metadata. Each page supply has a five-second physical cancellation boundary.
+- When two peers meet in a Chat room, each asks the other once: it sends the ids it already has from the last 30 days, and receives what it is missing, oldest first, at most 100 messages per page.
+- A sync ends when its last page arrives, the peer leaves, or 10 seconds pass without a page.
+- The "Syncing message history..." toast shows only while a sync is storing something new.
 
 ## Code Organization
 
 ```
 src/
 ├── app/              # WXT applications (content, background, offscreen, options)
-├── protocol/         # Public v2 peer types, strict schemas, limits, and fixed codec
+├── protocol/         # Public peer types, strict schemas, limits, and fixed codec
 ├── domain/           # Application/page Remesh domains and local models
 │   ├── externs/      # Application dependency interfaces
-│   ├── impls/        # Page-side adapters and origin-owned persistence
-│   ├── modules/      # Reusable domain modules
-│   └── runtime/      # Headless Runtime Remesh domains
-├── runtime/          # Runtime server, host lifecycle, wire pipeline, and internal RPC
-├── service/adapter/  # Browser/runtime/comctx adapters
+│   ├── impls/        # Page-side adapters, including the Runtime client
+│   └── modules/      # Reusable domain modules
+├── runtime/
+│   ├── core/         # The Runtime: Remesh domains, contract, RPC (no DOM, no browser.*)
+│   ├── transports/   # Artico and Trystero room transports
+│   └── *.ts          # Host, page locator, Port channel, ensure-host
+├── service/          # Notification and AppAction services, comctx adapters
 ├── components/       # React UI components
 │   ├── ui/           # shadcn/ui base components
 │   └── magicui/      # Magic UI animated components
@@ -158,13 +154,11 @@ Import example: `import { ChatRoomDomain } from '@/domain/ChatRoom'`
 
 ## Important Constants
 
-Application and Runtime constants in `src/constants/config.ts`:
+Application constants in `src/constants/config.ts` (Runtime timings are in `src/runtime/core/Config.ts`):
 
 - `MESSAGE_MAX_LENGTH = 500` - Maximum visible draft length
 - `MESSAGE_IMAGE_TARGET_SIZE = 30 * 1024` - Image-compression target; canonical event size remains authoritative
 - `MAX_AVATAR_SIZE = 5120` - Maximum avatar size in browser sync storage
-- `HISTORY_WINDOW_DAYS = 30` - Frozen peer-history candidate window
-- `RUNTIME_DOMAIN_GRACE_MS = 5000` - Per-domain last-page detach grace; it is not the shared host lifetime
 - `ROOM_TRANSPORT_PROVIDER = 'artico'` - Build-time room transport selection; the supported alternative is `'trystero'`
 
 Public limits in `src/protocol/Limits.ts` are deliberately separate:
@@ -178,7 +172,7 @@ Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
 **Manifest configuration** (`wxt.config.ts`):
 
-- Permissions: `storage`, `notifications`, `tabs`
+- Permissions: `storage`, `notifications`, `tabs` (Chrome also `offscreen`)
 - Matches: `https://*/*`
 - Excludes: localhost, 127.0.0.1, accounts.google.com
 - Browser-specific manifests for Chrome and Firefox
@@ -194,7 +188,7 @@ Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
 A Remesh domain defines state transitions with Queries, Commands, Events, and Effects. Keep browser, transport, clock, storage, and internal page-port capabilities behind Extern contracts and inject concrete adapters when constructing the appropriate page or Runtime store.
 
-Page domains may project Runtime snapshots and events into UI state and origin-owned persistence. Peer decoding, source binding, queues, history state machines, and host RPC belong to the shared Runtime; public wire schemas and resource checks belong to `src/protocol/`.
+Page domains see the Runtime only through the `ChatRoom`, `WorldRoom` and `Readiness` externs. Runtime domains reach transports, the clock, ids and pages only through the externs in `src/runtime/core/Externs.ts`; public wire schemas and resource checks belong to `src/protocol/`.
 
 ## Validation with Valibot
 
@@ -217,4 +211,4 @@ const isValid = v.safeParse(schema, data).success
 
 ## Node Version
 
-Minimum Node.js version: `>=20.0.0` (see `engines` in package.json)
+Node.js `^22.18.0 || >=23.6.0` (see `engines` in package.json)

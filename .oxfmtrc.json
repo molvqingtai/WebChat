@@ -10,7 +10,6 @@
     "src/components/ui",
     "src/components/magicui",
     "src/lib/uglyAvatar",
-    "docs/architecture/*.html",
     "tools/oxlint/anti-slop/**"
   ],
   "sortPackageJson": false,

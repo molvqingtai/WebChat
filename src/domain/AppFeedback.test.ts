@@ -10,11 +10,7 @@ import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type Storag
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
-import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
-import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
-import { DocumentClient } from '@/runtime/DocumentClient'
-import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 
@@ -78,7 +74,6 @@ const createFixture = (readiness?: Readiness) => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
-      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl(
         readiness ?? {
           onState: (listener) => {
@@ -291,63 +286,5 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.loading).toHaveBeenCalledTimes(1)
     expect(fixture.toast.error).not.toHaveBeenCalled()
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
-  })
-
-  it('lets one explicit Runtime event own the only visible native error while an in-flight send rejects', async () => {
-    const domain = 'https://example.test'
-    const nativeError = new Error('Extension context invalidated.')
-    const snapshot: RuntimeSnapshot = {
-      hostId: 'host-a',
-      hostPhase: 'ready',
-      peerId: 'peer-a',
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          tabIds: [1],
-          inbound: [],
-          historyFeedback: [],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ],
-      world: { joined: true, peerId: 'peer-a', presences: [] },
-      failures: []
-    }
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(snapshot)
-      .mockRejectedValue(nativeError)
-    const lease = new DocumentClient({
-      coordinator: { registerPage },
-      // SAFETY: the client only reads the snapshot surface from this stubbed server.
-      server: { getSnapshot: async () => snapshot } as never,
-      domain
-    })
-    await lease.init()
-    const fixture = createFixture({
-      onState: (callback) =>
-        lease.whenHostPhase((phase) => callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting'))
-    })
-    const sending = deferred()
-    // SAFETY: the mock replaces the chat sender with the deferred promise used by this scenario.
-    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(sending.promise as never)
-    markReady(fixture)
-    await join(fixture)
-    clearToastCalls(fixture.toast)
-
-    fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
-    await flushMicrotasks()
-    expect(fixture.chat.sendMessage).toHaveBeenCalledOnce()
-
-    // A current-state refresh failure surfaces the original Error once through the failure route.
-    lease.invalidate()
-    sending.reject(nativeError)
-    await flushMicrotasks()
-
-    expect(registerPage).toHaveBeenCalledTimes(1)
-    expect(fixture.toast.error).toHaveBeenCalledOnce()
-    expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.')
-    lease.detach()
   })
 })

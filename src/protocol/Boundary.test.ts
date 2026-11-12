@@ -122,12 +122,11 @@ describe('public protocol source boundary', () => {
       'src/domain/MessageProjection.ts',
       'src/domain/MessageStore.ts',
       'src/domain/externs/ChatRoom.ts',
-      'src/domain/impls/runtime/ChatRoom.ts',
-      'src/domain/runtime/History.ts',
-      'src/domain/runtime/Session.ts',
-      'src/runtime/Contract.ts',
-      'src/runtime/PresenceStore.ts',
-      'src/runtime/Server.ts'
+      'src/domain/impls/ChatRoom.ts',
+      'src/runtime/core/Contract.ts',
+      'src/runtime/core/Runtime.ts',
+      'src/runtime/core/domain/History.ts',
+      'src/runtime/core/domain/Room.ts'
     ]
     const forbidden = [
       'Chat record user does not match its message',
