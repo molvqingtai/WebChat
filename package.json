@@ -100,7 +100,7 @@
     "tailwind-merge": "^3.7.0",
     "trystero": "0.26.0",
     "type-fest": "^5.10.0",
-    "unstorage": "^1.17.6",
+    "unstorage": "^2.0.0-beta.0",
     "valibot": "1.5.0"
   },
   "devDependencies": {
