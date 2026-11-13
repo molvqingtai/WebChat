@@ -4,7 +4,8 @@ export interface RoomTransport {
   peerIdOf: (roomId: string) => string
   /** Resolves once the provider room exists. */
   join: (roomId: string) => Promise<void>
-  leave: (roomId: string) => void
+  /** Resolves once the provider has torn the room down; callers reconnect only after it settles. */
+  leave: (roomId: string) => Promise<void>
   /** No `to` broadcasts to the room. The core never passes an empty target list. */
   send: (roomId: string, payload: string, to?: string | string[]) => Promise<void>
   onMessage: (callback: (roomId: string, sourcePeerId: string, payload: string) => void) => () => void

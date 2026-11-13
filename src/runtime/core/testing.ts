@@ -35,7 +35,7 @@ export const createMemoryHub = () => {
       members.set(this.peerId, this)
     }
 
-    leave = (roomId: string) => {
+    leave = async (roomId: string) => {
       const members = rooms.get(roomId)
       if (!members?.delete(this.peerId)) return
       members.forEach((member) => member.peerLeave.forEach((listener) => listener(roomId, this.peerId)))

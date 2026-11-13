@@ -374,12 +374,12 @@ const RoomDomain = Remesh.domain({
           mergeMap(async ({ domain: roomDomain, connection, leaveFirst }) => {
             const roomId = chatRoomId(roomDomain)
             try {
-              if (leaveFirst) transport.leave(roomId)
+              if (leaveFirst) await transport.leave(roomId)
               await joinWithTimeout(transport, roomId)
               return SettleJoinCommand({ domain: roomDomain, connection })
             } catch (error) {
               // Release the attempt so a failed peer never survives into the next retry.
-              transport.leave(roomId)
+              await transport.leave(roomId)
               return SettleJoinCommand({ domain: roomDomain, connection, error: errorMessage(error) })
             }
           })
@@ -408,8 +408,8 @@ const RoomDomain = Remesh.domain({
       name: 'Room.LeaveEffect',
       impl: ({ fromEvent }) =>
         fromEvent(ClosedEvent).pipe(
-          map(({ roomId }) => {
-            transport.leave(roomId)
+          mergeMap(async ({ roomId }) => {
+            await transport.leave(roomId)
             return null
           })
         )

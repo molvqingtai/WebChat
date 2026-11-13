@@ -20,6 +20,11 @@ export interface RuntimeDeps {
   /** Returns a reason when this host can no longer serve pages; the host is asked to replace itself. */
   unhealthyReason?: () => string | null
   onUnhealthy?: (reason: string) => void
+  /**
+   * The single way a host is replaced: used both when a page presses refresh and when the host
+   * reports it can no longer serve pages. Each host owns what "replace" means.
+   */
+  resetHost?: () => void
 }
 
 const toSession = (session: RuntimeSession): RuntimeSession => ({
@@ -40,7 +45,8 @@ export const createRuntime = ({
   nextId,
   now = () => Date.now(),
   unhealthyReason,
-  onUnhealthy
+  onUnhealthy,
+  resetHost
 }: RuntimeDeps) => {
   const pages = new Map<string, Set<PageService>>()
   const backlog = new Map<string, ChatMessageRecord[]>()
@@ -165,11 +171,9 @@ export const createRuntime = ({
       ).catch(() => {})
       return { ...toSession(joined), presenceId: joined.presenceId }
     },
+    /** Refresh and recovery are the same operation: replace the host. */
     reconnect: async () => {
-      store.send([
-        room.command.ReconnectCommand({ domain: site, leaveFirst: true }),
-        world.command.ReconnectCommand(true)
-      ])
+      resetHost?.()
     },
     send: async (command) => {
       let record: ChatMessageRecord | undefined

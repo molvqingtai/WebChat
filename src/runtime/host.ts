@@ -7,11 +7,6 @@ import { createRoomTransport as createArtico } from '@/runtime/transports/artico
 import { createRoomTransport as createTrystero } from '@/runtime/transports/trystero'
 
 /**
- * Runs the Runtime in the current document and accepts page connections. Used by the Chromium
- * Offscreen document and the Firefox background page; a future worker host is another file like
- * this one that calls `runtime.attach` with MessagePort channels.
- */
-/**
  * Artico turns any construction failure into "WebRTC is not supported by this browser", so probe by
  * building one peer and keep the real reason.
  */
@@ -24,20 +19,40 @@ const webRtcFailure = (): string | null => {
   }
 }
 
+const requestOffscreenReset = () => {
+  void Promise.resolve(browser.runtime.sendMessage({ type: RESET_HOST_MESSAGE })).catch(() => {})
+}
+
 /**
- * Chromium can drop WebRTC from a long-lived Offscreen document. Nothing else notices: joins fail
- * and pages keep waiting, so the host asks the service worker to replace it.
+ * Runs the Runtime in the current document and accepts page connections. Used by the Chromium
+ * Offscreen document and the Firefox background page; a future worker host is another file like
+ * this one that calls `runtime.attach` with MessagePort channels.
+ *
+ * A host is replaced through exactly one entry point — `resetHost` — which serves both the refresh
+ * button and the "this host can no longer build peers" signal.
  */
 export const startHost = () => {
-  const runtime = createRuntime({
-    transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
-    nextId: nanoid,
-    unhealthyReason: webRtcFailure,
-    onUnhealthy: (reason) => {
-      console.error('[webchat] host cannot serve pages:', reason)
-      void Promise.resolve(browser.runtime.sendMessage({ type: RESET_HOST_MESSAGE })).catch(() => {})
-    }
-  })
+  const create = () =>
+    createRuntime({
+      transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
+      nextId: nanoid,
+      unhealthyReason: webRtcFailure,
+      onUnhealthy: (reason) => {
+        console.error('[webchat] host cannot serve pages:', reason)
+        resetHost()
+      },
+      resetHost: () => resetHost()
+    })
+  let runtime = create()
+  // Firefox cannot reopen its background page, so replacing the host rebuilds the Runtime in place;
+  // Chromium reopens the Offscreen document, which is the only way to drop a wedged one.
+  const resetHost = import.meta.env.FIREFOX
+    ? () => {
+        runtime.dispose()
+        runtime = create()
+      }
+    : requestOffscreenReset
+
   browser.runtime.onConnect.addListener((port) => {
     if (port.name !== RUNTIME_PORT_NAME) return
     // The site comes from the browser, never from what the page claims.

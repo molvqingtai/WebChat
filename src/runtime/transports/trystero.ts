@@ -18,7 +18,7 @@ export const createRoomTransport = (): RoomTransport => {
   const leaving = new Map<string, Promise<void>>()
   const events = createTransportEvents()
 
-  const leave = (roomId: string) => {
+  const leave = async (roomId: string): Promise<void> => {
     const owner = owners.get(roomId)
     if (!owner) return
     owners.delete(roomId)
@@ -29,6 +29,7 @@ export const createRoomTransport = (): RoomTransport => {
         if (leaving.get(roomId) === settled) leaving.delete(roomId)
       })
     leaving.set(roomId, settled)
+    await settled
   }
 
   return {
