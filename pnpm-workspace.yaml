@@ -6,4 +6,5 @@ allowBuilds:
   utf-8-validate: true
   wxt: true
 patchedDependencies:
+  '@rtco/client@0.3.7': patches/@rtco__client@0.3.7.patch
   '@shadcn/react@0.3.1': patches/@shadcn__react@0.3.1.patch

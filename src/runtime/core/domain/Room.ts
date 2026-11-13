@@ -378,6 +378,8 @@ const RoomDomain = Remesh.domain({
               await joinWithTimeout(transport, roomId)
               return SettleJoinCommand({ domain: roomDomain, connection })
             } catch (error) {
+              // Release the attempt so a failed peer never survives into the next retry.
+              transport.leave(roomId)
               return SettleJoinCommand({ domain: roomDomain, connection, error: errorMessage(error) })
             }
           })

@@ -46,6 +46,9 @@ type ReconnectRequest = {
 }
 
 const RECONNECT_FEEDBACK_MINIMUM_MS = 300
+/** How many times an automatic re-join retries after a host restart before it gives up. */
+const AUTOMATIC_JOIN_ATTEMPTS = 5
+const AUTOMATIC_JOIN_RETRY_MS = 2000
 
 type ReconnectOperation = {
   id: number
@@ -57,6 +60,8 @@ type ConnectionOperation = {
   id: number
   input: JoinRoomInput
   mode: 'join' | 'automatic'
+  /** 1-based; only automatic re-joins retry. */
+  attempt?: number
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- normalization of an arbitrary thrown value
@@ -151,6 +156,7 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     const ConnectionRequestedEvent = domain.event<ConnectionOperation>({ name: 'Room.ConnectionRequestedEvent' })
+    const AutomaticJoinFailedEvent = domain.event<ConnectionOperation>({ name: 'Room.AutomaticJoinFailedEvent' })
     const StartConnectionCommand = domain.command({
       name: 'Room.StartConnectionCommand',
       impl: ({ get }, operation: Omit<ConnectionOperation, 'id'>) => {
@@ -370,6 +376,9 @@ const ChatRoomDomain = Remesh.domain({
             } catch (error) {
               // Superseded by a newer request, or cut off: finish silently.
               const cancelled = get(ConnectionRequestState())?.id !== operation.id || isCancelled(error)
+              if (!cancelled && operation.mode === 'automatic') {
+                return AutomaticJoinFailedEvent({ ...operation, attempt: operation.attempt ?? 1 })
+              }
               return CompleteConnectionOperationCommand({
                 ...operation,
                 ...(cancelled ? { cancelled: true } : { error: normalizeError(error) })
@@ -379,14 +388,38 @@ const ChatRoomDomain = Remesh.domain({
         )
     })
 
+    // A host that just restarted may need a moment before it accepts joins; one failed attempt must
+    // not leave the page stuck on "connecting" forever.
+    domain.effect({
+      name: 'Room.AutomaticJoinRetryEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(AutomaticJoinFailedEvent).pipe(
+          mergeMap((operation) =>
+            timer(AUTOMATIC_JOIN_RETRY_MS).pipe(
+              map(() => {
+                const attempt = operation.attempt ?? 1
+                return attempt >= AUTOMATIC_JOIN_ATTEMPTS
+                  ? CompleteConnectionOperationCommand({
+                      ...operation,
+                      error: new Error('Could not rejoin after the runtime restarted')
+                    })
+                  : StartConnectionCommand({ input: operation.input, mode: 'automatic', attempt: attempt + 1 })
+              })
+            )
+          )
+        )
+    })
+
     domain.effect({
       name: 'Room.HostRecoveryEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(readinessDomain.event.StateChangedEvent).pipe(
           filter((state) => state === 'ready'),
           map(() => {
+            // Recover whenever a join was ever attempted for this site, even if the last attempt
+            // failed: a restarted host must not leave the page sitting unjoined.
             const input = get(JoinInputState())
-            if (!input || !get(JoinIsFinishedQuery())) return null
+            if (!input) return null
             return StartConnectionCommand({ input, mode: 'automatic' })
           })
         )

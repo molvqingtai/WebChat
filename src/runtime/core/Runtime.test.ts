@@ -190,6 +190,39 @@ describe('Runtime over a MessagePort channel', () => {
     })
   })
 
+  it('asks the host to replace itself when it can no longer build peers', async () => {
+    const hub = createMemoryHub()
+    const unhealthy = vi.fn()
+    let sequence = 0
+    const transport = hub.createTransport()
+    transport.failJoin = true
+    const runtime = createRuntime({
+      transport,
+      nextId: () => `alice-${++sequence}`,
+      // The probe reports the host is broken, exactly as it does when Chrome refuses a new peer.
+      unhealthyReason: () => 'cannot create peers',
+      onUnhealthy: unhealthy
+    })
+    const pair = createChannelPair(DOMAIN)
+    runtime.attach(pair.host)
+    const page = connectServices<PageService, RuntimeService>(
+      pair.page,
+      {
+        namespace: PAGE_NAMESPACE,
+        service: {
+          persist: async () => 0,
+          readHistory: async () => [],
+          publish: () => {}
+        }
+      },
+      RUNTIME_NAMESPACE
+    )
+    await expect(page.join({ user: { id: 'u1', name: 'A', avatar: '' }, site })).rejects.toThrow('cannot create peers')
+    expect(unhealthy).toHaveBeenCalled()
+    runtime.dispose()
+    pair.close()
+  })
+
   it('fails a pending call when the channel closes', async () => {
     const page = createBrowser(createMemoryHub(), 'alice').openPage()
     await page.join()

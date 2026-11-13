@@ -17,6 +17,9 @@ export interface RuntimeDeps {
   transport: RoomTransport
   nextId: () => string
   now?: () => number
+  /** Returns a reason when this host can no longer serve pages; the host is asked to replace itself. */
+  unhealthyReason?: () => string | null
+  onUnhealthy?: (reason: string) => void
 }
 
 const toSession = (session: RuntimeSession): RuntimeSession => ({
@@ -32,7 +35,13 @@ const sessionsEvent = (room: Room): RuntimeEvent => ({
 })
 
 /** The whole Runtime. Nothing here knows which kind of host it runs in. */
-export const createRuntime = ({ transport, nextId, now = () => Date.now() }: RuntimeDeps) => {
+export const createRuntime = ({
+  transport,
+  nextId,
+  now = () => Date.now(),
+  unhealthyReason,
+  onUnhealthy
+}: RuntimeDeps) => {
   const pages = new Map<string, Set<PageService>>()
   const backlog = new Map<string, ChatMessageRecord[]>()
   const pagesOf = (site: string) => [...(pages.get(site) ?? [])]
@@ -97,6 +106,12 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
   )
   store.subscribeEvent(world.event.ErrorEvent, (message) => gateway.publish(null, { type: 'error', message }))
   store.subscribeEvent(room.event.ClosedEvent, ({ domain }) => backlog.delete(domain))
+  // Retries happen inside the Runtime, so the capability probe must run here and not only when a
+  // page calls join: a host that cannot build peers would otherwise retry forever.
+  store.subscribeEvent(room.event.JoinFailedEvent, () => {
+    const reason = unhealthyReason?.() ?? null
+    if (reason !== null) onUnhealthy?.(reason)
+  })
 
   // Live messages are stored one at a time per site, so pages see them in arrival order.
   const deliveries = new Map<string, Promise<void>>()
@@ -134,6 +149,11 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
   const serviceFor = (site: string, page: PageService): RuntimeService => ({
     join: async (input) => {
       if (input.site.origin !== site) throw new Error('Site does not match the page origin')
+      const unhealthy = unhealthyReason?.() ?? null
+      if (unhealthy !== null) {
+        onUnhealthy?.(unhealthy)
+        throw new Error(unhealthy)
+      }
       store.send(room.command.OpenCommand({ domain: site, ...input }))
       const joined = await whenJoined(site)
       void Promise.resolve(page.publish(sessionsEvent(joined))).catch(() => {})

@@ -53,10 +53,20 @@ export const createRoomTransport = (): RoomTransport => {
       console.error(error)
     }
     owner.peerId = nanoid()
-    const peer = new Artico({
-      id: owner.peerId,
-      signaling: new SocketSignaling({ url: SIGNALING_URL, id: owner.peerId })
-    })
+    let peer: Artico
+    try {
+      peer = new Artico({
+        id: owner.peerId,
+        signaling: new SocketSignaling({ url: SIGNALING_URL, id: owner.peerId })
+      })
+    } catch (error) {
+      // Artico builds a RTCPeerConnection first; when that fails the half-built peer must not be
+      // kept, or every retry leaks one more connection until Chrome refuses to create any.
+      owner.peer = undefined
+      owner.pending?.reject(error instanceof Error ? error : new Error(String(error)))
+      owner.pending = undefined
+      return
+    }
     owner.peer = peer
     peer.on('open', () => isCurrent(owner, peer) && enter(owner, peer))
     peer.on('error', (error) => isCurrent(owner, peer) && events.error.emit(error, owner.roomId))
