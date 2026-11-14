@@ -49,14 +49,23 @@ const note = (event: string) => {
   }
 }
 
+const RESET_COOLDOWN_MS = 10000
+
 export const startHost = () => {
   note('boot')
+  let lastResetAt = 0
   const create = () =>
     createRuntime({
       transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
       nextId: nanoid,
       unhealthyReason: webRtcFailure,
       onUnhealthy: (reason) => {
+        // Every room probes on its own, so one dead host reports itself many times at once. Only the
+        // first report in a window may replace the host; the rest would just re-close a host that is
+        // already being replaced.
+        const at = Date.now()
+        if (at - lastResetAt < RESET_COOLDOWN_MS) return
+        lastResetAt = at
         console.error('[webchat] host cannot serve pages:', reason)
         note(`unhealthy: ${reason}`)
         resetHost()
