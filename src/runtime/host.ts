@@ -31,7 +31,26 @@ const requestOffscreenReset = () => {
  * A host is replaced through exactly one entry point — `resetHost` — which serves both the refresh
  * button and the "this host can no longer build peers" signal.
  */
+const HOST_LOG_KEY = 'webchat:host-log'
+
+/**
+ * A host dies the moment it is replaced, so anything it wants to say about why has to be written
+ * synchronously to storage shared by every host of this origin. localStorage is the only store
+ * that survives a document that is about to be closed.
+ */
+const note = (event: string) => {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(HOST_LOG_KEY) ?? '[]')
+    const log = Array.isArray(parsed) ? parsed : []
+    log.push({ at: new Date().toISOString(), event })
+    localStorage.setItem(HOST_LOG_KEY, JSON.stringify(log.slice(-30)))
+  } catch {
+    // Diagnostics must never keep a host alive or stop it from dying.
+  }
+}
+
 export const startHost = () => {
+  note('boot')
   const create = () =>
     createRuntime({
       transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
@@ -39,9 +58,13 @@ export const startHost = () => {
       unhealthyReason: webRtcFailure,
       onUnhealthy: (reason) => {
         console.error('[webchat] host cannot serve pages:', reason)
+        note(`unhealthy: ${reason}`)
         resetHost()
       },
-      resetHost: () => resetHost()
+      resetHost: () => {
+        note('refresh')
+        resetHost()
+      }
     })
   let runtime = create()
   // Firefox cannot reopen its background page, so replacing the host rebuilds the Runtime in place;
