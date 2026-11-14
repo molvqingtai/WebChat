@@ -49,26 +49,35 @@ const note = (event: string) => {
   }
 }
 
-const RESET_COOLDOWN_MS = 10000
+/** Reports arrive as a burst: every room probes on its own within the same second. */
+const REPORT_DEBOUNCE_MS = 500
+/** A stream of reports must still replace the host; debounce cannot wait forever. */
+const REPORT_MAX_WAIT_MS = 2000
 
 export const startHost = () => {
   note('boot')
-  let lastResetAt = 0
+  let reportAt = 0
+  let reportTimer: ReturnType<typeof setTimeout> | undefined
   const create = () =>
     createRuntime({
       transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
       nextId: nanoid,
       unhealthyReason: webRtcFailure,
       onUnhealthy: (reason) => {
-        // Every room probes on its own, so one dead host reports itself many times at once. Only the
-        // first report in a window may replace the host; the rest would just re-close a host that is
-        // already being replaced.
-        const at = Date.now()
-        if (at - lastResetAt < RESET_COOLDOWN_MS) return
-        lastResetAt = at
-        console.error('[webchat] host cannot serve pages:', reason)
-        note(`unhealthy: ${reason}`)
-        resetHost()
+        // Collapse a burst of reports into one replacement: wait for the reports to stop, but never
+        // longer than the maximum, so a host that reports continuously is still replaced.
+        reportAt ||= Date.now()
+        clearTimeout(reportTimer)
+        const waited = Date.now() - reportAt
+        reportTimer = setTimeout(
+          () => {
+            reportAt = 0
+            console.error('[webchat] host cannot serve pages:', reason)
+            note(`unhealthy: ${reason}`)
+            resetHost()
+          },
+          Math.max(0, Math.min(REPORT_DEBOUNCE_MS, REPORT_MAX_WAIT_MS - waited))
+        )
       },
       resetHost: () => {
         note('refresh')
