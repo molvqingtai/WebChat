@@ -1,3 +1,11 @@
+## [2.8.3](https://github.com/molvqingtai/WebChat/compare/v2.8.2...v2.8.3) (2026-11-14)
+
+### Bug Fixes
+
+- **deps:** stay on stable unstorage and align the setup label ([bcbde06](https://github.com/molvqingtai/WebChat/commit/bcbde06427da8a5c3bafcb1c44397cb73014558c))
+- **runtime:** rebuild a host that has gone quiet ([51ec504](https://github.com/molvqingtai/WebChat/commit/51ec5045e7be850fdcbb1d036e7a52d069812884))
+- **runtime:** stop leaking peers and recover from a dead host ([c1a9c3a](https://github.com/molvqingtai/WebChat/commit/c1a9c3aa0f7f472d0cd1eba29a1b2230e664eff7))
+
 ## [2.8.2](https://github.com/molvqingtai/WebChat/compare/v2.8.1...v2.8.2) (2026-11-12)
 
 ### Bug Fixes
