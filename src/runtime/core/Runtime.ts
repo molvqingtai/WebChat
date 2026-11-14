@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import type { ChatMessageRecord } from '@/domain/Message'
 import { ChatMessageSchema, NativeWireCodec } from '@/protocol'
-import { MAX_BACKLOG_MESSAGES } from './Config'
+import { HOST_SILENCE_MS, HOST_SILENCE_WITH_PEERS_MS, MAX_BACKLOG_MESSAGES } from './Config'
 import type { Channel, PageService, RuntimeEvent, RuntimeService, RuntimeSession } from './Contract'
 import { ClockExtern, IdentityExtern, PageGatewayExtern, RoomTransportExtern, type PageGateway } from './Externs'
 import type { RoomTransport } from './RoomTransport'
@@ -112,6 +112,29 @@ export const createRuntime = ({
   )
   store.subscribeEvent(world.event.ErrorEvent, (message) => gateway.publish(null, { type: 'error', message }))
   store.subscribeEvent(room.event.ClosedEvent, ({ domain }) => backlog.delete(domain))
+  // A room can believe it is joined while the host can no longer build peers, and then no join is
+  // ever attempted. Probing costs a real RTCPeerConnection, so it waits for silence, and the wait
+  // is a deadline re-armed by traffic rather than a timer that wakes up to look for silence.
+  let silenceDeadline: ReturnType<typeof setTimeout> | null = null
+  const probeAfterSilence = () => {
+    silenceDeadline = null
+    if (store.query(room.query.RoomsQuery()).every((item) => !item.joined)) return
+    const reason = unhealthyReason?.() ?? null
+    if (reason === null) armSilenceProbe()
+    else onUnhealthy?.(reason)
+  }
+  /** With someone in the room, silence is a symptom; alone, it is just an empty room. */
+  const silenceWait = () =>
+    store.query(room.query.RoomsQuery()).some((item) => item.joined && item.peers.length > 0)
+      ? HOST_SILENCE_WITH_PEERS_MS
+      : HOST_SILENCE_MS
+  const armSilenceProbe = () => {
+    if (silenceDeadline !== null) clearTimeout(silenceDeadline)
+    silenceDeadline = setTimeout(probeAfterSilence, silenceWait())
+  }
+  store.subscribeEvent(room.event.FrameSeenEvent, () => armSilenceProbe())
+  store.subscribeEvent(room.event.JoinedEvent, () => armSilenceProbe())
+  store.subscribeEvent(room.event.PeerConnectedEvent, () => armSilenceProbe())
   // Retries happen inside the Runtime, so the capability probe must run here and not only when a
   // page calls join: a host that cannot build peers would otherwise retry forever.
   store.subscribeEvent(room.event.JoinFailedEvent, () => {
@@ -217,6 +240,7 @@ export const createRuntime = ({
       }
     },
     dispose: () => {
+      if (silenceDeadline !== null) clearTimeout(silenceDeadline)
       store.discard()
       transport.dispose()
     }

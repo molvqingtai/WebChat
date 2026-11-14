@@ -18,3 +18,11 @@ export const HISTORY_INVENTORY_PAGE_IDS = 4096
 export const MAX_HISTORY_INVENTORY_IDS = 500000
 /** Live messages kept while a site has no page (only during its grace period). */
 export const MAX_BACKLOG_MESSAGES = 512
+
+/**
+ * Silence is the only reason to spend a real RTCPeerConnection on a probe, and how long it has to
+ * last depends on whether anyone is there to miss: with peers listed, silence means something and
+ * the host is checked soon; alone in a room, it is just an empty room.
+ */
+export const HOST_SILENCE_MS = 15 * 60 * 1000
+export const HOST_SILENCE_WITH_PEERS_MS = 5 * 60 * 1000
