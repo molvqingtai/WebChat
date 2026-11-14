@@ -1,5 +1,6 @@
 import { browser } from '#imports'
 import { nanoid } from 'nanoid'
+import { debounce } from '@/utils'
 import { ROOM_TRANSPORT_PROVIDER } from '@/constants/config'
 import { portChannel, RESET_HOST_MESSAGE, RUNTIME_PORT_NAME } from '@/runtime/channel'
 import { createRuntime } from '@/runtime/core/Runtime'
@@ -51,39 +52,26 @@ const note = (event: string) => {
 
 /** Reports arrive as a burst: every room probes on its own within the same second. */
 const REPORT_DEBOUNCE_MS = 500
-/** A stream of reports must still replace the host; debounce cannot wait forever. */
-const REPORT_MAX_WAIT_MS = 2000
 
 export const startHost = () => {
   note('boot')
-  let reportAt = 0
-  let reportTimer: ReturnType<typeof setTimeout> | undefined
   const create = () =>
     createRuntime({
       transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
       nextId: nanoid,
       unhealthyReason: webRtcFailure,
-      onUnhealthy: (reason) => {
-        // Collapse a burst of reports into one replacement: wait for the reports to stop, but never
-        // longer than the maximum, so a host that reports continuously is still replaced.
-        reportAt ||= Date.now()
-        clearTimeout(reportTimer)
-        const waited = Date.now() - reportAt
-        reportTimer = setTimeout(
-          () => {
-            reportAt = 0
-            console.error('[webchat] host cannot serve pages:', reason)
-            note(`unhealthy: ${reason}`)
-            resetHost()
-          },
-          Math.max(0, Math.min(REPORT_DEBOUNCE_MS, REPORT_MAX_WAIT_MS - waited))
-        )
-      },
+      onUnhealthy: replaceDeadHost,
       resetHost: () => {
         note('refresh')
         resetHost()
       }
     })
+  // Every room reports the same dead host within the same second; one replacement is enough.
+  const replaceDeadHost = debounce((reason: string) => {
+    console.error('[webchat] host cannot serve pages:', reason)
+    note(`unhealthy: ${reason}`)
+    resetHost()
+  }, REPORT_DEBOUNCE_MS)
   let runtime = create()
   // Firefox cannot reopen its background page, so replacing the host rebuilds the Runtime in place;
   // Chromium reopens the Offscreen document, which is the only way to drop a wedged one.
