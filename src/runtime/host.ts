@@ -1,5 +1,6 @@
 import { browser } from '#imports'
 import { nanoid } from 'nanoid'
+import { debounce } from '@/utils'
 import { ROOM_TRANSPORT_PROVIDER } from '@/constants/config'
 import { portChannel, RESET_HOST_MESSAGE, RUNTIME_PORT_NAME } from '@/runtime/channel'
 import { createRuntime } from '@/runtime/core/Runtime'
@@ -49,6 +50,9 @@ const note = (event: string) => {
   }
 }
 
+/** Reports arrive as a burst: every room probes on its own within the same second. */
+const REPORT_DEBOUNCE_MS = 500
+
 export const startHost = () => {
   note('boot')
   const create = () =>
@@ -56,16 +60,18 @@ export const startHost = () => {
       transport: ROOM_TRANSPORT_PROVIDER === 'artico' ? createArtico() : createTrystero(),
       nextId: nanoid,
       unhealthyReason: webRtcFailure,
-      onUnhealthy: (reason) => {
-        console.error('[webchat] host cannot serve pages:', reason)
-        note(`unhealthy: ${reason}`)
-        resetHost()
-      },
+      onUnhealthy: replaceDeadHost,
       resetHost: () => {
         note('refresh')
         resetHost()
       }
     })
+  // Every room reports the same dead host within the same second; one replacement is enough.
+  const replaceDeadHost = debounce((reason: string) => {
+    console.error('[webchat] host cannot serve pages:', reason)
+    note(`unhealthy: ${reason}`)
+    resetHost()
+  }, REPORT_DEBOUNCE_MS)
   let runtime = create()
   // Firefox cannot reopen its background page, so replacing the host rebuilds the Runtime in place;
   // Chromium reopens the Offscreen document, which is the only way to drop a wedged one.
