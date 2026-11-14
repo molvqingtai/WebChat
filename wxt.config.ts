@@ -44,6 +44,15 @@ export default defineConfig({
       }
     }[browser]
   },
+  hooks: {
+    // Firefox may treat an MV2 background without this flag as an event page, which starts on
+    // events it has no listeners for yet. The host only lives if the page is always there.
+    'build:manifestGenerated': (wxt, manifest) => {
+      if (wxt.config.browser !== 'firefox') return
+      // MV2 background only; the MV3 service worker shape has no such flag.
+      if (manifest.background && 'scripts' in manifest.background) manifest.background.persistent = true
+    }
+  },
   vite: (env) => ({
     define: {
       __DEV__: env.mode === 'development',
