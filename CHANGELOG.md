@@ -1,3 +1,11 @@
+## [2.8.4](https://github.com/molvqingtai/WebChat/compare/v2.8.3...v2.8.4) (2026-11-14)
+
+### Bug Fixes
+
+- **runtime:** collapse host replacement instead of throttling it ([a3aa683](https://github.com/molvqingtai/WebChat/commit/a3aa68313b81fe756d3e2fe7d5c73a4da08bb6c6))
+- **runtime:** debounce host replacement with the existing utility ([1fd768a](https://github.com/molvqingtai/WebChat/commit/1fd768aa80d0e4eee6f3fdbea30e27f208ae7921))
+- **runtime:** replace a dead host once per burst of reports ([46a6b1b](https://github.com/molvqingtai/WebChat/commit/46a6b1b1588ecd24baaa123b6c02d51021db0ef8))
+
 ## [2.8.3](https://github.com/molvqingtai/WebChat/compare/v2.8.2...v2.8.3) (2026-11-14)
 
 ### Bug Fixes
