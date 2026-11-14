@@ -3,6 +3,8 @@ import type { Channel } from '@/runtime/core/Contract'
 
 export const RUNTIME_PORT_NAME = 'webchat-runtime'
 export const ENSURE_HOST_MESSAGE = 'webchat:ensure-host'
+/** Sent by a host that can no longer do its job (for example WebRTC disappeared). */
+export const RESET_HOST_MESSAGE = 'webchat:reset-host'
 
 /** Adapts an extension Port to the Channel the core understands. */
 export const portChannel = (port: Browser.runtime.Port, domain: string): Channel => {

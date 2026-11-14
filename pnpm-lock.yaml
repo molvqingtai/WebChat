@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  '@rtco/client@0.3.7': 63b4df2ffb263b23e3b60ddf067cc32e4697d8822910c40e6a495332d7dcd4b0
   '@shadcn/react@0.3.1': 418d949738d77038a94b1c5843274fe3ed2787b9d711ff490859a11ecee636e8
 
 importers:
@@ -61,7 +62,7 @@ importers:
         version: 1.7.2
       '@rtco/client':
         specifier: 0.3.7
-        version: 0.3.7(supports-color@7.2.0)
+        version: 0.3.7(patch_hash=63b4df2ffb263b23e3b60ddf067cc32e4697d8822910c40e6a495332d7dcd4b0)(supports-color@7.2.0)
       '@shadcn/react':
         specifier: 0.3.1
         version: 0.3.1(patch_hash=418d949738d77038a94b1c5843274fe3ed2787b9d711ff490859a11ecee636e8)(@types/react@19.3.0)(react@19.3.1)
@@ -6281,7 +6282,7 @@ snapshots:
       estree-walker: 2.0.2
       picomatch: 4.0.7
 
-  '@rtco/client@0.3.7(supports-color@7.2.0)':
+  '@rtco/client@0.3.7(patch_hash=63b4df2ffb263b23e3b60ddf067cc32e4697d8822910c40e6a495332d7dcd4b0)(supports-color@7.2.0)':
     dependencies:
       '@rtco/peer': 0.3.7
       bufferutil: 4.2.0

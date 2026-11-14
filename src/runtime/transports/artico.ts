@@ -6,6 +6,8 @@ import { createTransportEvents } from './events'
 
 const SIGNALING_URL = 'wss://web-chat.io'
 const RESTART_DELAY_MS = 10000
+/** A release that cannot confirm its close still resolves, so a reconnect is never blocked. */
+const LEAVE_TIMEOUT_MS = 2000
 
 interface Owner {
   roomId: string
@@ -53,10 +55,20 @@ export const createRoomTransport = (): RoomTransport => {
       console.error(error)
     }
     owner.peerId = nanoid()
-    const peer = new Artico({
-      id: owner.peerId,
-      signaling: new SocketSignaling({ url: SIGNALING_URL, id: owner.peerId })
-    })
+    let peer: Artico
+    try {
+      peer = new Artico({
+        id: owner.peerId,
+        signaling: new SocketSignaling({ url: SIGNALING_URL, id: owner.peerId })
+      })
+    } catch (error) {
+      // Artico builds a RTCPeerConnection first; when that fails the half-built peer must not be
+      // kept, or every retry leaks one more connection until Chrome refuses to create any.
+      owner.peer = undefined
+      owner.pending?.reject(error instanceof Error ? error : new Error(String(error)))
+      owner.pending = undefined
+      return
+    }
     owner.peer = peer
     peer.on('open', () => isCurrent(owner, peer) && enter(owner, peer))
     peer.on('error', (error) => isCurrent(owner, peer) && events.error.emit(error, owner.roomId))
@@ -66,18 +78,38 @@ export const createRoomTransport = (): RoomTransport => {
     })
   }
 
-  const leave = (roomId: string) => {
+  const leave = async (roomId: string) => {
     const owner = owners.get(roomId)
     if (!owner) return
     owners.delete(roomId)
     clearTimeout(owner.restart)
     owner.pending?.reject(new Error(`Room "${roomId}" join cancelled`))
+    const room = owner.room
+    const peer = owner.peer
+    owner.room = undefined
+    owner.peer = undefined
     try {
-      owner.room?.leave()
-      owner.peer?.close()
+      room?.leave()
+      peer?.close()
     } catch (error) {
       console.error(error)
     }
+    // Waiting for the provider's close makes "refresh" a real teardown: the new peer is only
+    // built after the old socket is gone.
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      try {
+        peer?.on('close', finish)
+      } catch {
+        /* a peer that cannot report close simply resolves through the timeout below */
+      }
+      setTimeout(finish, LEAVE_TIMEOUT_MS)
+    })
   }
 
   return {

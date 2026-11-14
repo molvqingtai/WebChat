@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import type { ChatMessageRecord } from '@/domain/Message'
 import { ChatMessageSchema, NativeWireCodec } from '@/protocol'
-import { MAX_BACKLOG_MESSAGES } from './Config'
+import { HOST_SILENCE_MS, HOST_SILENCE_WITH_PEERS_MS, MAX_BACKLOG_MESSAGES } from './Config'
 import type { Channel, PageService, RuntimeEvent, RuntimeService, RuntimeSession } from './Contract'
 import { ClockExtern, IdentityExtern, PageGatewayExtern, RoomTransportExtern, type PageGateway } from './Externs'
 import type { RoomTransport } from './RoomTransport'
@@ -17,6 +17,14 @@ export interface RuntimeDeps {
   transport: RoomTransport
   nextId: () => string
   now?: () => number
+  /** Returns a reason when this host can no longer serve pages; the host is asked to replace itself. */
+  unhealthyReason?: () => string | null
+  onUnhealthy?: (reason: string) => void
+  /**
+   * The single way a host is replaced: used both when a page presses refresh and when the host
+   * reports it can no longer serve pages. Each host owns what "replace" means.
+   */
+  resetHost?: () => void
 }
 
 const toSession = (session: RuntimeSession): RuntimeSession => ({
@@ -32,7 +40,14 @@ const sessionsEvent = (room: Room): RuntimeEvent => ({
 })
 
 /** The whole Runtime. Nothing here knows which kind of host it runs in. */
-export const createRuntime = ({ transport, nextId, now = () => Date.now() }: RuntimeDeps) => {
+export const createRuntime = ({
+  transport,
+  nextId,
+  now = () => Date.now(),
+  unhealthyReason,
+  onUnhealthy,
+  resetHost
+}: RuntimeDeps) => {
   const pages = new Map<string, Set<PageService>>()
   const backlog = new Map<string, ChatMessageRecord[]>()
   const pagesOf = (site: string) => [...(pages.get(site) ?? [])]
@@ -97,6 +112,35 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
   )
   store.subscribeEvent(world.event.ErrorEvent, (message) => gateway.publish(null, { type: 'error', message }))
   store.subscribeEvent(room.event.ClosedEvent, ({ domain }) => backlog.delete(domain))
+  // A room can believe it is joined while the host can no longer build peers, and then no join is
+  // ever attempted. Probing costs a real RTCPeerConnection, so it waits for silence, and the wait
+  // is a deadline re-armed by traffic rather than a timer that wakes up to look for silence.
+  let silenceDeadline: ReturnType<typeof setTimeout> | null = null
+  const probeAfterSilence = () => {
+    silenceDeadline = null
+    if (store.query(room.query.RoomsQuery()).every((item) => !item.joined)) return
+    const reason = unhealthyReason?.() ?? null
+    if (reason === null) armSilenceProbe()
+    else onUnhealthy?.(reason)
+  }
+  /** With someone in the room, silence is a symptom; alone, it is just an empty room. */
+  const silenceWait = () =>
+    store.query(room.query.RoomsQuery()).some((item) => item.joined && item.peers.length > 0)
+      ? HOST_SILENCE_WITH_PEERS_MS
+      : HOST_SILENCE_MS
+  const armSilenceProbe = () => {
+    if (silenceDeadline !== null) clearTimeout(silenceDeadline)
+    silenceDeadline = setTimeout(probeAfterSilence, silenceWait())
+  }
+  store.subscribeEvent(room.event.FrameSeenEvent, () => armSilenceProbe())
+  store.subscribeEvent(room.event.JoinedEvent, () => armSilenceProbe())
+  store.subscribeEvent(room.event.PeerConnectedEvent, () => armSilenceProbe())
+  // Retries happen inside the Runtime, so the capability probe must run here and not only when a
+  // page calls join: a host that cannot build peers would otherwise retry forever.
+  store.subscribeEvent(room.event.JoinFailedEvent, () => {
+    const reason = unhealthyReason?.() ?? null
+    if (reason !== null) onUnhealthy?.(reason)
+  })
 
   // Live messages are stored one at a time per site, so pages see them in arrival order.
   const deliveries = new Map<string, Promise<void>>()
@@ -134,6 +178,11 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
   const serviceFor = (site: string, page: PageService): RuntimeService => ({
     join: async (input) => {
       if (input.site.origin !== site) throw new Error('Site does not match the page origin')
+      const unhealthy = unhealthyReason?.() ?? null
+      if (unhealthy !== null) {
+        onUnhealthy?.(unhealthy)
+        throw new Error(unhealthy)
+      }
       store.send(room.command.OpenCommand({ domain: site, ...input }))
       const joined = await whenJoined(site)
       void Promise.resolve(page.publish(sessionsEvent(joined))).catch(() => {})
@@ -145,11 +194,9 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
       ).catch(() => {})
       return { ...toSession(joined), presenceId: joined.presenceId }
     },
+    /** Refresh and recovery are the same operation: replace the host. */
     reconnect: async () => {
-      store.send([
-        room.command.ReconnectCommand({ domain: site, leaveFirst: true }),
-        world.command.ReconnectCommand(true)
-      ])
+      resetHost?.()
     },
     send: async (command) => {
       let record: ChatMessageRecord | undefined
@@ -193,6 +240,7 @@ export const createRuntime = ({ transport, nextId, now = () => Date.now() }: Run
       }
     },
     dispose: () => {
+      if (silenceDeadline !== null) clearTimeout(silenceDeadline)
       store.discard()
       transport.dispose()
     }

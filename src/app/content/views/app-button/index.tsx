@@ -178,7 +178,7 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const refreshLabel = applicationReady
     ? reconnectLabel
     : initializationConnecting
-      ? 'Preparing WebChat setup'
+      ? 'Loading WebChat setup'
       : 'Retry WebChat setup'
   const refreshDisabled = applicationReady ? !reconnectAvailable : initializationConnecting
   const refreshLoading = applicationReady ? reconnecting : initializationConnecting

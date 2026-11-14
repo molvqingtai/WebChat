@@ -192,7 +192,7 @@ const WorldDomain = Remesh.domain({
                 return SettleJoinCommand({ connection: task.connection })
               }
               if (task.kind === 'leave') {
-                transport.leave(worldRoomId)
+                await transport.leave(worldRoomId)
                 return null
               }
               const presence = get(LocalPresenceQuery())

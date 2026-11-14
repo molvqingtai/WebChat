@@ -77,9 +77,12 @@ const RoomDomain = Remesh.domain({
 
     const RoomsState = domain.state<Room[]>({ name: 'Room.RoomsState', default: [] })
     const ClockState = domain.state<HLC>({ name: 'Room.ClockState', default: { timestamp: 0, counter: 0 } })
+    /** Last moment any peer frame arrived; the host uses silence, not a timer, as its health hint. */
+    const LastFrameAtState = domain.state({ name: 'Room.LastFrameAtState', default: 0 })
     const LastJoinedAtState = domain.state({ name: 'Room.LastJoinedAtState', default: 0 })
 
     const RoomsQuery = domain.query({ name: 'Room.RoomsQuery', impl: ({ get }) => get(RoomsState()) })
+    const LastFrameAtQuery = domain.query({ name: 'Room.LastFrameAtQuery', impl: ({ get }) => get(LastFrameAtState()) })
     const RoomQuery = domain.query({
       name: 'Room.RoomQuery',
       impl: ({ get }, roomDomain: string) => get(RoomsState()).find((room) => room.domain === roomDomain) ?? null
@@ -94,6 +97,7 @@ const RoomDomain = Remesh.domain({
     const IdentityChangedEvent = domain.event<string>({ name: 'Room.IdentityChangedEvent' })
     /** The set of open rooms, or a room's user or site, changed. */
     const PresenceChangedEvent = domain.event({ name: 'Room.PresenceChangedEvent' })
+    const FrameSeenEvent = domain.event({ name: 'Room.FrameSeenEvent' })
     const SessionsChangedEvent = domain.event<string>({ name: 'Room.SessionsChangedEvent' })
     const PeerConnectedEvent = domain.event<Attempt & { peerId: string }>({ name: 'Room.PeerConnectedEvent' })
     const PeerDisconnectedEvent = domain.event<{ domain: string; peerId: string }>({
@@ -374,10 +378,12 @@ const RoomDomain = Remesh.domain({
           mergeMap(async ({ domain: roomDomain, connection, leaveFirst }) => {
             const roomId = chatRoomId(roomDomain)
             try {
-              if (leaveFirst) transport.leave(roomId)
+              if (leaveFirst) await transport.leave(roomId)
               await joinWithTimeout(transport, roomId)
               return SettleJoinCommand({ domain: roomDomain, connection })
             } catch (error) {
+              // Release the attempt so a failed peer never survives into the next retry.
+              await transport.leave(roomId)
               return SettleJoinCommand({ domain: roomDomain, connection, error: errorMessage(error) })
             }
           })
@@ -406,8 +412,8 @@ const RoomDomain = Remesh.domain({
       name: 'Room.LeaveEffect',
       impl: ({ fromEvent }) =>
         fromEvent(ClosedEvent).pipe(
-          map(({ roomId }) => {
-            transport.leave(roomId)
+          mergeMap(async ({ roomId }) => {
+            await transport.leave(roomId)
             return null
           })
         )
@@ -475,6 +481,17 @@ const RoomDomain = Remesh.domain({
         )
     })
 
+    const RecordFrameCommand = domain.command({
+      name: 'Room.RecordFrameCommand',
+      impl: () => LastFrameAtState().new(clock.now())
+    })
+
+    domain.effect({
+      name: 'Room.FrameSeenEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wire.event.ChatFrameEvent).pipe(map(() => [RecordFrameCommand(), FrameSeenEvent()]))
+    })
+
     domain.effect({
       name: 'Room.PeerJoinedEffect',
       impl: ({ fromEvent }) => fromEvent(wire.event.PeerJoinedEvent).pipe(map(PeerJoinedCommand))
@@ -507,13 +524,14 @@ const RoomDomain = Remesh.domain({
     })
 
     return {
-      query: { RoomsQuery, RoomQuery },
+      query: { RoomsQuery, RoomQuery, LastFrameAtQuery },
       command: { OpenCommand, ReconnectCommand, CloseCommand, AllocateMessageCommand, ObserveClockCommand },
       event: {
         JoinedEvent,
         JoinFailedEvent,
         ClosedEvent,
         PresenceChangedEvent,
+        FrameSeenEvent,
         SessionsChangedEvent,
         PeerConnectedEvent,
         PeerDisconnectedEvent,
