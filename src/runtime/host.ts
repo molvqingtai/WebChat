@@ -52,8 +52,6 @@ const note = (event: string) => {
 
 /** Reports arrive as a burst: every room probes on its own within the same second. */
 const REPORT_DEBOUNCE_MS = 500
-/** A host that stays broken must not be replaced in a loop; give the browser time to reclaim. */
-const RESET_MIN_INTERVAL_MS = 5000
 
 export const startHost = () => {
   note('boot')
@@ -68,12 +66,8 @@ export const startHost = () => {
         resetHost()
       }
     })
-  let resetAt = 0
-  // Every room reports the same dead host within the same second; one replacement is enough. The
-  // interval holds across Firefox's in-place rebuilds, where the worker's quiet window never runs.
+  // Every room reports the same dead host within the same second; one replacement is enough.
   const replaceDeadHost = debounce((reason: string) => {
-    if (Date.now() - resetAt < RESET_MIN_INTERVAL_MS) return
-    resetAt = Date.now()
     console.error('[webchat] host cannot serve pages:', reason)
     note(`unhealthy: ${reason}`)
     resetHost()
