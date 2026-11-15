@@ -20,8 +20,11 @@ export const ensureOffscreen = async () => {
   await creating
 }
 
-const LAST_CLOSE_KEY = 'webchat:last-host-close'
-/** A fresh host that is told it is dead again must not be closed in an endless chain. */
+/**
+ * A host that is replaced must not be replaced again while the browser is still reclaiming its
+ * peers. The record is in memory: the worker outlives the gap between two resets by far, and
+ * storage turned out to accept writes silently without keeping them.
+ */
 const RESET_QUIET_MS = 5000
 
 let lastCloseAt = 0
@@ -30,12 +33,8 @@ let lastCloseAt = 0
 export const resetOffscreen = async () => {
   if (!(await browser.offscreen.hasDocument())) return
   const at = Date.now()
-  // The worker outlives hosts but not necessarily itself, so the quiet window is also kept on disk.
-  const stored = await browser.storage.local.get(LAST_CLOSE_KEY).catch(() => null)
-  const recorded = typeof stored?.[LAST_CLOSE_KEY] === 'number' ? stored[LAST_CLOSE_KEY] : 0
-  if (at - Math.max(recorded, lastCloseAt) < RESET_QUIET_MS) return
+  if (at - lastCloseAt < RESET_QUIET_MS) return
   lastCloseAt = at
-  await browser.storage.local.set({ [LAST_CLOSE_KEY]: at }).catch(() => undefined)
   await browser.offscreen.closeDocument()
 }
 

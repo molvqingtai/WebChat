@@ -68,10 +68,16 @@ export const createRuntime = ({
   const gateway: PageGateway = {
     persist: (site, records, live) => askPage(site, (page) => page.persist(records, live)),
     readHistory: (site, cutoff) => askPage(site, (page) => page.readHistory(cutoff)),
-    publish: (site, event) =>
-      (site === null ? [...pages.values()].flatMap((set) => [...set]) : pagesOf(site)).forEach((page) => {
-        void Promise.resolve(page.publish(event)).catch(() => {})
-      })
+    publish: async (site, event) => {
+      const targets = site === null ? [...pages.values()].flatMap((set) => [...set]) : pagesOf(site)
+      await Promise.all(
+        targets.map((page) =>
+          page.publish(event).catch((error) => {
+            console.error('[webchat] could not publish to a page:', error)
+          })
+        )
+      )
+    }
   }
 
   const store = Remesh.store({
@@ -145,14 +151,18 @@ export const createRuntime = ({
   // Live messages are stored one at a time per site, so pages see them in arrival order.
   const deliveries = new Map<string, Promise<void>>()
   const deliver = (site: string, records: ChatMessageRecord[]) => {
-    const next = (deliveries.get(site) ?? Promise.resolve()).then(async () => {
+    const previous = deliveries.get(site)
+    const next = (async () => {
+      await previous?.catch((error) => {
+        console.error('[webchat] an earlier delivery failed:', error)
+      })
       try {
         await gateway.persist(site, records, true)
       } catch {
         // No page right now (grace period): keep them for the next page that connects.
         backlog.set(site, [...(backlog.get(site) ?? []), ...records].slice(-MAX_BACKLOG_MESSAGES))
       }
-    })
+    })()
     deliveries.set(site, next)
   }
   store.subscribeEvent(room.event.MessageReceivedEvent, ({ domain, record }) => deliver(domain, [record]))
@@ -185,13 +195,15 @@ export const createRuntime = ({
       }
       store.send(room.command.OpenCommand({ domain: site, ...input }))
       const joined = await whenJoined(site)
-      void Promise.resolve(page.publish(sessionsEvent(joined))).catch(() => {})
-      void Promise.resolve(page.publish({ type: 'world', sites: store.query(world.query.SitesQuery()) })).catch(
-        () => {}
-      )
-      void Promise.resolve(
-        page.publish({ type: 'history', syncIds: store.query(history.query.LoadingQuery(site)) })
-      ).catch(() => {})
+      await page.publish(sessionsEvent(joined)).catch((error) => {
+        console.error('[webchat] could not publish sessions:', error)
+      })
+      await page.publish({ type: 'world', sites: store.query(world.query.SitesQuery()) }).catch((error) => {
+        console.error('[webchat] could not publish the world:', error)
+      })
+      await page.publish({ type: 'history', syncIds: store.query(history.query.LoadingQuery(site)) }).catch((error) => {
+        console.error('[webchat] could not publish history:', error)
+      })
       return { ...toSession(joined), presenceId: joined.presenceId }
     },
     /** Refresh and recovery are the same operation: replace the host. */

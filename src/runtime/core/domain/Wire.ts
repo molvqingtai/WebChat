@@ -67,17 +67,20 @@ const WireDomain = Remesh.domain({
       impl: () =>
         new Observable((observer) => {
           // Decoding is async, so each source gets its own chain to keep arrival order.
-          const queues = new Map<string, { tail: Promise<void>; size: number }>()
+          const queues = new Map<string, { tail?: Promise<void>; size: number }>()
           const enqueue = (source: Source, bounded: boolean, task: () => Promise<void> | void) => {
             const key = `${source.roomId}\u0000${source.peerId}`
-            const queue = queues.get(key) ?? { tail: Promise.resolve(), size: 0 }
+            const queue = queues.get(key) ?? { size: 0 }
             if (bounded && queue.size >= MAX_DECODE_QUEUE_FRAMES) return
             queue.size += 1
             queues.set(key, queue)
-            queue.tail = queue.tail.then(task).then(
-              () => {},
-              () => {}
-            )
+            const previous = queue.tail
+            queue.tail = (async () => {
+              await previous
+              await task()
+            })().catch((error) => {
+              console.error('[webchat] could not decode a frame:', error)
+            })
             void queue.tail.then(() => {
               queue.size -= 1
               if (queue.size === 0) queues.delete(key)

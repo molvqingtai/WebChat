@@ -48,8 +48,13 @@ export class InjectAdapter extends InjectAdapterBase<MessageMeta> {
       meta: { tab: { url: canonicalNavigationUrl(document.location.href) ?? document.location.href } }
     })
     const owner = injectRejectionOwner
-    if (owner) void Promise.resolve(sending).catch(owner)
-    // SAFETY: `sending` is the value returned by the comctx sendMessage contract for this meta.
-    return sending as ReturnType<SendMessage<MessageMeta>>
+    // SAFETY: comctx returns the promise it forwards here; the message and its meta are unchanged.
+    const result = sending as Promise<unknown>
+    // Observing the rejection lets the injector report it, and observing it here keeps the runtime
+    // from also reporting it as unhandled. The promise handed to the caller stays the same one, so
+    // the caller's own rejection handling is untouched.
+    if (owner) void result.catch(owner)
+    // SAFETY: the same promise, only widened to `unknown` on the way through.
+    return result as ReturnType<SendMessage<MessageMeta>>
   }
 }

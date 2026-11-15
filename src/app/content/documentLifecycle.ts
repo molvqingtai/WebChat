@@ -21,7 +21,9 @@ export const bindDocumentLifecycle = ({ store, startRuntime, stopRuntime }: Docu
   const onPageShow = (event: PageTransitionEvent) => {
     if (!event.persisted) return
     void startRuntime()
-      .catch(() => {})
+      .catch((error) => {
+        console.error('[webchat] could not restart after a cache restore:', error)
+      })
       .finally(() => store.send(feedback.command.ResumeFeedbackCommand()))
   }
   window.addEventListener('beforeunload', silence)

@@ -71,7 +71,7 @@ const createDeferredValue = <Value,>() => {
   let current: Value | null = null
   const { promise, resolve } = Promise.withResolvers<Value>()
   return {
-    get: () => (current === null ? promise : Promise.resolve(current)),
+    get: () => promise,
     resolve: (value: Value) => {
       if (current !== null) throw new Error('Application dependency is already initialized')
       current = value
