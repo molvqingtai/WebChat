@@ -26,35 +26,26 @@ const RESET_QUIET_MS = 5000
 
 let lastCloseAt = 0
 
-/**
- * WXT's `browser` has no usable storage in the background on Chromium, and a throw there stopped
- * the reset before it closed anything. Use the platform API, and never let a failed write keep a
- * dead host alive.
- */
-type StorageArea = {
-  get: (key: string) => Promise<Record<string, unknown>>
-  set: (items: Record<string, unknown>) => Promise<void>
-}
-
-const localStorageArea = () => (globalThis as { chrome?: { storage?: { local?: StorageArea } } }).chrome?.storage?.local
-
 const readLastClose = async (): Promise<number> => {
   try {
-    const area = localStorageArea()
-    if (!area) return 0
-    const stored = await area.get(LAST_CLOSE_KEY)
+    const stored = await browser.storage.local.get(LAST_CLOSE_KEY)
     const value = stored?.[LAST_CLOSE_KEY]
     return typeof value === 'number' ? value : 0
-  } catch {
+  } catch (error) {
+    console.error('[webchat] could not read the quiet window:', error)
     return 0
   }
 }
 
+/**
+ * The record has to outlive the host, so it lives in storage. A failure here must never stop the
+ * close: a host that asked to be replaced has to be replaced.
+ */
 const writeLastClose = async (at: number) => {
   try {
-    await localStorageArea()?.set({ [LAST_CLOSE_KEY]: at })
-  } catch {
-    // The in-memory record still protects this worker's lifetime.
+    await browser.storage.local.set({ [LAST_CLOSE_KEY]: at })
+  } catch (error) {
+    console.error('[webchat] could not record the quiet window:', error)
   }
 }
 

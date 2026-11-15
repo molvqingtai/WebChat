@@ -21,7 +21,9 @@ const webRtcFailure = (): string | null => {
 }
 
 const requestOffscreenReset = () => {
-  void Promise.resolve(browser.runtime.sendMessage({ type: RESET_HOST_MESSAGE })).catch(() => {})
+  void Promise.resolve(browser.runtime.sendMessage({ type: RESET_HOST_MESSAGE })).catch((error: unknown) => {
+    console.error('[webchat] could not ask for a new host:', error)
+  })
 }
 
 /**
@@ -33,6 +35,9 @@ const requestOffscreenReset = () => {
  * button and the "this host can no longer build peers" signal.
  */
 const HOST_LOG_KEY = 'webchat:host-log'
+/** A host that is replaced again within this window is being replaced in a loop. */
+const RESET_QUIET_MS = 5000
+const LAST_CLOSE_KEY = 'webchat:last-close'
 
 /**
  * A host dies the moment it is replaced, so anything it wants to say about why has to be written
@@ -45,13 +50,36 @@ const note = (event: string) => {
     const log = Array.isArray(parsed) ? parsed : []
     log.push({ at: new Date().toISOString(), event })
     localStorage.setItem(HOST_LOG_KEY, JSON.stringify(log.slice(-30)))
-  } catch {
-    // Diagnostics must never keep a host alive or stop it from dying.
+  } catch (error) {
+    // Diagnostics must never keep a host alive or stop it from dying, but they must be visible.
+    console.error('[webchat] could not write the host log:', error)
   }
 }
 
 /** Reports arrive as a burst: every room probes on its own within the same second. */
 const REPORT_DEBOUNCE_MS = 500
+
+/**
+ * The close that created this host is recorded by the previous host, in the only store that
+ * survives it. A host born inside the window stays out of the way instead of reporting itself.
+ */
+const readLastClose = () => {
+  try {
+    const value = Number(localStorage.getItem(LAST_CLOSE_KEY) ?? 0)
+    return Number.isFinite(value) ? value : 0
+  } catch (error) {
+    console.error('[webchat] could not read the last close:', error)
+    return 0
+  }
+}
+
+const writeLastClose = () => {
+  try {
+    localStorage.setItem(LAST_CLOSE_KEY, String(Date.now()))
+  } catch (error) {
+    console.error('[webchat] could not record the last close:', error)
+  }
+}
 
 export const startHost = () => {
   note('boot')
@@ -68,8 +96,10 @@ export const startHost = () => {
     })
   // Every room reports the same dead host within the same second; one replacement is enough.
   const replaceDeadHost = debounce((reason: string) => {
+    if (Date.now() - readLastClose() < RESET_QUIET_MS) return
     console.error('[webchat] host cannot serve pages:', reason)
     note(`unhealthy: ${reason}`)
+    writeLastClose()
     resetHost()
   }, REPORT_DEBOUNCE_MS)
   let runtime = create()
