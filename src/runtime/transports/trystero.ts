@@ -22,14 +22,15 @@ export const createRoomTransport = (): RoomTransport => {
     const owner = owners.get(roomId)
     if (!owner) return
     owners.delete(roomId)
-    const settled = Promise.resolve()
-      .then(() => owner.room.leave())
-      .catch((error) => console.error(error))
-      .finally(() => {
-        if (leaving.get(roomId) === settled) leaving.delete(roomId)
-      })
+    const settled = (async () => {
+      await owner.room.leave().catch((error) => console.error(error))
+    })()
     leaving.set(roomId, settled)
-    await settled
+    try {
+      await settled
+    } finally {
+      if (leaving.get(roomId) === settled) leaving.delete(roomId)
+    }
   }
 
   return {

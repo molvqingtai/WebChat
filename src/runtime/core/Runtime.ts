@@ -151,14 +151,18 @@ export const createRuntime = ({
   // Live messages are stored one at a time per site, so pages see them in arrival order.
   const deliveries = new Map<string, Promise<void>>()
   const deliver = (site: string, records: ChatMessageRecord[]) => {
-    const next = (deliveries.get(site) ?? Promise.resolve()).then(async () => {
+    const previous = deliveries.get(site)
+    const next = (async () => {
+      await previous?.catch((error) => {
+        console.error('[webchat] an earlier delivery failed:', error)
+      })
       try {
         await gateway.persist(site, records, true)
       } catch {
         // No page right now (grace period): keep them for the next page that connects.
         backlog.set(site, [...(backlog.get(site) ?? []), ...records].slice(-MAX_BACKLOG_MESSAGES))
       }
-    })
+    })()
     deliveries.set(site, next)
   }
   store.subscribeEvent(room.event.MessageReceivedEvent, ({ domain, record }) => deliver(domain, [record]))

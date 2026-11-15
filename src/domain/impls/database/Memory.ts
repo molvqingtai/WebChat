@@ -35,7 +35,7 @@ interface MemoryInstance {
 interface MemoryState {
   readonly stores: Map<string, StoreMap>
   readonly instances: Set<MemoryInstance>
-  tail: Promise<void>
+  tail?: Promise<void>
 }
 
 const states = new Map<string, MemoryState>()
@@ -46,7 +46,7 @@ const getState = <Schema extends DatabaseSchema<Schema>>(definition: DatabaseDef
     state = {
       stores: new Map(Object.keys(definition.stores).map((store) => [store, new Map()])),
       instances: new Set(),
-      tail: Promise.resolve()
+      tail: undefined
     }
     states.set(definition.name, state)
   }

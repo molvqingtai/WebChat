@@ -104,7 +104,7 @@ export const createWebLocksPreparationCoordinator = (
  * (<https://bugzilla.mozilla.org/show_bug.cgi?id=1873028>).
  */
 export const createDirectPreparationCoordinator = (): PreparationLockCoordinator => ({
-  acquire: () => Promise.resolve(() => {})
+  acquire: async () => () => {}
 })
 
 export const withPreparationLock = (
@@ -132,7 +132,7 @@ export const withPreparationLock = (
     },
     checkpoint: () => signal.throwIfAborted()
   }
-  const preparation = Promise.resolve().then(async () => {
+  const preparation = async () => {
     signal.throwIfAborted()
     const release = await coordinator.acquire(identity)
     try {
@@ -142,8 +142,8 @@ export const withPreparationLock = (
     } finally {
       release()
     }
-  })
-  void preparation.then(
+  }
+  void preparation().then(
     () => settleGeneration(identity, generation, { status: 'resolved' }),
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- promise rejection reasons are untyped
     (error: unknown) => settleGeneration(identity, generation, { status: 'rejected', error })

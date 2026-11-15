@@ -23,17 +23,20 @@ export class TabsProviderAdapter implements Adapter<MessageMeta> {
 
   sendMessage: SendMessage<MessageMeta> = async (message) => {
     const target = message.meta.tab
-    const tabDelivery =
-      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional tab target
-      Number.isSafeInteger(target?.id) && target!.id! >= 0 && typeof target?.url === 'string'
-        ? this.tabs.get(target!.id!).then((tab) => {
-            // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab record
-            if (typeof tab.url === 'string' && isSameNavigation(tab.url, target!.url!)) {
-              return this.tabs.sendMessage(target!.id!, message)
-            }
-          })
-        : Promise.resolve()
-    await Promise.allSettled([tabDelivery, Promise.resolve(this.runtime.sendMessage(message))])
+    // SAFETY: comctx types sendMessage as returning the value it forwards, which is always a promise.
+    const deliveries: Promise<unknown>[] = [this.runtime.sendMessage(message) as Promise<unknown>]
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the optional tab target
+    if (Number.isSafeInteger(target?.id) && target!.id! >= 0 && typeof target?.url === 'string') {
+      deliveries.push(
+        this.tabs.get(target!.id!).then((tab) => {
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- structural discrimination of the delivered tab
+          if (typeof tab.url === 'string' && isSameNavigation(tab.url, target!.url!)) {
+            return this.tabs.sendMessage(target!.id!, message)
+          }
+        })
+      )
+    }
+    await Promise.allSettled(deliveries)
   }
 
   dispose() {

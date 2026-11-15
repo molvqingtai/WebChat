@@ -118,7 +118,7 @@ export const createRoomTransport = (): RoomTransport => {
       const owner = owners.get(roomId)
       return owner?.room ? owner.peerId : ''
     },
-    join: (roomId) => {
+    join: async (roomId) => {
       let owner = owners.get(roomId)
       if (!owner) {
         owner = { roomId, peerId: '' }
@@ -127,7 +127,7 @@ export const createRoomTransport = (): RoomTransport => {
       } else if (owner.peer?.state === 'disconnected') {
         start(owner)
       }
-      if (owner.room) return Promise.resolve()
+      if (owner.room) return
       if (!owner.pending) {
         const { promise, resolve, reject } = Promise.withResolvers<void>()
         owner.pending = { promise, resolve, reject }
