@@ -10,6 +10,7 @@ vi.mock('trystero', () => ({
 const { createRoomTransport } = await import('./trystero')
 const { isPeerLevelFailure } = await import('./trystero')
 
+// SAFETY: the transport passes this shape as the third argument of every joinRoom call.
 const lastConfig = () => joinRoom.mock.calls.at(-1)?.[2] as { onJoinError: (details: { error: string }) => void }
 const silentRoom = () => ({
   makeAction: () => ({ send: vi.fn(), onMessage: null }),
