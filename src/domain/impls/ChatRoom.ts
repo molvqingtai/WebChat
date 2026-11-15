@@ -111,7 +111,7 @@ export const createRuntimePorts = (locator: HostLocator, messageStore: MessageSt
       const records = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
       return records.filter(isChatMessageRecord).filter((record) => record.message.hlc.timestamp >= cutoff)
     },
-    publish: (event) => {
+    publish: async (event) => {
       if (event.type === 'sessions') applySessions(event)
       else if (event.type === 'history') applyLoading(event.syncIds)
       else if (event.type === 'error') emitError(new Error(event.message))

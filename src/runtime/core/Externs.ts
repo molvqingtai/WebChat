@@ -34,7 +34,7 @@ export interface PageGateway {
   persist: (domain: string, records: ChatMessageRecord[], live: boolean) => Promise<number>
   readHistory: (domain: string, cutoff: number) => Promise<ChatMessageRecord[]>
   /** `domain: null` publishes to every page. */
-  publish: (domain: string | null, event: RuntimeEvent) => void
+  publish: (domain: string | null, event: RuntimeEvent) => Promise<void>
 }
 
 export const PageGatewayExtern = Remesh.extern<PageGateway>({

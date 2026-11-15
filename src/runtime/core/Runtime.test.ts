@@ -27,7 +27,9 @@ const createBrowser = (hub: ReturnType<typeof createMemoryHub>, name: string) =>
         return fresh.length
       },
       readHistory: async (cutoff) => [...database.values()].filter((record) => record.message.hlc.timestamp >= cutoff),
-      publish: (event) => void events.push(event)
+      publish: async (event) => {
+        events.push(event)
+      }
     }
     runtime.attach(pair.host)
     const remote = connectServices<PageService, RuntimeService>(
@@ -212,7 +214,7 @@ describe('Runtime over a MessagePort channel', () => {
         service: {
           persist: async () => 0,
           readHistory: async () => [],
-          publish: () => {}
+          publish: async () => {}
         }
       },
       RUNTIME_NAMESPACE

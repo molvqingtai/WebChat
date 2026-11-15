@@ -20,8 +20,8 @@ const webRtcFailure = (): string | null => {
   }
 }
 
-const requestOffscreenReset = () => {
-  void Promise.resolve(browser.runtime.sendMessage({ type: RESET_HOST_MESSAGE })).catch((error: unknown) => {
+const requestOffscreenReset = async () => {
+  await browser.runtime.sendMessage({ type: RESET_HOST_MESSAGE }).catch((error) => {
     console.error('[webchat] could not ask for a new host:', error)
   })
 }

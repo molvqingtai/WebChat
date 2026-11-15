@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
-import { map } from 'rxjs'
+import { mergeMap } from 'rxjs'
 
 const NotificationDomain = Remesh.domain({
   name: 'NotificationDomain',
@@ -16,7 +16,7 @@ const NotificationDomain = Remesh.domain({
       impl: ({ fromEvent, get }) => {
         // The ChatRoom callback runs only in the tab whose atomic insert won.
         const onMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
-          map((message) => {
+          mergeMap(async (message) => {
             const userInfo = get(userInfoDomain.query.UserInfoQuery())
             if (!userInfo?.notificationEnabled || message.author.id === userInfo.id) {
               return null
@@ -26,7 +26,9 @@ const NotificationDomain = Remesh.domain({
               return null
             }
 
-            void notificationExtern.push(message).catch(() => {})
+            await notificationExtern.push(message).catch((error) => {
+              console.error('[webchat] could not show a notification:', error)
+            })
             return null
           })
         )

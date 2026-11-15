@@ -56,5 +56,5 @@ export interface PageService {
   /** Inserts if absent; `live` inserts raise the page's message event. Returns how many were new. */
   persist: (records: ChatMessageRecord[], live: boolean) => Promise<number>
   readHistory: (cutoff: number) => Promise<ChatMessageRecord[]>
-  publish: (event: RuntimeEvent) => void
+  publish: (event: RuntimeEvent) => Promise<void>
 }
