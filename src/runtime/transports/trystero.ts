@@ -3,6 +3,21 @@ import type { Room } from 'trystero'
 import type { RoomTransport } from '@/runtime/core/RoomTransport'
 import { createTransportEvents } from './events'
 
+/**
+ * Failures that belong to one peer rather than to the room. A peer behind a symmetric NAT never
+ * finishes the handshake, and a user who is chatting happily with everyone else must not be told
+ * about it: the room is fine, that one peer is not.
+ */
+const PEER_LEVEL_FAILURES = [
+  'could not connect to peer ',
+  'handshake timed out after ',
+  'handshake failed',
+  'failed sending handshake readiness'
+]
+
+/** Trystero prefixes every message with its own name, so the marker can sit anywhere in the text. */
+export const isPeerLevelFailure = (message: string) => PEER_LEVEL_FAILURES.some((marker) => message.includes(marker))
+
 interface Owner {
   room: Room
   action: StringAction
@@ -41,7 +56,11 @@ export const createRoomTransport = (): RoomTransport => {
       if (owners.has(roomId)) return
       const room = joinRoom({ appId: __NAME__ }, roomId, {
         onJoinError: (details) => {
-          if (owners.get(roomId) !== owner || details.error.startsWith('could not connect to peer ')) return
+          if (owners.get(roomId) !== owner) return
+          if (isPeerLevelFailure(details.error)) {
+            console.warn('[webchat] a peer could not be reached:', details.error)
+            return
+          }
           events.error.emit(new Error(details.error), roomId)
         }
       })
