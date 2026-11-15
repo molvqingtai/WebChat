@@ -197,4 +197,4 @@ export const MAX_CONFLICTS_PER_RECORD = 4
 export const MAX_STORED_CONFLICTS = 1000
 
 export type RoomTransportProvider = 'artico' | 'trystero'
-export const ROOM_TRANSPORT_PROVIDER: RoomTransportProvider = 'artico'
+export const ROOM_TRANSPORT_PROVIDER: RoomTransportProvider = 'trystero'
