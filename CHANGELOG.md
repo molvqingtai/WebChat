@@ -1,3 +1,9 @@
+## [2.9.1](https://github.com/molvqingtai/WebChat/compare/v2.9.0...v2.9.1) (2026-11-15)
+
+### Bug Fixes
+
+- **runtime:** stop showing a peer's handshake failure to the user ([cec3980](https://github.com/molvqingtai/WebChat/commit/cec3980c690e4dd84547e1691ce6f960e36918d5))
+
 # [2.9.0](https://github.com/molvqingtai/WebChat/compare/v2.8.4...v2.9.0) (2026-11-15)
 
 ### Bug Fixes
