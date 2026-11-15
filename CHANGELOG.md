@@ -1,3 +1,15 @@
+# [2.9.0](https://github.com/molvqingtai/WebChat/compare/v2.8.4...v2.9.0) (2026-11-15)
+
+### Bug Fixes
+
+- **firefox:** declare the background page persistent ([57994b8](https://github.com/molvqingtai/WebChat/commit/57994b80d64f9a2d7ac94ade93c4304589eb346a))
+- **runtime:** keep the reset path working when storage is unavailable ([da16154](https://github.com/molvqingtai/WebChat/commit/da161544187c13efd49f7795ee88212115141a6b))
+- **runtime:** report what the reset path fails to do ([f1fd544](https://github.com/molvqingtai/WebChat/commit/f1fd544e289f03c57e2f09b9b04364c37bfd9a43))
+
+### Features
+
+- **runtime:** use trystero for room transport ([6adb61f](https://github.com/molvqingtai/WebChat/commit/6adb61f7cf074eda71dce2964bb9c89896f4778c))
+
 ## [2.8.4](https://github.com/molvqingtai/WebChat/compare/v2.8.3...v2.8.4) (2026-11-14)
 
 ### Bug Fixes
