@@ -50,8 +50,7 @@ WebChat builds on these excellent open-source projects:
 - **[shadcn/ui](https://ui.shadcn.com/)** provides accessible, customizable UI building blocks.
 - **[WXT](https://wxt.dev/)** provides the cross-browser extension framework and build tooling.
 - **[Comctx](https://github.com/molvqingtai/comctx)** provides RPC communication across the extension's JavaScript contexts.
-- **[Artico](https://github.com/matallui/artico)** provides the default WebRTC room transport.
-- **[Trystero](https://github.com/dmotz/trystero)** provides an optional WebRTC room transport using its default Nostr strategy.
+- **[Trystero](https://github.com/dmotz/trystero)** provides the WebRTC room transport using its default Nostr strategy.
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** generates WebChat's distinctive random avatars.
 
 ## License
