@@ -1,3 +1,14 @@
+# [2.10.0](https://github.com/molvqingtai/WebChat/compare/v2.9.2...v2.10.0) (2026-11-16)
+
+### Bug Fixes
+
+- **runtime:** report a frame that never left as a delivery failure ([38a694c](https://github.com/molvqingtai/WebChat/commit/38a694ca7a6c23928266217a69cb52b7b5404a11))
+- **ui:** keep a missed delivery off the screen ([0879671](https://github.com/molvqingtai/WebChat/commit/0879671ddacc62c5d761d000a5b4cd69f0ecf995))
+
+### Features
+
+- **transport:** signal through a self-hosted relay ([a001b82](https://github.com/molvqingtai/WebChat/commit/a001b827422b451ae180f3340f124c056534d883))
+
 ## [2.9.2](https://github.com/molvqingtai/WebChat/compare/v2.9.1...v2.9.2) (2026-11-16)
 
 ### Bug Fixes
