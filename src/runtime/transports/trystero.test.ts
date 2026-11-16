@@ -8,12 +8,14 @@ vi.mock('trystero', () => ({
 }))
 
 const { createRoomTransport } = await import('./trystero')
-const { isPeerLevelFailure } = await import('./trystero')
+const { isPeerLevelFailure, isTransientSendFailure } = await import('./trystero')
 
 // SAFETY: the transport passes this shape as the third argument of every joinRoom call.
 const lastConfig = () => joinRoom.mock.calls.at(-1)?.[2] as { onJoinError: (details: { error: string }) => void }
+const sendMock = vi.fn()
+
 const silentRoom = () => ({
-  makeAction: () => ({ send: vi.fn(), onMessage: null }),
+  makeAction: () => ({ send: sendMock, onMessage: null }),
   onPeerJoin: null,
   onPeerLeave: null
 })
@@ -48,5 +50,21 @@ describe('trystero transport', () => {
     expect(isPeerLevelFailure('Trystero: handshake timed out after 10000ms')).toBe(true)
     expect(isPeerLevelFailure('Trystero: handshake failed: incorrect password')).toBe(true)
     expect(isPeerLevelFailure('Trystero: signaling server refused the connection')).toBe(false)
+  })
+
+  it('reports a frame that never left as a plain delivery failure', async () => {
+    const transport = createRoomTransport()
+    await transport.join('room')
+    sendMock.mockRejectedValueOnce(new Error('Trystero: data channel stopped draining'))
+    await expect(transport.send('room', 'payload')).rejects.toThrow('Message not delivered')
+    sendMock.mockRejectedValueOnce(new Error('Trystero: something else broke'))
+    await expect(transport.send('room', 'payload')).rejects.toThrow('Trystero: something else broke')
+  })
+
+  it('recognises the failures that belong to a single frame', () => {
+    expect(isTransientSendFailure('Trystero: data channel stopped draining')).toBe(true)
+    expect(isTransientSendFailure('Trystero: peer disconnected')).toBe(true)
+    expect(isTransientSendFailure('Trystero: no peer with id abc found')).toBe(true)
+    expect(isTransientSendFailure('Trystero: signaling server refused the connection')).toBe(false)
   })
 })

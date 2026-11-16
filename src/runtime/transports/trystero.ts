@@ -18,6 +18,14 @@ const PEER_LEVEL_FAILURES = [
 /** Trystero prefixes every message with its own name, so the marker can sit anywhere in the text. */
 export const isPeerLevelFailure = (message: string) => PEER_LEVEL_FAILURES.some((marker) => message.includes(marker))
 
+/**
+ * Frames that never left because one peer stopped reading. The room is fine and the message can be
+ * sent again, so the caller is told plainly instead of being handed trystero's internal wording.
+ */
+const SEND_FAILURES = ['data channel stopped draining', 'peer disconnected', 'no peer with id']
+
+export const isTransientSendFailure = (message: string) => SEND_FAILURES.some((marker) => message.includes(marker))
+
 interface Owner {
   room: Room
   action: StringAction
@@ -78,7 +86,12 @@ export const createRoomTransport = (): RoomTransport => {
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
       if (!owner) throw new Error(`Room "${roomId}" not joined`)
-      await owner.action.send(payload, { target: to ?? null })
+      await owner.action.send(payload, { target: to ?? null }).catch((error) => {
+        const reason = error instanceof Error ? error.message : String(error)
+        if (!isTransientSendFailure(reason)) throw error
+        console.warn('[webchat] a message was not delivered:', reason)
+        throw new Error('Message not delivered')
+      })
     },
     dispose: () => {
       ;[...owners.keys()].forEach(leave)
