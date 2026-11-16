@@ -1,3 +1,9 @@
+## [2.10.1](https://github.com/molvqingtai/WebChat/compare/v2.10.0...v2.10.1) (2026-11-16)
+
+### Bug Fixes
+
+- **send:** keep trystero's own error when a frame never left ([c5ccb81](https://github.com/molvqingtai/WebChat/commit/c5ccb81c52f2823ed832ececea388c3ebf10df0c))
+
 # [2.10.0](https://github.com/molvqingtai/WebChat/compare/v2.9.2...v2.10.0) (2026-11-16)
 
 ### Bug Fixes
