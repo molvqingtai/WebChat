@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const joinRoom = vi.fn()
 
-vi.mock('trystero', () => ({
+vi.mock('@trystero-p2p/ws-relay', () => ({
   joinRoom: (...args: unknown[]) => joinRoom(...args),
   selfId: 'self'
 }))

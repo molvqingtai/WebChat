@@ -1,5 +1,5 @@
-import { joinRoom } from 'trystero'
-import type { ActionError, MessageAction, Room } from 'trystero'
+import { joinRoom } from '@trystero-p2p/ws-relay'
+import type { ActionError, MessageAction, Room } from '@trystero-p2p/ws-relay'
 import { DELIVERY_FAILURE_MESSAGE } from '@/constants/config'
 import type { RoomTransport } from '@/runtime/core/RoomTransport'
 import { createTransportEvents } from './events'
@@ -58,7 +58,7 @@ export const createRoomTransport = (): RoomTransport => {
     join: async (roomId) => {
       await leaving.get(roomId)
       if (owners.has(roomId)) return
-      const room = joinRoom({ appId: __NAME__ }, roomId)
+      const room = joinRoom({ appId: __NAME__, relayConfig: { urls: ['wss://web-chat.io/trystero'] } }, roomId)
       const owner: Owner = { room, action: room.makeAction<string>('message'), peerId: '' }
       const live = () => owners.get(roomId) === owner
       owners.set(roomId, owner)

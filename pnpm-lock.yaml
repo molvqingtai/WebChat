@@ -69,6 +69,9 @@ importers:
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.5)
+      '@trystero-p2p/ws-relay':
+        specifier: 0.27.0
+        version: 0.27.0(ws@8.22.2(bufferutil@4.2.0)(utf-8-validate@6.0.6))
       '@webcomponents/custom-elements':
         specifier: ^1.6.0
         version: 1.6.0
@@ -156,9 +159,6 @@ importers:
       tailwind-merge:
         specifier: ^3.7.0
         version: 3.7.0
-      trystero:
-        specifier: 0.27.0
-        version: 0.27.0
       type-fest:
         specifier: ^5.10.0
         version: 5.10.0
@@ -615,9 +615,6 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
-
-  '@noble/secp256k1@3.2.0':
-    resolution: {integrity: sha512-Z3ZAWOTxJ0EuTuZTi7Y69iK7GgrLHh8sgm45lVDhg/b3Nk1TpAiKhick2KkZisHuupeepSkyIydN/J459SdX1w==}
 
   '@number-flow/react@0.6.2':
     resolution: {integrity: sha512-WjZuV4aA+vhRCgCF+adGLgFVVAJ8vdvq6EchRT2FiBIgElTXtDOA3YgkcMr9UHpvpS9v4H70AB5wZv0D9jc3QA==}
@@ -1849,9 +1846,14 @@ packages:
     resolution: {integrity: sha512-8e85VEYLMOUSwBZDr9D+StbMrRYQRWn1egWvgdqHG1OwO//eZEwG9CvslY60D+Yqnq8XhkDobuIdXdBjNu/gnA==}
     engines: {node: '>=22'}
 
-  '@trystero-p2p/nostr@0.27.0':
-    resolution: {integrity: sha512-ZkuF64wCwtibGVnKzhrJXsq7DbrT/yNbaeUT9/hUcVZ1SiDAbjSQ5KzJh1lNgnUTKvSG00dqO4hNPbf4KuLuAw==}
+  '@trystero-p2p/ws-relay@0.27.0':
+    resolution: {integrity: sha512-mUj8kkQE9xLB4wQWx4h8MMTFKR5/llLqWzU51Wun9Bp+hLN4ethe31lDLgN6foJW8maMzAX/5dWXpaefSVOPHQ==}
     engines: {node: '>=22'}
+    peerDependencies:
+      ws: ^8.0.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
 
   '@tybys/wasm-util@0.10.4':
     resolution: {integrity: sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==}
@@ -4756,10 +4758,6 @@ packages:
   trough@2.2.0:
     resolution: {integrity: sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==}
 
-  trystero@0.27.0:
-    resolution: {integrity: sha512-2oUTc/G7K8/l5DOXA6pajFBMXKPuy7WcU1So1S+NVFvzL5xy7DlbIVSBQkIkV7ALL9uBEuFuCuacvKuUWxNdlw==}
-    engines: {node: '>=22'}
-
   ts-easing@0.2.0:
     resolution: {integrity: sha512-Z86EW+fFFh/IFB1fqQ3/+7Zpf9t2ebOAxNI/V6Wo7r5gqiqtxmgTlQ1qbqQcjLKYeSHPTsEmvlJUDg/EuL0uHQ==}
 
@@ -5580,8 +5578,6 @@ snapshots:
       '@emnapi/runtime': 2.0.0-beta.2
       '@tybys/wasm-util': 0.10.4
     optional: true
-
-  '@noble/secp256k1@3.2.0': {}
 
   '@number-flow/react@0.6.2(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
@@ -6609,10 +6605,11 @@ snapshots:
 
   '@trystero-p2p/core@0.27.0': {}
 
-  '@trystero-p2p/nostr@0.27.0':
+  '@trystero-p2p/ws-relay@0.27.0(ws@8.22.2(bufferutil@4.2.0)(utf-8-validate@6.0.6))':
     dependencies:
-      '@noble/secp256k1': 3.2.0
       '@trystero-p2p/core': 0.27.0
+    optionalDependencies:
+      ws: 8.22.2(bufferutil@4.2.0)(utf-8-validate@6.0.6)
 
   '@tybys/wasm-util@0.10.4':
     dependencies:
@@ -9776,10 +9773,6 @@ snapshots:
   trim-lines@3.0.1: {}
 
   trough@2.2.0: {}
-
-  trystero@0.27.0:
-    dependencies:
-      '@trystero-p2p/nostr': 0.27.0
 
   ts-easing@0.2.0: {}
 
