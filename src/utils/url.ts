@@ -36,19 +36,23 @@ export const buildFullURL = (baseURL: string = '', pathURL: string = '', params:
 }
 
 /**
- * Sanitize URL to prevent XSS attacks
- * @param url - The URL to sanitize
- * @returns Sanitized URL or empty string if invalid
+ * Sanitize a URL that came from a message before it reaches an attribute.
+ *
+ * A browser drops ASCII tab, newline and leading control characters before it parses a scheme, so
+ * `java\tscript:alert(1)` navigates as `javascript:alert(1)`. The scheme is judged on that
+ * normalized form, and only schemes this product actually links to are kept.
  */
 export const safeUrl = (url: string): string => {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- defensive check: this sanitizer also guards untrusted callers
   if (!url || typeof url !== 'string') return ''
 
-  // Block dangerous protocols
-  if (/^(javascript|vbscript|file|about):/i.test(url)) return ''
+  // oxlint-disable-next-line no-control-regex -- the control characters are the thing being removed
+  const normalized = url.replace(/[\u0000-\u0020\u007f]+/g, '')
 
-  // Only allow media data URIs (image/video/audio)
-  if (url.startsWith('data:') && !/^data:(image|video|audio)\//i.test(url)) return ''
+  if (/^data:/i.test(normalized)) return /^data:(image|video|audio)\//i.test(normalized) ? url : ''
+
+  const scheme = /^([a-z][a-z\d+\-.]*):/i.exec(normalized)?.[1]
+  if (scheme && !/^(https?|mailto|xmpp)$/i.test(scheme)) return ''
 
   return url
 }
