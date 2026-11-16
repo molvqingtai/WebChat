@@ -1,3 +1,57 @@
+## [2.9.2](https://github.com/molvqingtai/WebChat/compare/v2.9.1...v2.9.2) (2026-11-16)
+
+### Bug Fixes
+
+- **security:** judge a message link by the scheme the browser will see ([51aceb0](https://github.com/molvqingtai/WebChat/commit/51aceb042406f2fed1693ff210f71d9e7f20384b))
+
+## [2.9.1](https://github.com/molvqingtai/WebChat/compare/v2.9.0...v2.9.1) (2026-11-15)
+
+### Bug Fixes
+
+- **runtime:** stop showing a peer's handshake failure to the user ([cec3980](https://github.com/molvqingtai/WebChat/commit/cec3980c690e4dd84547e1691ce6f960e36918d5))
+
+# [2.9.0](https://github.com/molvqingtai/WebChat/compare/v2.8.4...v2.9.0) (2026-11-15)
+
+### Bug Fixes
+
+- **firefox:** declare the background page persistent ([57994b8](https://github.com/molvqingtai/WebChat/commit/57994b80d64f9a2d7ac94ade93c4304589eb346a))
+- **runtime:** keep the reset path working when storage is unavailable ([da16154](https://github.com/molvqingtai/WebChat/commit/da161544187c13efd49f7795ee88212115141a6b))
+- **runtime:** report what the reset path fails to do ([f1fd544](https://github.com/molvqingtai/WebChat/commit/f1fd544e289f03c57e2f09b9b04364c37bfd9a43))
+
+### Features
+
+- **runtime:** use trystero for room transport ([6adb61f](https://github.com/molvqingtai/WebChat/commit/6adb61f7cf074eda71dce2964bb9c89896f4778c))
+
+## [2.8.4](https://github.com/molvqingtai/WebChat/compare/v2.8.3...v2.8.4) (2026-11-14)
+
+### Bug Fixes
+
+- **runtime:** collapse host replacement instead of throttling it ([a3aa683](https://github.com/molvqingtai/WebChat/commit/a3aa68313b81fe756d3e2fe7d5c73a4da08bb6c6))
+- **runtime:** debounce host replacement with the existing utility ([1fd768a](https://github.com/molvqingtai/WebChat/commit/1fd768aa80d0e4eee6f3fdbea30e27f208ae7921))
+- **runtime:** replace a dead host once per burst of reports ([46a6b1b](https://github.com/molvqingtai/WebChat/commit/46a6b1b1588ecd24baaa123b6c02d51021db0ef8))
+
+## [2.8.3](https://github.com/molvqingtai/WebChat/compare/v2.8.2...v2.8.3) (2026-11-14)
+
+### Bug Fixes
+
+- **deps:** stay on stable unstorage and align the setup label ([bcbde06](https://github.com/molvqingtai/WebChat/commit/bcbde06427da8a5c3bafcb1c44397cb73014558c))
+- **runtime:** rebuild a host that has gone quiet ([51ec504](https://github.com/molvqingtai/WebChat/commit/51ec5045e7be850fdcbb1d036e7a52d069812884))
+- **runtime:** stop leaking peers and recover from a dead host ([c1a9c3a](https://github.com/molvqingtai/WebChat/commit/c1a9c3aa0f7f472d0cd1eba29a1b2230e664eff7))
+
+## [2.8.2](https://github.com/molvqingtai/WebChat/compare/v2.8.1...v2.8.2) (2026-11-12)
+
+### Bug Fixes
+
+- **database:** restore the baseline empty-string index fallback ([99af008](https://github.com/molvqingtai/WebChat/commit/99af008445b423f24b534a1ef8c4829c6e597344))
+- **e2e:** also disable no-unknown-returns for selectTerminalError ([3ab5704](https://github.com/molvqingtai/WebChat/commit/3ab5704d19c044d863d22695a20416733539cc64))
+- **e2e:** restore truthiness OR in the bound failure predicates ([878745b](https://github.com/molvqingtai/WebChat/commit/878745b18f968a7661853eb880967d70cb433fc7))
+- **history:** restore inert identical-page replay; add replay regression tests ([53b941d](https://github.com/molvqingtai/WebChat/commit/53b941da757861dfdfb897f582f077f75f1bd83f))
+- **runtime:** report a join timeout once instead of every retry ([94adf7e](https://github.com/molvqingtai/WebChat/commit/94adf7e602237c039e50228f62a1008a2b6383e2))
+
+### Reverts
+
+- **e2e:** keep the pre-target phase inline ([267efa9](https://github.com/molvqingtai/WebChat/commit/267efa93638aeb9a763de65c9ec016963cee5804))
+
 ## [2.8.1](https://github.com/molvqingtai/WebChat/compare/v2.8.0...v2.8.1) (2026-09-11)
 
 ### Bug Fixes
