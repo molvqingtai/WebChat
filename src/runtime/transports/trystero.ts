@@ -1,6 +1,7 @@
 import { joinRoom, selfId } from 'trystero'
 import type { Room } from 'trystero'
 import type { RoomTransport } from '@/runtime/core/RoomTransport'
+import { DELIVERY_FAILURE_MESSAGE } from '@/constants/config'
 import { createTransportEvents } from './events'
 
 /**
@@ -90,7 +91,7 @@ export const createRoomTransport = (): RoomTransport => {
         const reason = error instanceof Error ? error.message : String(error)
         if (!isTransientSendFailure(reason)) throw error
         console.warn('[webchat] a message was not delivered:', reason)
-        throw new Error('Message not delivered')
+        throw new Error(DELIVERY_FAILURE_MESSAGE)
       })
     },
     dispose: () => {
