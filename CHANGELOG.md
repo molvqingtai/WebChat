@@ -1,3 +1,9 @@
+## [2.10.2](https://github.com/molvqingtai/WebChat/compare/v2.10.1...v2.10.2) (2026-11-16)
+
+### Bug Fixes
+
+- **manifest:** declare no data collection for AMO ([db6f6f9](https://github.com/molvqingtai/WebChat/commit/db6f6f98e56e557ae564d5834eea4859aa2df27c))
+
 ## [2.10.1](https://github.com/molvqingtai/WebChat/compare/v2.10.0...v2.10.1) (2026-11-16)
 
 ### Bug Fixes
