@@ -1,3 +1,9 @@
+## [2.9.2](https://github.com/molvqingtai/WebChat/compare/v2.9.1...v2.9.2) (2026-11-16)
+
+### Bug Fixes
+
+- **security:** judge a message link by the scheme the browser will see ([51aceb0](https://github.com/molvqingtai/WebChat/commit/51aceb042406f2fed1693ff210f71d9e7f20384b))
+
 ## [2.9.1](https://github.com/molvqingtai/WebChat/compare/v2.9.0...v2.9.1) (2026-11-15)
 
 ### Bug Fixes
