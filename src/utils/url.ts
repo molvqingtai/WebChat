@@ -35,25 +35,27 @@ export const buildFullURL = (baseURL: string = '', pathURL: string = '', params:
   return assembleURL(url, params)
 }
 
+/** Following these can run code, read local files or probe which extensions are installed. */
+const UNSAFE_SCHEME = /^(javascript|vbscript|file|about|blob|filesystem|chrome|chrome-extension|moz-extension):/i
+/** A data URL is only useful to us when it is media the renderer knows how to show. */
+const DATA_URL = /^data:/i
+const MEDIA_DATA_URL = /^data:(image|video|audio)\//i
+/** Browsers drop these before parsing a scheme, so the check has to see what they see. */
+// oxlint-disable-next-line no-control-regex -- the control characters are the thing being removed
+const IGNORED_IN_URL = /[\u0000-\u0020\u007f]+/g
+
+const isSafeUrl = (url: string) => !UNSAFE_SCHEME.test(url) && (!DATA_URL.test(url) || MEDIA_DATA_URL.test(url))
+
 /**
  * Sanitize a URL that came from a message before it reaches an attribute.
  *
- * A browser drops ASCII tab, newline and leading control characters before it parses a scheme, so
- * `java\tscript:alert(1)` navigates as `javascript:alert(1)`. The scheme is judged on that
- * normalized form. Everything else is left alone: a chat client should not decide that `tel:` or
- * `magnet:` is a scheme its users may not share.
+ * `java\tscript:alert(1)` navigates as `javascript:alert(1)` because the browser removes tab,
+ * newline and leading control characters first, so the scheme is judged on that normalized form.
+ * Everything else is left alone: a chat client should not decide that `tel:` or `magnet:` is a
+ * scheme its users may not share.
  */
-const UNSAFE_SCHEMES = /^(javascript|vbscript|file|about|blob|filesystem|chrome|chrome-extension|moz-extension):/i
-
 export const safeUrl = (url: string): string => {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- defensive check: this sanitizer also guards untrusted callers
   if (!url || typeof url !== 'string') return ''
-
-  // oxlint-disable-next-line no-control-regex -- the control characters are the thing being removed
-  const normalized = url.replace(/[\u0000-\u0020\u007f]+/g, '')
-
-  if (UNSAFE_SCHEMES.test(normalized)) return ''
-  if (/^data:/i.test(normalized) && !/^data:(image|video|audio)\//i.test(normalized)) return ''
-
-  return url
+  return isSafeUrl(url.replace(IGNORED_IN_URL, '')) ? url : ''
 }
