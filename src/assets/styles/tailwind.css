@@ -111,7 +111,8 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --z-index-infinity: calc(infinity);
+  /* Two below the int32 ceiling, so the media preview can sit above the shell it opens from. */
+  --z-index-infinity: 2147483645;
   --text-2xs: 0.625rem;
   --animate-meteor: meteor 5s linear infinite;
   --animate-pulse: pulse var(--duration) ease-out infinite;
