@@ -1,7 +1,7 @@
-import { joinRoom, selfId } from 'trystero'
-import type { Room } from 'trystero'
-import type { RoomTransport } from '@/runtime/core/RoomTransport'
+import { joinRoom } from 'trystero'
+import type { ActionError, MessageAction, Room } from 'trystero'
 import { DELIVERY_FAILURE_MESSAGE } from '@/constants/config'
+import type { RoomTransport } from '@/runtime/core/RoomTransport'
 import { createTransportEvents } from './events'
 
 /**
@@ -9,33 +9,28 @@ import { createTransportEvents } from './events'
  * finishes the handshake, and a user who is chatting happily with everyone else must not be told
  * about it: the room is fine, that one peer is not.
  */
-const PEER_LEVEL_FAILURES = [
-  'could not connect to peer ',
-  'handshake timed out after ',
-  'handshake failed',
-  'failed sending handshake readiness'
-]
+const PEER_LEVEL_ERRORS = ['peer-connect-failed', 'handshake-failed', 'decrypt-failed']
 
-/** Trystero prefixes every message with its own name, so the marker can sit anywhere in the text. */
-export const isPeerLevelFailure = (message: string) => PEER_LEVEL_FAILURES.some((marker) => message.includes(marker))
+export const isPeerLevelError = (code: string) => PEER_LEVEL_ERRORS.includes(code)
 
 /**
  * Frames that never left because one peer stopped reading. The room is fine and the message can be
  * sent again, so the caller is told plainly instead of being handed trystero's internal wording.
  */
-const SEND_FAILURES = ['data channel stopped draining', 'peer disconnected', 'no peer with id']
+const TRANSIENT_SEND_KINDS = ['disconnected', 'timeout', 'aborted']
 
-export const isTransientSendFailure = (message: string) => SEND_FAILURES.some((marker) => message.includes(marker))
+export const isTransientSendFailure = (error: Error) => {
+  // SAFETY: trystero rejects a send with an Error carrying the failure kind.
+  return TRANSIENT_SEND_KINDS.includes((error as ActionError).kind)
+}
 
 interface Owner {
   room: Room
-  action: StringAction
+  action: MessageAction<string>
+  /** trystero 0.27 has no top level selfId; the room reports it once it is ready. */
+  peerId: string
 }
 
-type StringAction = ReturnType<typeof makeStringAction>
-const makeStringAction = (room: Room) => room.makeAction<string>('message')
-
-/** Trystero uses one peer id for every room and never reports a room close. */
 export const createRoomTransport = (): RoomTransport => {
   const owners = new Map<string, Owner>()
   /** Trystero leaves asynchronously; a new join of the same room waits for it. */
@@ -59,38 +54,38 @@ export const createRoomTransport = (): RoomTransport => {
 
   return {
     ...events.subscriptions,
-    peerIdOf: (roomId) => (owners.has(roomId) ? selfId : ''),
+    peerIdOf: (roomId) => owners.get(roomId)?.peerId ?? '',
     join: async (roomId) => {
       await leaving.get(roomId)
       if (owners.has(roomId)) return
-      const room = joinRoom({ appId: __NAME__ }, roomId, {
-        onJoinError: (details) => {
-          if (owners.get(roomId) !== owner) return
-          if (isPeerLevelFailure(details.error)) {
-            console.warn('[webchat] a peer could not be reached:', details.error)
-            return
-          }
-          events.error.emit(new Error(details.error), roomId)
-        }
-      })
-      const action = makeStringAction(room)
-      const owner: Owner = { room, action }
+      const room = joinRoom({ appId: __NAME__ }, roomId)
+      const owner: Owner = { room, action: room.makeAction<string>('message'), peerId: '' }
       const live = () => owners.get(roomId) === owner
       owners.set(roomId, owner)
-      action.onMessage = (payload, context) => {
+      owner.action.onMessage((payload, context) => {
         if (live()) events.message.emit(roomId, context.peerId, payload)
-      }
-      room.onPeerJoin = (peerId) => live() && events.peerJoin.emit(roomId, peerId)
-      room.onPeerLeave = (peerId) => live() && events.peerLeave.emit(roomId, peerId)
+      })
+      room.onPeerJoin((context) => {
+        if (live()) events.peerJoin.emit(roomId, context.peerId)
+      })
+      room.onPeerLeave((context) => {
+        if (live()) events.peerLeave.emit(roomId, context.peerId)
+      })
+      room.onError((error) => {
+        if (!live() || isPeerLevelError(error.code)) return
+        events.error.emit(new Error(error.message), roomId)
+      })
+      await room.ready
+      owner.peerId = (await room.getSelf()).peerId
     },
     leave,
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
       if (!owner) throw new Error(`Room "${roomId}" not joined`)
-      await owner.action.send(payload, { target: to ?? null }).catch((error) => {
-        const reason = error instanceof Error ? error.message : String(error)
-        if (!isTransientSendFailure(reason)) throw error
-        console.warn('[webchat] a message was not delivered:', reason)
+      await owner.action.send(payload, to === undefined ? undefined : { target: to }).catch((error) => {
+        const failure = error instanceof Error ? error : new Error(String(error))
+        if (!isTransientSendFailure(failure)) throw failure
+        console.warn('[webchat] a message was not delivered:', failure)
         throw new Error(DELIVERY_FAILURE_MESSAGE)
       })
     },

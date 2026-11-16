@@ -157,8 +157,8 @@ importers:
         specifier: ^3.7.0
         version: 3.7.0
       trystero:
-        specifier: 0.26.0
-        version: 0.26.0
+        specifier: 0.27.0
+        version: 0.27.0
       type-fest:
         specifier: ^5.10.0
         version: 5.10.0
@@ -1845,11 +1845,13 @@ packages:
     resolution: {integrity: sha512-kkKYPb4k/6kRdnESt77B5vJrrYnYHIYczwv0P1c+tfN/IWEx3KZeKEHoUq7sImIyBEXWdA2uakIroD9pmRJziQ==}
     engines: {node: '>=22.0.0'}
 
-  '@trystero-p2p/core@0.26.0':
-    resolution: {integrity: sha512-CZpeXPgfbDdFKrGxfD98F9tn/fTjya4mQ2o/Ax6H0qpBaJXCBz5+jyPtjsYEPAAcKRK/btOatCetFiQ5qIMCOA==}
+  '@trystero-p2p/core@0.27.0':
+    resolution: {integrity: sha512-8e85VEYLMOUSwBZDr9D+StbMrRYQRWn1egWvgdqHG1OwO//eZEwG9CvslY60D+Yqnq8XhkDobuIdXdBjNu/gnA==}
+    engines: {node: '>=22'}
 
-  '@trystero-p2p/nostr@0.26.0':
-    resolution: {integrity: sha512-HArp9fonBkqFZgw3U2D823fCePQv7haKkvjtwbGRkWzy+Wo9G3cCDEnG/GENDWwzERHrhRcRacpFsFt4JpwRJQ==}
+  '@trystero-p2p/nostr@0.27.0':
+    resolution: {integrity: sha512-ZkuF64wCwtibGVnKzhrJXsq7DbrT/yNbaeUT9/hUcVZ1SiDAbjSQ5KzJh1lNgnUTKvSG00dqO4hNPbf4KuLuAw==}
+    engines: {node: '>=22'}
 
   '@tybys/wasm-util@0.10.4':
     resolution: {integrity: sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==}
@@ -4754,8 +4756,9 @@ packages:
   trough@2.2.0:
     resolution: {integrity: sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==}
 
-  trystero@0.26.0:
-    resolution: {integrity: sha512-M6NsoGmAkAy72K4YiPj0iGbd9hyuAGJpIBm0wL6f0g6bP/nCsMtbJKM8VpcxexK61HaQ5q5KDVnqFZogXGIolQ==}
+  trystero@0.27.0:
+    resolution: {integrity: sha512-2oUTc/G7K8/l5DOXA6pajFBMXKPuy7WcU1So1S+NVFvzL5xy7DlbIVSBQkIkV7ALL9uBEuFuCuacvKuUWxNdlw==}
+    engines: {node: '>=22'}
 
   ts-easing@0.2.0:
     resolution: {integrity: sha512-Z86EW+fFFh/IFB1fqQ3/+7Zpf9t2ebOAxNI/V6Wo7r5gqiqtxmgTlQ1qbqQcjLKYeSHPTsEmvlJUDg/EuL0uHQ==}
@@ -6604,12 +6607,12 @@ snapshots:
 
   '@topcli/prompts@4.0.0': {}
 
-  '@trystero-p2p/core@0.26.0': {}
+  '@trystero-p2p/core@0.27.0': {}
 
-  '@trystero-p2p/nostr@0.26.0':
+  '@trystero-p2p/nostr@0.27.0':
     dependencies:
       '@noble/secp256k1': 3.2.0
-      '@trystero-p2p/core': 0.26.0
+      '@trystero-p2p/core': 0.27.0
 
   '@tybys/wasm-util@0.10.4':
     dependencies:
@@ -9774,9 +9777,9 @@ snapshots:
 
   trough@2.2.0: {}
 
-  trystero@0.26.0:
+  trystero@0.27.0:
     dependencies:
-      '@trystero-p2p/nostr': 0.26.0
+      '@trystero-p2p/nostr': 0.27.0
 
   ts-easing@0.2.0: {}
 
