@@ -40,8 +40,11 @@ export const buildFullURL = (baseURL: string = '', pathURL: string = '', params:
  *
  * A browser drops ASCII tab, newline and leading control characters before it parses a scheme, so
  * `java\tscript:alert(1)` navigates as `javascript:alert(1)`. The scheme is judged on that
- * normalized form, and only schemes this product actually links to are kept.
+ * normalized form. Everything else is left alone: a chat client should not decide that `tel:` or
+ * `magnet:` is a scheme its users may not share.
  */
+const UNSAFE_SCHEMES = /^(javascript|vbscript|file|about|blob|filesystem|chrome|chrome-extension|moz-extension):/i
+
 export const safeUrl = (url: string): string => {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- defensive check: this sanitizer also guards untrusted callers
   if (!url || typeof url !== 'string') return ''
@@ -49,10 +52,8 @@ export const safeUrl = (url: string): string => {
   // oxlint-disable-next-line no-control-regex -- the control characters are the thing being removed
   const normalized = url.replace(/[\u0000-\u0020\u007f]+/g, '')
 
-  if (/^data:/i.test(normalized)) return /^data:(image|video|audio)\//i.test(normalized) ? url : ''
-
-  const scheme = /^([a-z][a-z\d+\-.]*):/i.exec(normalized)?.[1]
-  if (scheme && !/^(https?|mailto|xmpp)$/i.test(scheme)) return ''
+  if (UNSAFE_SCHEMES.test(normalized)) return ''
+  if (/^data:/i.test(normalized) && !/^data:(image|video|audio)\//i.test(normalized)) return ''
 
   return url
 }
