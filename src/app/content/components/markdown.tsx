@@ -155,7 +155,7 @@ const MarkdownLink = ({
   return isImage ? (
     <MessageImage src={href} alt={textContent(children)} className={className} />
   ) : (
-    <a className={cn('text-blue-500', className)} href={href} target={href} rel="noopener noreferrer" {...props}>
+    <a className={cn('text-blue-500', className)} href={href} target="_blank" rel="noopener noreferrer" {...props}>
       {children}
     </a>
   )

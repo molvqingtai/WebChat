@@ -35,20 +35,14 @@ export const buildFullURL = (baseURL: string = '', pathURL: string = '', params:
   return assembleURL(url, params)
 }
 
-/**
- * Sanitize URL to prevent XSS attacks
- * @param url - The URL to sanitize
- * @returns Sanitized URL or empty string if invalid
- */
-export const safeUrl = (url: string): string => {
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- defensive check: this sanitizer also guards untrusted callers
-  if (!url || typeof url !== 'string') return ''
+/** Dangerous schemes, and any data URL that is not media. */
+const UNSAFE_URL =
+  /^(javascript|vbscript|file|about|blob|filesystem|chrome|chrome-extension|moz-extension):|^data:(?!(?:image|video|audio)\/)/i
+/** Browsers drop these before parsing a scheme, so the check has to see what they see. */
+// oxlint-disable-next-line no-control-regex -- the control characters are the thing being removed
+const IGNORED_IN_URL = /[\u0000-\u0020\u007f]+/g
 
-  // Block dangerous protocols
-  if (/^(javascript|vbscript|file|about):/i.test(url)) return ''
-
-  // Only allow media data URIs (image/video/audio)
-  if (url.startsWith('data:') && !/^data:(image|video|audio)\//i.test(url)) return ''
-
-  return url
-}
+/** The URL when it is safe to put in an attribute, otherwise an empty string. */
+export const safeUrl = (url: string): string =>
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- this also guards untrusted callers
+  typeof url === 'string' && !UNSAFE_URL.test(url.replace(IGNORED_IN_URL, '')) ? url : ''
