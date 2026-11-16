@@ -8,7 +8,7 @@ vi.mock('@trystero-p2p/ws-relay', () => ({
 }))
 
 const { createRoomTransport } = await import('./trystero')
-const { isPeerLevelError, isTransientSendFailure } = await import('./trystero')
+const { isPeerLevelError } = await import('./trystero')
 
 // SAFETY: the transport passes this shape as the third argument of every joinRoom call.
 const kindError = (kind: string) => Object.assign(new Error(kind), { kind })
@@ -62,21 +62,13 @@ describe('trystero transport', () => {
     expect(isPeerLevelError('room-full')).toBe(false)
   })
 
-  it('reports a frame that never left as a plain delivery failure', async () => {
+  it('keeps the error trystero raised when a frame never left', async () => {
     const transport = createRoomTransport()
     await transport.join('room')
     const gone = Object.assign(new Error('data channel stopped draining'), { kind: 'disconnected' })
     sendMock.mockRejectedValueOnce(gone)
-    await expect(transport.send('room', 'payload')).rejects.toThrow('Message not delivered')
+    await expect(transport.send('room', 'payload')).rejects.toThrow('data channel stopped draining')
     sendMock.mockRejectedValueOnce(Object.assign(new Error('rejected by the room'), { kind: 'rejected' }))
     await expect(transport.send('room', 'payload')).rejects.toThrow('rejected by the room')
-  })
-
-  it('recognises the failures that belong to a single frame', () => {
-    expect(isTransientSendFailure(kindError('disconnected'))).toBe(true)
-    expect(isTransientSendFailure(kindError('timeout'))).toBe(true)
-    expect(isTransientSendFailure(kindError('aborted'))).toBe(true)
-    expect(isTransientSendFailure(kindError('rejected'))).toBe(false)
-    expect(isTransientSendFailure(new Error('nope'))).toBe(false)
   })
 })

@@ -462,7 +462,10 @@ const ChatRoomDomain = Remesh.domain({
               // A send is silent cancellation only when its own exact token was cancelled by final
               // release; otherwise the owning invocation settles it as a real failure.
               if (isCancelled(error)) return null
-              return OnErrorEvent(normalizeError(error))
+              // The frame kept its place in the input, so the screen already says what happened; the
+              // transport's own error stays intact for whoever reads the console.
+              console.warn('[webchat] a message could not be sent:', error)
+              return null
             }
           })
         )
@@ -495,7 +498,8 @@ const ChatRoomDomain = Remesh.domain({
                   // A send is silent cancellation only when its own exact token was cancelled by final
                   // release; otherwise the owning invocation settles it as a real failure.
                   if (isCancelled(error)) return null
-                  return OnErrorEvent(normalizeError(error))
+                  console.warn('[webchat] a reaction could not be sent:', error)
+                  return null
                 }
               })
             )
