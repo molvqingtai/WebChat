@@ -1,6 +1,5 @@
 import { joinRoom } from '@trystero-p2p/ws-relay'
-import type { ActionError, MessageAction, Room } from '@trystero-p2p/ws-relay'
-import { DELIVERY_FAILURE_MESSAGE } from '@/constants/config'
+import type { MessageAction, Room } from '@trystero-p2p/ws-relay'
 import type { RoomTransport } from '@/runtime/core/RoomTransport'
 import { createTransportEvents } from './events'
 
@@ -12,17 +11,6 @@ import { createTransportEvents } from './events'
 const PEER_LEVEL_ERRORS = ['peer-connect-failed', 'handshake-failed', 'decrypt-failed']
 
 export const isPeerLevelError = (code: string) => PEER_LEVEL_ERRORS.includes(code)
-
-/**
- * Frames that never left because one peer stopped reading. The room is fine and the message can be
- * sent again, so the caller is told plainly instead of being handed trystero's internal wording.
- */
-const TRANSIENT_SEND_KINDS = ['disconnected', 'timeout', 'aborted']
-
-export const isTransientSendFailure = (error: Error) => {
-  // SAFETY: trystero rejects a send with an Error carrying the failure kind.
-  return TRANSIENT_SEND_KINDS.includes((error as ActionError).kind)
-}
 
 interface Owner {
   room: Room
@@ -83,10 +71,8 @@ export const createRoomTransport = (): RoomTransport => {
       const owner = owners.get(roomId)
       if (!owner) throw new Error(`Room "${roomId}" not joined`)
       await owner.action.send(payload, to === undefined ? undefined : { target: to }).catch((error) => {
-        const failure = error instanceof Error ? error : new Error(String(error))
-        if (!isTransientSendFailure(failure)) throw failure
-        console.warn('[webchat] a message was not delivered:', failure)
-        throw new Error(DELIVERY_FAILURE_MESSAGE)
+        console.warn('[webchat] a message was not delivered:', error)
+        throw error
       })
     },
     dispose: () => {

@@ -198,6 +198,5 @@ export const MAX_STORED_CONFLICTS = 1000
 
 export type RoomTransportProvider = 'artico' | 'trystero'
 /** A frame that never left: the room is fine and the message can be sent again. */
-export const DELIVERY_FAILURE_MESSAGE = 'Message not delivered'
 
 export const ROOM_TRANSPORT_PROVIDER: RoomTransportProvider = 'trystero'
