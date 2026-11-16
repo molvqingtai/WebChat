@@ -38,7 +38,10 @@ export default defineConfig({
         ...common,
         browser_specific_settings: {
           gecko: {
-            id: 'molvqingtai@gmail.com'
+            id: 'molvqingtai@gmail.com',
+            // AMO rejects a submission that leaves this out: the extension talks to peers directly
+            // and stores nothing anywhere else.
+            data_collection_permissions: { required: ['none'] }
           }
         }
       }
