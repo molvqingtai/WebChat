@@ -73,8 +73,8 @@ importers:
         specifier: 0.27.0
         version: 0.27.0(ws@8.22.2(bufferutil@4.2.0)(utf-8-validate@6.0.6))
       '@webcomponents/custom-elements':
-        specifier: ^1.6.0
-        version: 1.6.0
+        specifier: ^1.6.1
+        version: 1.6.1
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -2092,8 +2092,8 @@ packages:
   '@vitest/utils@5.1.0':
     resolution: {integrity: sha512-V+qgCwkvVw+s1t1S5TaoBHsLi5Sz/YmohCMoOu0mZ8ZQst2bKhRYARAQucWpVg8D0mv0x5MHcWXY5QdOsoiGBQ==}
 
-  '@webcomponents/custom-elements@1.6.0':
-    resolution: {integrity: sha512-CqTpxOlUCPWRNUPZDxT5v2NnHXA4oox612iUGnmTUGQFhZ1Gkj8kirtl/2wcF6MqX7+PqqicZzOCBKKfIn0dww==}
+  '@webcomponents/custom-elements@1.6.1':
+    resolution: {integrity: sha512-NuQUXlmBdE0hP200dqG0i5R7pQoQlmOYcCtQ9h3R4CHjfzdy1Ef2QZK1+iziyr1SNkS3x+sQ/srzhdWm60na1g==}
 
   '@webext-core/fake-browser@2.0.1':
     resolution: {integrity: sha512-4x5z1z8F0KU8ShF4ForXJ8qnA8oZTy7HYjI91Mbpdzp3H3hU9HR6TNPUxfWtSpFz2FwgEircuJKQg0qFIn6RLg==}
@@ -6805,7 +6805,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
 
-  '@webcomponents/custom-elements@1.6.0': {}
+  '@webcomponents/custom-elements@1.6.1': {}
 
   '@webext-core/fake-browser@2.0.1':
     dependencies:
